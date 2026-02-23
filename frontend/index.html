@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AlphaTrader Pro — AI 全球股票交易平台</title>
   <meta name="description" content="由 DeepSeek-R1 驱动的全球股票市场追踪与自动交易平台" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=4" />
   <!-- TradingView Lightweight Charts -->
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -71,7 +71,7 @@
       </a>
 
       <div class="sidebar-footer">
-        <div style="margin-bottom:6px;">模拟交易模式</div>
+        <div id="sidebarModeLabel" style="margin-bottom:6px;">交易模式加载中...</div>
         <div id="sidebarEquity" style="font-size:14px;font-weight:700;color:var(--accent-bright);">$100,000.00</div>
         <div id="sidebarPnl" style="font-size:11px;margin-top:2px;" class="text-muted">总收益 $0.00 (0.00%)</div>
       </div>
@@ -94,7 +94,7 @@
         <div class="stat-card">
           <div class="stat-label">总资产</div>
           <div class="stat-value" id="totalEquity">$100,000</div>
-          <div class="stat-sub">模拟账户</div>
+          <div class="stat-sub" id="equityProviderLabel">加载中...</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">总收益</div>
@@ -109,7 +109,7 @@
         <div class="stat-card">
           <div class="stat-label">可用现金</div>
           <div class="stat-value" id="cashBalance">$100,000</div>
-          <div class="stat-sub">📊 纸上交易</div>
+          <div class="stat-sub" id="cashProviderLabel">📊 加载中...</div>
         </div>
       </div>
 
@@ -412,7 +412,7 @@
           <div class="card-title">💰 账户信息</div>
           <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">
             <div style="display:flex;justify-content:space-between;"><span class="text-secondary">账户类型</span><span
-                class="text-gold font-mono">模拟交易 (Paper)</span></div>
+                id="settingsProviderLabel" class="text-gold font-mono">---</span></div>
             <div style="display:flex;justify-content:space-between;"><span class="text-secondary">初始资金</span><span
                 class="font-mono">$100,000.00</span></div>
             <div style="display:flex;justify-content:space-between;"><span class="text-secondary">AI 模型</span><span
@@ -478,7 +478,7 @@
   <!-- ─── Toasts ─── -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 
 </html>

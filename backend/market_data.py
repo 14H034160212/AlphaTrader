@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
+from quant_models import QuantitativeModels
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ def get_stock_quote(symbol: str) -> dict:
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
-        hist = ticker.history(period="2d")
+        hist = ticker.history(period="20d")
         if hist.empty:
             return None
 
@@ -101,6 +102,33 @@ def get_stock_quote(symbol: str) -> dict:
         prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else current
         change = current - prev
         change_pct = (change / prev * 100) if prev != 0 else 0
+
+        # Extract Fundamentals for Models
+        fcf = info.get("freeCashflow", 0)
+        total_debt = info.get("totalDebt", 0)
+        cash = info.get("totalCash", 0)
+        shares_out = info.get("sharesOutstanding", 0)
+        div_rate = info.get("dividendRate", 0.0)
+
+        # Calculate Intrinsic Values
+        dcf_value = QuantitativeModels.calculate_dcf(fcf, total_debt, cash, shares_out)
+        ddm_value = QuantitativeModels.calculate_ddm(div_rate) if div_rate else 0.0
+        
+        # Use DDM for high dividend stocks, else DCF (Whichever is higher provides a safer floor, or just average)
+        intrinsic_value = ddm_value if div_rate > 0 and ddm_value > dcf_value else dcf_value
+        valuation_gap = QuantitativeModels.calculate_valuation_gap(current, intrinsic_value)
+
+        # Calculate Microstructure (VPA)
+        hist_records = []
+        for idx, row in hist.iterrows():
+            hist_records.append({
+                "open": float(row["Open"]),
+                "high": float(row["High"]),
+                "low": float(row["Low"]),
+                "close": float(row["Close"]),
+                "volume": float(row["Volume"])
+            })
+        vpa_metrics = QuantitativeModels.analyze_volume_price_action(hist_records)
 
         return {
             "symbol": symbol,
@@ -120,6 +148,14 @@ def get_stock_quote(symbol: str) -> dict:
             "currency": info.get("currency", "USD"),
             "exchange": info.get("exchange", ""),
             "timestamp": datetime.utcnow().isoformat(),
+            "dcf_value": round(dcf_value, 2),
+            "ddm_value": round(ddm_value, 2),
+            "intrinsic_value": round(intrinsic_value, 2),
+            "valuation_gap_pct": round(valuation_gap, 3),
+            "vpa_signal": vpa_metrics["vpa_signal"],
+            "crowding": vpa_metrics["crowding"],
+            "liquidity": vpa_metrics["liquidity"],
+            "vpa_volume_ratio": vpa_metrics["volume_ratio"],
         }
     except Exception as e:
         logger.error(f"Error fetching stock {symbol}: {e}")

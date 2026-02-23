@@ -114,6 +114,8 @@ class WatchlistUpdate(BaseModel):
 class OpenClawWebhook(BaseModel):
     command: str
     symbol: Optional[str] = None
+    group_id: Optional[str] = None
+    sender: Optional[str] = None
     
 # ─────────────────────────────────────────────
 # Background price refresh
@@ -247,7 +249,7 @@ async def background_auto_trade_loop():
                     db.commit()
 
                     # Execute trade
-                    if signal.get("signal") in ("BUY", "SELL"):
+                    if signal.get("signal") in ("BUY", "SELL", "SHORT", "COVER"):
                         auto_result = engine.auto_trade(signal, quote["current"])
                         if auto_result.get("success"):
                             logger.info(f"Auto-trade executed for {symbol}: {auto_result}")
@@ -312,16 +314,24 @@ async def get_markets():
     return {"data": market_cache, "timestamp": now.isoformat()}
 
 
+import asyncio
+
 @app.get("/api/stock/{symbol}")
-async def get_stock(symbol: str):
+async def get_stock(symbol: str, period: str = "3mo"):
     """Get full data for a single stock."""
     symbol = symbol.upper()
-    quote = md.get_stock_quote(symbol)
+    loop = asyncio.get_event_loop()
+    
+    quote, history, indicators, news = await asyncio.gather(
+        loop.run_in_executor(None, md.get_stock_quote, symbol),
+        loop.run_in_executor(None, lambda: md.get_stock_history(symbol, period=period)),
+        loop.run_in_executor(None, md.get_technical_indicators, symbol),
+        loop.run_in_executor(None, md.get_stock_news, symbol),
+    )
+    
     if not quote:
         raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
-    history = md.get_stock_history(symbol)
-    indicators = md.get_technical_indicators(symbol)
-    news = md.get_stock_news(symbol)
+        
     return {
         "quote": quote,
         "history": history,
@@ -514,8 +524,18 @@ async def update_watchlist(item: WatchlistUpdate, db: Session = Depends(get_db))
 @app.post("/api/openclaw/webhook")
 async def openclaw_webhook(request: OpenClawWebhook, db: Session = Depends(get_db)):
     """Endpoint for OpenClaw Skill to query portfolio or analyze stocks remotely."""
+    
+    # Allow messages from both DMs and group chats seamlessly
+    # The user requested to invite the AI into a group to avoid using their personal number.
+    pass
+        
     command = request.command.lower().strip()
     
+    # 2. Isolation Strategy 1: Command Prefix Checking
+    if not command.startswith("/") and command not in ["portfolio", "balance", "status", "analyze"]:
+        # Drop all normal conversational chatter
+        return {"response": ""}
+
     try:
         if command in ["/portfolio", "portfolio", "balance", "status"]:
             engine = TradingEngine(db)

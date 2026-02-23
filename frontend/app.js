@@ -47,10 +47,16 @@ function startClock() {
 // WebSocket
 // ─────────────────────────────────────────────
 function connectWebSocket() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${proto}//${location.host}/ws`);
+    // Force WSS if we are on HTTPS, otherwise WS. Cloudflare/Proxies sometimes confuse location.protocol.
+    const isSecure = window.location.protocol === 'https:' || window.location.hostname.includes('.sail.cloud.nesi.nz');
+    const proto = isSecure ? 'wss:' : 'ws:';
+    const host = location.host;
+
+    console.log(`Initialising WebSocket connection to ${proto}//${host}/ws`);
+    ws = new WebSocket(`${proto}//${host}/ws`);
 
     ws.onopen = () => {
+        console.log("WebSocket connected cleanly!");
         document.getElementById('statusDot').style.background = 'var(--green)';
         document.getElementById('statusDot').style.boxShadow = '0 0 6px var(--green)';
         document.getElementById('statusLabel').textContent = '已连接';
@@ -222,11 +228,11 @@ async function loadChart() {
         chart = LightweightCharts.createChart(container, {
             width: container.clientWidth,
             height: 315,
-            layout: { background: { color: '#071428' }, textColor: '#8b949e' },
-            grid: { vertLines: { color: 'rgba(32,84,156,0.2)' }, horzLines: { color: 'rgba(32,84,156,0.2)' } },
+            layout: { background: { color: '#ffffff' }, textColor: '#1f2328' },
+            grid: { vertLines: { color: 'rgba(31,35,40,0.06)' }, horzLines: { color: 'rgba(31,35,40,0.06)' } },
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-            rightPriceScale: { borderColor: 'rgba(32,84,156,0.35)' },
-            timeScale: { borderColor: 'rgba(32,84,156,0.35)', timeVisible: true },
+            rightPriceScale: { borderColor: 'rgba(31,35,40,0.15)' },
+            timeScale: { borderColor: 'rgba(31,35,40,0.15)', timeVisible: true },
         });
 
         candleSeries = chart.addCandlestickSeries({
@@ -318,7 +324,24 @@ function updatePortfolioUI() {
             oldTitle.replaceWith(titleDiv);
         }
     }
-    titleDiv.innerHTML = `💼 投资组合概要 <span style="font-size:12px;padding:4px 8px;border-radius:12px;background:var(--bg-tertiary);color:var(--text-muted);">${d.provider === 'Alpaca' ? '🏦 Alpaca 真实/模拟盘' : '📝 本地模拟盘'}</span>`;
+    const isLive = d.provider === 'Alpaca';
+    titleDiv.innerHTML = `💼 投资组合概要 <span style="font-size:12px;padding:4px 8px;border-radius:12px;background:var(--bg-tertiary);color:var(--text-muted);">${isLive ? '🏦 Alpaca 真实通道' : '📝 本地模拟盘'}</span>`;
+
+    // Dynamically update UI labels
+    const providerText = isLive ? 'Alpaca 实盘通道' : '本地模拟模式 (Local Paper)';
+    const providerHtml = isLive ? '🏆 真实资产通道' : '📝 本地虚拟账户';
+
+    const sidebarEl = document.getElementById('sidebarModeLabel');
+    if (sidebarEl) {
+        sidebarEl.textContent = isLive ? '🔴 LIVE 运行中' : '模拟交易模式';
+        if (isLive) sidebarEl.style.color = 'var(--red)';
+    }
+    const eqLabel = document.getElementById('equityProviderLabel');
+    if (eqLabel) eqLabel.textContent = providerHtml;
+    const cashLabel = document.getElementById('cashProviderLabel');
+    if (cashLabel) cashLabel.textContent = '📊 ' + (isLive ? '真实通道资金' : '纸上交易');
+    const setLabel = document.getElementById('settingsProviderLabel');
+    if (setLabel) setLabel.textContent = providerText;
 
 
     // Positions table

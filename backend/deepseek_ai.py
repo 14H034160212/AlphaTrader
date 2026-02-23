@@ -80,7 +80,8 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
         news_summary = "\n".join(news_items) if news_items else "No recent news"
         ind_summary = json.dumps(indicators, indent=2) if indicators else "Not available"
 
-        prompt = """You are an expert quantitative stock analyst. Analyze the following stock data and provide a trading recommendation.
+        prompt = """You are an expert quantitative stock analyst advising a small-account trader who demands a highly aggressive, bold trading strategy.
+The user strongly believes the current market environment is ideal for SHORT SELLING overvalued assets. You must be extremely decisive.
 
 ## Stock: {symbol}
 
@@ -89,6 +90,19 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
 - High: ${high} | Low: ${low} | Volume: {volume:,}
 - Market Cap: {mktcap} | P/E: {pe} | Sector: {sector}
 - 52W: ${wklow} - ${wkhigh}
+
+### Quantitative & Fundamental Valuation (CRITICAL FOR SIZING)
+- DCF Intrinsic Value: ${dcf}
+- DDM Intrinsic Value: ${ddm}
+- Final Blended Intrinsic Value: ${intrinsic}
+- Valuation Gap: {val_gap_pct:.2f}% (Positive = Overvalued, Negative = Undervalued)
+*Decision Rule: If Valuation Gap is significantly positive (>20%), and VPA shows Distribution/Low Liquidity, heavily favor SHORT.*
+
+### Market Microstructure & Flow (Smart Money Proxy)
+- Volume Price Analysis (VPA): {vpa_signal}
+- Volume Ratio (vs 20d avg): {vpa_vol_ratio}x
+- Market Liquidity: {liquidity}
+- Trade Crowding Risk: {crowding} (0.0=Low, 1.0=Extreme)
 
 ### Technical Indicators
 {indicators}
@@ -103,14 +117,15 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
 
 Respond ONLY with valid JSON (no markdown):
 {{
-  "signal": "BUY" | "SELL" | "HOLD",
-  "confidence": <float 0.0-1.0>,
+  "signal": "BUY" | "SELL" | "SHORT" | "COVER" | "HOLD",
+  "confidence": <float 0.8 to 1.0>, // Be highly confident in your thesis. Do not sit on the fence.
   "target_price": <float or null>,
   "stop_loss": <float or null>,
+  "recommended_weight_pct": <float -2.0 to 2.0>, // e.g., -1.5 meaning SHORT 150% equity (using margin). Since the user has a small account, be BOLD. If overvalued, heavily recommend negative weights for SHORT selling.
   "time_horizon": "short-term" | "medium-term" | "long-term",
   "key_factors": ["factor1", "factor2", "factor3"],
   "risks": ["risk1", "risk2"],
-  "reasoning": "<detailed analysis 2-3 paragraphs>"
+  "reasoning": "<detailed analysis 2-3 paragraphs. Emphasize why the DCF valuation gap and liquidity/crowding makes this an aggressive SHORT or BUY opportunity.>"
 }}""".format(
             symbol=symbol,
             current=quote.get("current", "N/A"),
@@ -124,6 +139,14 @@ Respond ONLY with valid JSON (no markdown):
             sector=quote.get("sector", "N/A"),
             wklow=quote.get("fifty_two_week_low", "N/A"),
             wkhigh=quote.get("fifty_two_week_high", "N/A"),
+            dcf=quote.get("dcf_value", "N/A"),
+            ddm=quote.get("ddm_value", "N/A"),
+            intrinsic=quote.get("intrinsic_value", "N/A"),
+            val_gap_pct=quote.get("valuation_gap_pct", 0) * 100 if quote.get("valuation_gap_pct") else 0,
+            vpa_signal=quote.get("vpa_signal", "N/A"),
+            vpa_vol_ratio=quote.get("vpa_volume_ratio", "N/A"),
+            liquidity=quote.get("liquidity", "N/A"),
+            crowding=quote.get("crowding", "N/A"),
             indicators=ind_summary,
             prices=price_summary,
             news=news_summary,
