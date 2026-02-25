@@ -14,11 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 class TradingEngine:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: int):
         self.db = db
-        alpaca_key = get_setting(self.db, "alpaca_api_key", "")
-        alpaca_secret = get_setting(self.db, "alpaca_secret_key", "")
-        alpaca_paper = get_setting(self.db, "alpaca_paper_mode", "true") == "true"
+        self.user_id = user_id
+        alpaca_key = get_setting(self.db, "alpaca_api_key", self.user_id, "")
+        alpaca_secret = get_setting(self.db, "alpaca_secret_key", self.user_id, "")
+        alpaca_paper = get_setting(self.db, "alpaca_paper_mode", self.user_id, "true") == "true"
         
         self.use_alpaca = bool(alpaca_key and alpaca_secret)
         if self.use_alpaca:
@@ -35,22 +36,26 @@ class TradingEngine:
             except Exception as e:
                 logger.error(f"Alpaca get_account error: {e}")
                 return 0.0
-        val = get_setting(self.db, "cash_balance", "100000.0")
-        return float(val)
+        from database import User
+        user = self.db.query(User).filter(User.id == self.user_id).first()
+        return user.balance if user else 0.0
 
     def set_cash_balance(self, amount: float):
         if self.use_alpaca:
-            pass # Cannot manually set cash balance in Alpaca
-        from database import set_setting
-        set_setting(self.db, "cash_balance", str(amount))
+             pass # Cannot manually set cash balance in Alpaca
+        from database import User
+        user = self.db.query(User).filter(User.id == self.user_id).first()
+        if user:
+            user.balance = amount
+            self.db.commit()
 
     def get_position(self, symbol: str) -> Optional[Position]:
         # Local DB fallback
-        return self.db.query(Position).filter(Position.symbol == symbol).first()
+        return self.db.query(Position).filter(Position.user_id == self.user_id, Position.symbol == symbol).first()
 
     def get_all_positions(self) -> list:
         # Local DB fallback
-        return self.db.query(Position).filter(Position.quantity != 0).all()
+        return self.db.query(Position).filter(Position.user_id == self.user_id, Position.quantity != 0).all()
 
     def execute_buy(
         self,
@@ -113,6 +118,7 @@ class TradingEngine:
                 position.quantity = 0
         else:
             position = Position(
+                user_id=self.user_id,
                 symbol=symbol,
                 quantity=quantity,
                 avg_cost=price,
@@ -124,6 +130,7 @@ class TradingEngine:
         # Record trade
         market = "Alpaca" if self.use_alpaca else "Paper"
         trade = Trade(
+            user_id=self.user_id,
             symbol=symbol,
             side="BUY" if not is_cover else "COVER",
             quantity=quantity,
@@ -213,6 +220,7 @@ class TradingEngine:
                 position.quantity = 0
         else:
             position = Position(
+                user_id=self.user_id,
                 symbol=symbol,
                 quantity=-quantity,
                 avg_cost=price,
@@ -224,6 +232,7 @@ class TradingEngine:
         # Record trade
         market = "Alpaca" if self.use_alpaca else "Paper"
         trade = Trade(
+            user_id=self.user_id,
             symbol=symbol,
             side="SELL" if not is_short else "SHORT",
             quantity=quantity,
@@ -259,9 +268,9 @@ class TradingEngine:
         reasoning = signal.get("reasoning", "")
         weight = signal.get("recommended_weight_pct")
 
-        min_confidence = float(get_setting(self.db, "auto_trade_min_confidence", "0.75"))
-        risk_per_trade_pct = float(get_setting(self.db, "risk_per_trade_pct", "2.0"))
-        auto_trade_enabled = get_setting(self.db, "auto_trade_enabled", "false") == "true"
+        min_confidence = float(get_setting(self.db, "auto_trade_min_confidence", self.user_id, "0.75"))
+        risk_per_trade_pct = float(get_setting(self.db, "risk_per_trade_pct", self.user_id, "2.0"))
+        auto_trade_enabled = get_setting(self.db, "auto_trade_enabled", self.user_id, "false") == "true"
 
         if not auto_trade_enabled:
             return {"success": False, "skipped": True, "reason": "Auto-trading is disabled"}
@@ -309,6 +318,10 @@ class TradingEngine:
         elif action in ["SELL", "SHORT"]:
             if quantity < 0.001:
                  return {"success": False, "error": "Calculated SELL quantity too small"}
+            if action == "SHORT":
+                allow_short = get_setting(self.db, "allow_short_selling", self.user_id, "false") == "true"
+                if not allow_short:
+                    return {"success": False, "skipped": True, "reason": "Short selling disabled (enable in settings or upgrade to margin account)"}
             if action == "SELL":
                 pos = self.get_position(symbol)
                 if not pos or pos.quantity <= 0:
@@ -344,7 +357,7 @@ class TradingEngine:
                 cash = float(account.cash)
                 total_equity = float(account.equity)
                 total_market_value = total_equity - cash
-                initial_cash = float(get_setting(self.db, "initial_cash", "100000.0")) # Keep local for ref
+                initial_cash = float(get_setting(self.db, "initial_cash", self.user_id, "100000.0")) # Keep local for ref
                 total_return = total_equity - initial_cash
                 total_return_pct = (total_return / initial_cash * 100) if initial_cash > 0 else 0
                 
@@ -376,7 +389,7 @@ class TradingEngine:
                         "weight_pct": round((abs(market_val) / total_equity * 100), 2) if total_equity > 0 else 0,
                     })
                 
-                all_trades = self.db.query(Trade).all()
+                all_trades = self.db.query(Trade).filter(Trade.user_id == self.user_id).all()
                 return {
                     "cash": round(cash, 2),
                     "total_market_value": round(total_market_value, 2),
@@ -398,7 +411,7 @@ class TradingEngine:
         # Local DB Fallback / Paper mode
         positions = self.get_all_positions()
         cash = self.get_cash_balance()
-        initial_cash = float(get_setting(self.db, "initial_cash", "100000.0"))
+        initial_cash = float(get_setting(self.db, "initial_cash", self.user_id, "100000.0"))
 
         total_market_value = sum(p.quantity * p.current_price for p in positions)
         total_cost_basis = sum(abs(p.quantity) * p.avg_cost for p in positions)
@@ -416,7 +429,7 @@ class TradingEngine:
         total_return = total_equity - initial_cash
         total_return_pct = (total_return / initial_cash * 100) if initial_cash > 0 else 0
 
-        all_trades = self.db.query(Trade).all()
+        all_trades = self.db.query(Trade).filter(Trade.user_id == self.user_id).all()
         positions_data = []
         
         for p in positions:

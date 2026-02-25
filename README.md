@@ -2,7 +2,7 @@
 
 ![AlphaTrader](/frontend/assets/logo.png) <!-- (Optional: Add your own logo/screenshot here later) -->
 
-**AlphaTrader Pro** is an autonomous, AI-driven quantitative stock trading platform built with a Python/FastAPI backend and a pure HTML/JS frontend. It seamlessly integrates real-time global market data with advanced local AI models (like DeepSeek-R1 via Ollama) to automatically analyze stock charts, technical indicators, and news, ultimately executing trades via the Alpaca Live Brokerage API.
+**AlphaTrader Pro** is an autonomous, AI-driven quantitative stp built with a Python/FastAPI backend and a pure HTML/JS frontend. It seamlessly integrates real-time global market data with advanced local AI models (like DeepSeek-R1 via Ollama) to automatically analyze stock charts, technical indicators, and news, ultimately executing trades via the Alpaca Live Brokerage API.
 
 ## 🌟 Project Background
 
@@ -13,20 +13,23 @@ Additionally, AlphaTrader natively integrates with the **OpenClaw multi-modal AI
 ## ✨ Core Features
 
 *   **🌍 Global Market Tracking:** Real-time data feeds for major indices (S&P 500, NASDAQ, Nikkei, etc.) using Yahoo Finance.
-*   **🧠 Local AI Brain (Free & Private):** Full integration with local instances of **DeepSeek-R1 (14B)** via Ollama. No expensive API keys required.
-*   **🤖 Autonomous Trade Execution:** A background scheduler wakes up hourly, scans a diverse universe of 23 assets (including Mega-Cap Tech, Leveraged ETFs like TQQQ/SOXL, and Crypto Proxies like IBIT), generates a conviction score, and automatically fires market orders.
-*   **🏦 Alpaca Live Brokerage:** Switch seamlessly between a $100,000 Paper Trading simulation and Live Real-Money trading via FINRA-regulated broker Alpaca.
-*   **📱 WhatsApp/Telegram Remote Control:** Built-in webhook endpoints allow remote probing (`/portfolio`) or manual analysis triggers (`/analyze AAPL`) via WhatsApp.
-*   **🛡️ "Zero-Touch" Live Switch:** A robust background watchdog that detects the arrival of incoming wire transfers and automatically unlocks the system from Paper to Live trading.
+*   **👥 Multi-User Support:** Built-in transition from a single-user system to a robust multi-tenant platform. Support for registrations, secure logins, and data isolation.
+*   **🔒 JWT Authentication:** Secure session management with JSON Web Tokens. Every trade and portfolio action is user-scoped.
+*   **🧠 Local AI Brain (Free & Private):** Full integration with local instances of **DeepSeek-R1 (14B)** via Ollama. 
+*   **🤖 Autonomous Trade Execution:** A background scheduler iterates over all registered users, performing personalized analysis and execution based on individual settings.
+*   **🏦 Alpaca Live Brokerage:** Users can independently link their own Alpaca Paper or Live keys.
+*   **💰 Simulation Wallet:** Integrated simulation fund management. New users start with a $100,000 virtual balance and can perform "Simulated Transfers" via the UI.
+*   **📱 WhatsApp/Telegram Remote Control:** Built-in webhook endpoints for OpenClaw integration.
 
 ---
 
 ## 🏗️ Architecture Stack
 
-*   **Backend:** Python 3.8, FastAPI, Uvicorn, SQLite (SQLAlchemy)
+*   **Backend:** Python 3.8, FastAPI, Uvicorn, SQLite (SQLAlchemy), JWT (`python-jose`)
+*   **Authentication:** Bcrypt password hashing, JWT Authorization headers
 *   **Data Providers:** `yfinance` (Quotes/News), `alpaca-trade-api` (Execution)
 *   **AI Inference:** Ollama Engine (local gguf models) or DeepSeek Official Cloud API
-*   **Frontend:** Pure HTML5, CSS3 (Dark Theme), Vanilla JavaScript, TradingView Lightweight Charts
+*   **Frontend:** Vanilla JS (SPA), Dark Theme CSS, TradingView Charts
 *   **Remote Messaging:** OpenClaw Agent Gateway
 
 ---
@@ -85,11 +88,13 @@ ollama create deepseek-r1-tools:14b -f Modelfile.deepseek-r1-tools
 ```
 
 ### 5. Start the Trading Engine Backend
-Move into the `backend` directory and start the Uvicorn server in the background:
+Move into the `backend` directory and start the server:
 ```bash
 cd backend
-nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
+nohup python3.8 main.py > server.log 2>&1 &
 ```
+
+*(Note: The server includes a built-in uvicorn wrapper with auto-reloader enabled. Use `python3.8` for best compatibility with installed dependencies.)*
 
 ### 6. Access the Dashboard
 Open your web browser and navigate to your server's IP:

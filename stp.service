@@ -1,0 +1,14 @@
+[Unit]
+Description=STP Backend Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/data/home/qbao775/stock-trading-platform
+ExecStart=/bin/bash /data/home/qbao775/stock-trading-platform/start.sh
+ExecStop=/bin/bash /data/home/qbao775/stock-trading-platform/stop.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

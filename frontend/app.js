@@ -15,24 +15,88 @@ let priceCache = {};
 let chatHistory = [];
 let COLORS = ['#388bfd', '#3fb950', '#d4a820', '#f85149', '#a371f7', '#58a6ff', '#e3b341', '#f0883e'];
 
+let authToken = localStorage.getItem('auth_token') || '';
+let currentUser = null;
+
+async function authFetch(url, options = {}) {
+    if (!options.headers) options.headers = {};
+    if (authToken) {
+        options.headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    if (options.method && options.method !== 'GET' && !options.headers['Content-Type']) {
+        options.headers['Content-Type'] = 'application/json';
+    }
+
+    try {
+        const res = await fetch(url, options);
+        if (res.status === 401) {
+            handleLogout();
+            throw new Error('会话过期，请重新登录');
+        }
+        return res;
+    } catch (e) {
+        console.error('Fetch error:', e);
+        throw e;
+    }
+}
+
 // ─────────────────────────────────────────────
 // Init
 // ─────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     startClock();
-    connectWebSocket();
-    loadMarkets();
-    loadPortfolio();
-    loadSettings();
-    loadSignals();
-    loadWatchlist();
+    if (!authToken) {
+        // Auto-login without requiring credentials
+        try {
+            const res = await fetch('/api/auth/auto-login');
+            if (res.ok) {
+                const data = await res.json();
+                authToken = data.access_token;
+                localStorage.setItem('auth_token', authToken);
+            }
+        } catch (e) {
+            console.error('Auto-login failed:', e);
+        }
+    }
+    if (authToken) {
+        await initApp();
+    } else {
+        document.getElementById('authOverlay').style.display = 'flex';
+    }
 
     // Time
     setInterval(() => {
-        loadPortfolio();
-        updateSidebarEquity();
+        if (authToken) {
+            loadPortfolio();
+            updateSidebarEquity();
+        }
     }, 60000);
 });
+
+async function initApp() {
+    try {
+        const res = await authFetch('/api/auth/me');
+        if (!res.ok) throw new Error();
+        currentUser = await res.json();
+        updateUserUI();
+
+        document.getElementById('authOverlay').style.display = 'none';
+        connectWebSocket();
+        loadMarkets();
+        loadPortfolio();
+        loadSettings();
+        loadSignals();
+        loadWatchlist();
+    } catch (e) {
+        handleLogout();
+    }
+}
+
+function updateUserUI() {
+    if (!currentUser) return;
+    document.getElementById('userNameDisplay').textContent = currentUser.username;
+    document.getElementById('userInitial').textContent = currentUser.username[0].toUpperCase();
+}
 
 function startClock() {
     function tick() {
@@ -134,7 +198,7 @@ function updateTicker() {
 // ─────────────────────────────────────────────
 async function loadMarkets() {
     try {
-        const res = await fetch('/api/markets');
+        const res = await authFetch('/api/markets');
         const data = await res.json();
         marketData = data.data;
         showRegion(currentRegion);
@@ -208,7 +272,7 @@ async function loadChart() {
     document.getElementById('chartMeta').innerHTML = '';
 
     try {
-        const res = await fetch(`/api/stock/${symbol}?period=${period}`);
+        const res = await authFetch(`/api/stock/${symbol}?period=${period}`);
         if (!res.ok) throw new Error(`股票 ${symbol} 未找到`);
         const data = await res.json();
 
@@ -277,7 +341,7 @@ function quickSell() {
 // ─────────────────────────────────────────────
 async function loadPortfolio() {
     try {
-        const res = await fetch('/api/portfolio');
+        const res = await authFetch('/api/portfolio');
         portfolioData = await res.json();
         updatePortfolioUI();
         updateSidebarEquity();
@@ -412,7 +476,7 @@ async function analyzePortfolio() {
     content.innerHTML = '<div class="loading"><div class="spinner"></div> DeepSeek-R1 正在分析您的投资组合...</div>';
 
     try {
-        const res = await fetch('/api/analyze-portfolio', { method: 'POST' });
+        const res = await authFetch('/api/analyze-portfolio', { method: 'POST' });
         const data = await res.json();
         const score = data.portfolio_score || '--';
         const scoreColor = score >= 7 ? 'var(--green)' : score >= 5 ? 'var(--yellow)' : 'var(--red)';
@@ -453,7 +517,7 @@ async function analyzePortfolio() {
 }
 
 async function resetPortfolio() {
-    await fetch('/api/reset-portfolio', { method: 'POST' });
+    await authFetch('/api/reset-portfolio', { method: 'POST' });
     portfolioData = {};
     await loadPortfolio();
     showToast('✅ 账户已重置为 $100,000', 'success');
@@ -464,7 +528,7 @@ async function resetPortfolio() {
 // ─────────────────────────────────────────────
 async function loadWatchlist() {
     try {
-        const res = await fetch('/api/watchlist');
+        const res = await authFetch('/api/watchlist');
         const data = await res.json();
         const symbols = data.symbols || [];
         const container = document.getElementById('watchlistContent');
@@ -477,7 +541,7 @@ async function loadWatchlist() {
         // Fetch quotes in parallel (limited)
         const quotes = await Promise.all(
             symbols.slice(0, 30).map(sym =>
-                fetch(`/api/stock/${sym}`).then(r => r.json()).catch(() => null)
+                authFetch(`/api/stock/${sym}`).then(r => r.json()).catch(() => null)
             )
         );
 
@@ -513,9 +577,8 @@ async function addToWatchlist() {
     const symbol = input.value.trim().toUpperCase();
     if (!symbol) return;
     try {
-        const res = await fetch('/api/watchlist', {
+        const res = await authFetch('/api/watchlist', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ symbol, action: 'add' })
         });
         input.value = '';
@@ -527,9 +590,8 @@ async function addToWatchlist() {
 }
 
 async function removeFromWatchlist(symbol) {
-    await fetch('/api/watchlist', {
+    await authFetch('/api/watchlist', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, action: 'remove' })
     });
     showToast(`已移除 ${symbol}`, 'info');
@@ -541,7 +603,7 @@ async function removeFromWatchlist(symbol) {
 // ─────────────────────────────────────────────
 async function loadTrades() {
     try {
-        const res = await fetch('/api/trades?limit=100');
+        const res = await authFetch('/api/trades?limit=100');
         const data = await res.json();
         const trades = data.trades || [];
         const tbl = document.getElementById('tradesTable');
@@ -616,9 +678,8 @@ async function submitTrade(side) {
     if (!symbol || !qty) { showToast('请输入股票代码和数量', 'error'); return; }
 
     try {
-        const res = await fetch('/api/trade', {
+        const res = await authFetch('/api/trade', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ symbol, side, quantity: qty, price: priceInput || null })
         });
         if (!res.ok) {
@@ -655,9 +716,8 @@ async function analyzeStock() {
     resultDiv.innerHTML = `<div style="font-size:12px;color:var(--text-muted);padding:8px 0;">正在使用 DeepSeek-R1 深度分析 ${symbol}，请稍候...</div>`;
 
     try {
-        const res = await fetch('/api/analyze', {
+        const res = await authFetch('/api/analyze', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ symbol })
         });
         if (!res.ok) {
@@ -698,12 +758,12 @@ async function analyzeStock() {
 
 async function loadSignals() {
     try {
-        const res = await fetch('/api/signals?limit=20');
+        const res = await authFetch('/api/signals?limit=20');
         const data = await res.json();
         const signals = data.signals || [];
 
         // Auto trade status
-        const settings = await fetch('/api/settings').then(r => r.json());
+        const settings = await authFetch('/api/settings').then(r => r.json());
         document.getElementById('autoTradeStatus').innerHTML = `
       <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;">
         <div>自动交易: <strong style="color:${settings.auto_trade_enabled === 'true' ? 'var(--green)' : 'var(--text-muted)'}">${settings.auto_trade_enabled === 'true' ? '✅ 启用' : '❌ 停用'}</strong></div>
@@ -784,9 +844,8 @@ async function sendChat() {
     appendChatMsg('ai', '<div class="spinner" style="width:14px;height:14px;border-width:1.5px;"></div>', true);
 
     try {
-        const res = await fetch('/api/chat', {
+        const res = await authFetch('/api/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ messages: chatHistory })
         });
         const data = await res.json();
@@ -826,7 +885,7 @@ function quickChat(text) {
 // ─────────────────────────────────────────────
 async function loadSettings() {
     try {
-        const res = await fetch('/api/settings');
+        const res = await authFetch('/api/settings');
         const settings = await res.json();
         document.getElementById('autoTradeToggle').checked = settings.auto_trade_enabled === 'true';
         document.getElementById('minConfidence').value = settings.auto_trade_min_confidence || 0.75;
@@ -867,9 +926,8 @@ async function loadSettings() {
 async function saveApiKey() {
     const key = document.getElementById('apiKeyInput').value.trim();
     if (!key) { showToast('请输入 API Key', 'error'); return; }
-    await fetch('/api/settings', {
+    await authFetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: 'deepseek_api_key', value: key })
     });
     document.getElementById('apiKeyInput').value = '';
@@ -881,16 +939,14 @@ async function saveAiProvider() {
     const provider = document.getElementById('aiProviderSelect').value;
     const key = document.getElementById('apiKeyInput').value.trim();
 
-    await fetch('/api/settings', {
+    await authFetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: 'ai_provider', value: provider })
     });
 
     if (key) {
-        await fetch('/api/settings', {
+        await authFetch('/api/settings', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ key: 'deepseek_api_key', value: key })
         });
         document.getElementById('apiKeyInput').value = '';
@@ -906,25 +962,22 @@ async function saveAlpacaSettings() {
     const paperMode = document.getElementById('alpacaPaperModeToggle').checked.toString();
 
     if (apiKey) {
-        await fetch('/api/settings', {
+        await authFetch('/api/settings', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ key: 'alpaca_api_key', value: apiKey })
         });
         document.getElementById('alpacaApiKeyInput').value = '';
     }
     if (secretKey) {
-        await fetch('/api/settings', {
+        await authFetch('/api/settings', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ key: 'alpaca_secret_key', value: secretKey })
         });
         document.getElementById('alpacaSecretKeyInput').value = '';
     }
 
-    await fetch('/api/settings', {
+    await authFetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: 'alpaca_paper_mode', value: paperMode })
     });
 
@@ -939,13 +992,13 @@ async function saveSettings() {
         { key: 'risk_per_trade_pct', value: document.getElementById('riskPct').value },
     ];
     for (const s of settings) {
-        await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) });
+        await authFetch('/api/settings', { method: 'POST', body: JSON.stringify(s) });
     }
 }
 
 async function saveRefreshInterval() {
     const val = document.getElementById('refreshInterval').value;
-    await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'refresh_interval_seconds', value: val }) });
+    await authFetch('/api/settings', { method: 'POST', body: JSON.stringify({ key: 'refresh_interval_seconds', value: val }) });
     showToast('✅ 刷新间隔已保存', 'success');
 }
 
@@ -980,3 +1033,174 @@ window.toggleApiKeyVisibility = function () {
 };
 
 window.saveAiProvider = saveAiProvider;
+
+// ─────────────────────────────────────────────
+// Auth Handlers
+// ─────────────────────────────────────────────
+function toggleAuthMode(mode) {
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById('registerForm');
+    const subtitle = document.getElementById('authSubtitle');
+
+    if (mode === 'register') {
+        loginForm.style.display = 'none';
+        registerForm.style.display = 'block';
+        subtitle.textContent = '创建您的交易账户';
+    } else {
+        loginForm.style.display = 'block';
+        registerForm.style.display = 'none';
+        subtitle.textContent = '请登录您的交易账户';
+    }
+}
+
+async function handleLogin() {
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value.trim();
+
+    if (!username || !password) {
+        showToast('请输入用户名和密码', 'error');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            showToast(err.detail || '登录失败', 'error');
+            return;
+        }
+
+        const data = await res.json();
+        authToken = data.access_token;
+        localStorage.setItem('auth_token', authToken);
+        showToast('🔓 登录成功', 'success');
+        await initApp();
+    } catch (e) {
+        showToast('登录出错', 'error');
+    }
+}
+
+async function handleRegister() {
+    const username = document.getElementById('regUsername').value.trim();
+    const email = document.getElementById('regEmail').value.trim();
+    const password = document.getElementById('regPassword').value.trim();
+
+    if (!username || password.length < 6) {
+        showToast('用户名和密码（至少6位）是必填的', 'error');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, email, password })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            showToast(err.detail || '注册失败', 'error');
+            return;
+        }
+
+        showToast('✅ 注册成功，请登录', 'success');
+        toggleAuthMode('login');
+    } catch (e) {
+        showToast('注册出错', 'error');
+    }
+}
+
+function handleLogout() {
+    authToken = '';
+    currentUser = null;
+    localStorage.removeItem('auth_token');
+    document.getElementById('authOverlay').style.display = 'flex';
+    if (ws) ws.close();
+    showToast('已安全退出', 'info');
+}
+
+// ─────────────────────────────────────────────
+// Transfer Handlers
+// ─────────────────────────────────────────────
+async function handleTransfer(type) {
+    const input = type === 'DEPOSIT' ? 'depositAmount' : 'withdrawAmount';
+    const amount = parseFloat(document.getElementById(input).value);
+
+    if (isNaN(amount) || amount <= 0) {
+        showToast('请输入有效金额', 'error');
+        return;
+    }
+
+    try {
+        const res = await authFetch('/api/transfer', {
+            method: 'POST',
+            body: JSON.stringify({ amount, type })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            showToast(err.detail || '操作失败', 'error');
+            return;
+        }
+
+        const data = await res.json();
+        currentUser.balance = data.balance;
+        showToast(`✅ ${type === 'DEPOSIT' ? '充值' : '提现'}成功`, 'success');
+        loadPortfolio();
+    } catch (e) {
+        showToast('资金划转失败', 'error');
+    }
+}
+
+window.handleLogin = handleLogin;
+window.handleRegister = handleRegister;
+window.handleLogout = handleLogout;
+window.toggleAuthMode = toggleAuthMode;
+window.handleTransfer = handleTransfer;
+
+// ─────────────────────────────────────────────
+// Modal Helpers
+// ─────────────────────────────────────────────
+function openModal(id) {
+    document.getElementById(id).classList.add('open');
+}
+
+async function handleQuickRecharge() {
+    const input = document.getElementById('quickDepositAmount');
+    const amount = parseFloat(input.value);
+
+    if (isNaN(amount) || amount <= 0) {
+        showToast('请输入有效金额', 'error');
+        return;
+    }
+
+    try {
+        const res = await authFetch('/api/transfer', {
+            method: 'POST',
+            body: JSON.stringify({ amount, type: 'DEPOSIT' })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            showToast(err.detail || '操作失败', 'error');
+            return;
+        }
+
+        const data = await res.json();
+        currentUser.balance = data.balance;
+        showToast(`✅ 成功充值 $${amount.toLocaleString()}`, 'success');
+        closeModal('rechargeModal');
+        loadPortfolio();
+    } catch (e) {
+        showToast('充值失败', 'error');
+    }
+}
+
+window.openModal = openModal;
+window.closeModal = closeModal;
+window.handleQuickRecharge = handleQuickRecharge;

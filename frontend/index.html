@@ -12,6 +12,55 @@
 </head>
 
 <body>
+  <!-- ─── Auth Overlay ─── -->
+  <div id="authOverlay" class="auth-overlay" style="display:none;">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div>AlphaTrader Pro</div>
+        <p id="authSubtitle" style="font-size:13px;color:var(--text-secondary);">请登录您的交易账户</p>
+      </div>
+
+      <div id="loginForm">
+        <div class="input-group" style="margin-bottom:16px;">
+          <label class="input-label">用户名</label>
+          <input class="input" id="loginUsername" placeholder="您的用户名" />
+        </div>
+        <div class="input-group" style="margin-bottom:20px;">
+          <label class="input-label">密码</label>
+          <input class="input" id="loginPassword" type="password" placeholder="请输入密码" />
+        </div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;" onclick="handleLogin()">
+          立即登录
+        </button>
+        <div class="auth-footer" style="margin-top:20px;">
+          没有账户？ <span class="auth-link" onclick="toggleAuthMode('register')">点击注册</span>
+        </div>
+      </div>
+
+      <div id="registerForm" style="display:none;">
+        <div class="input-group" style="margin-bottom:16px;">
+          <label class="input-label">用户名</label>
+          <input class="input" id="regUsername" placeholder="设置用户名" />
+        </div>
+        <div class="input-group" style="margin-bottom:16px;">
+          <label class="input-label">电子邮箱</label>
+          <input class="input" id="regEmail" type="email" placeholder="optional@example.com" />
+        </div>
+        <div class="input-group" style="margin-bottom:20px;">
+          <label class="input-label">密码</label>
+          <input class="input" id="regPassword" type="password" placeholder="设置 6 位以上密码" />
+        </div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;"
+          onclick="handleRegister()">
+          免费注册
+        </button>
+        <div class="auth-footer" style="margin-top:20px;">
+          已有账户？ <span class="auth-link" onclick="toggleAuthMode('login')">返回登录</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="app-layout">
 
     <!-- ─── Header ─── -->
@@ -41,6 +90,15 @@
 
     <!-- ─── Sidebar ─── -->
     <nav class="sidebar">
+      <!-- User Profile -->
+      <div class="user-profile">
+        <div class="user-avatar" id="userInitial">U</div>
+        <div class="user-info">
+          <div class="user-name" id="userNameDisplay">加载中...</div>
+          <div style="font-size:10px;color:var(--text-muted);" id="userRole">标准账户</div>
+        </div>
+      </div>
+
       <div class="nav-section-label">行情</div>
       <a class="nav-item active" id="nav-markets" onclick="showPage('markets')">
         <span class="nav-icon">🌍</span> 全球市场
@@ -72,8 +130,17 @@
 
       <div class="sidebar-footer">
         <div id="sidebarModeLabel" style="margin-bottom:6px;">交易模式加载中...</div>
-        <div id="sidebarEquity" style="font-size:14px;font-weight:700;color:var(--accent-bright);">$100,000.00</div>
+        <div id="sidebarEquity" style="font-size:14px;font-weight:700;color:var(--accent-bright);">$0.00</div>
         <div id="sidebarPnl" style="font-size:11px;margin-top:2px;" class="text-muted">总收益 $0.00 (0.00%)</div>
+
+        <button class="btn btn-success btn-sm" style="width:100%;margin-top:10px;justify-content:center;"
+          onclick="openModal('rechargeModal')">
+          💰 立即充值
+        </button>
+
+        <div class="logout-btn" onclick="handleLogout()">
+          <span>🚪 退出登录</span>
+        </div>
       </div>
     </nav>
 
@@ -227,9 +294,31 @@
       </div>
 
       <!-- AI Portfolio Analysis -->
-      <div class="card" id="pfAnalysisCard" style="display:none;">
+      <div class="card mb-20" id="pfAnalysisCard" style="display:none;">
         <div class="card-title">🤖 DeepSeek-R1 投资组合分析</div>
         <div id="pfAnalysisContent"></div>
+      </div>
+
+      <!-- Simulation Transfer -->
+      <div class="card">
+        <div class="card-title">💰 模拟充值与提现</div>
+        <div class="page-subtitle">模拟账户资金划转，不涉及真实资金</div>
+        <div class="transfer-grid">
+          <div class="transfer-card">
+            <h4>充值 (Deposit)</h4>
+            <div style="display:flex;gap:8px;">
+              <input type="number" class="input" id="depositAmount" placeholder="金额" value="10000" />
+              <button class="btn btn-success btn-sm" onclick="handleTransfer('DEPOSIT')">充值</button>
+            </div>
+          </div>
+          <div class="transfer-card">
+            <h4>提现 (Withdraw)</h4>
+            <div style="display:flex;gap:8px;">
+              <input type="number" class="input" id="withdrawAmount" placeholder="金额" value="1000" />
+              <button class="btn btn-danger btn-sm" onclick="handleTransfer('WITHDRAW')">提现</button>
+            </div>
+          </div>
+        </div>
       </div>
     </main>
 
@@ -475,8 +564,23 @@
     </div>
   </div>
 
-  <!-- ─── Toasts ─── -->
-  <div class="toast-container" id="toastContainer"></div>
+  <!-- ─── Recharge Modal ─── -->
+  <div class="modal-overlay" id="rechargeModal">
+    <div class="modal" style="max-width:350px;">
+      <div class="modal-header">
+        <div class="modal-title">💰 账户充值 (模拟)</div>
+        <button class="modal-close" onclick="closeModal('rechargeModal')">✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <p style="font-size:13px;color:var(--text-secondary);">增加您的模拟交易资金。此操作仅影响模拟账户，不涉及真实资金。</p>
+        <div class="input-group">
+          <label class="input-label">存入金额 (USD)</label>
+          <input class="input" id="quickDepositAmount" type="number" min="1" placeholder="例如: 10000" value="10000" />
+        </div>
+        <button class="btn btn-success w-full" style="padding:12px;" onclick="handleQuickRecharge()">确认充值</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/app.js?v=4"></script>
 </body>

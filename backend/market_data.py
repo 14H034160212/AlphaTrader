@@ -43,7 +43,7 @@ DEFAULT_WATCHLIST = [
     # ---- Big Tech & E-Commerce ----
     "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA",
     # ---- Value & Financials ----
-    "BRK-B", "JPM", "V", "XOM", "UNH",
+    "JPM", "V", "XOM", "UNH",
     # ---- Leveraged & Broad Market ETFs ----
     "SPY", "QQQ", "TQQQ", "SOXL",
     # ---- Crypto Proxy ----

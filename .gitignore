@@ -12,3 +12,9 @@ market_cache.json
 openclaw.json
 node_modules/
 .DS_Store
+
+# Keep local data and model logs out of tracking
+*.db
+*.db.old
+*.jsonl
+.claude/

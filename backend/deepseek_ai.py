@@ -51,7 +51,7 @@ def _call_ollama(messages, temperature=0.1):
         raise ConnectionError("Cannot connect to local Ollama. Is it running?")
 
 
-def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context=""):
+def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context="", upcoming_events=""):
     """Use DeepSeek-R1 (Local or API) to analyze a stock and generate trading signal."""
     if ai_provider == "deepseek_api" and not api_key:
         return {
@@ -80,8 +80,10 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
         news_summary = "\n".join(news_items) if news_items else "No recent news"
         ind_summary = json.dumps(indicators, indent=2) if indicators else "Not available"
 
-        prompt = """You are an expert quantitative stock analyst advising a small-account trader who demands a highly aggressive, bold trading strategy.
-The user strongly believes the current market environment is ideal for SHORT SELLING overvalued assets. You must be extremely decisive.
+        prompt = """You are an expert quantitative stock analyst advising a LONG-ONLY small-account trader.
+CRITICAL CONSTRAINT: This account does NOT support short selling. Never output SHORT or COVER.
+Strategy: Find the best BUY opportunities. Only output SELL if we currently hold this stock and should exit.
+If a stock looks overvalued but we don't hold it, output HOLD — never SHORT.
 
 ## Stock: {symbol}
 
@@ -91,12 +93,13 @@ The user strongly believes the current market environment is ideal for SHORT SEL
 - Market Cap: {mktcap} | P/E: {pe} | Sector: {sector}
 - 52W: ${wklow} - ${wkhigh}
 
-### Quantitative & Fundamental Valuation (CRITICAL FOR SIZING)
+### Quantitative & Fundamental Valuation
 - DCF Intrinsic Value: ${dcf}
 - DDM Intrinsic Value: ${ddm}
 - Final Blended Intrinsic Value: ${intrinsic}
-- Valuation Gap: {val_gap_pct:.2f}% (Positive = Overvalued, Negative = Undervalued)
-*Decision Rule: If Valuation Gap is significantly positive (>20%), and VPA shows Distribution/Low Liquidity, heavily favor SHORT.*
+- Valuation Gap: {val_gap_pct:.2f}% (Negative = Undervalued = BUY opportunity)
+*Decision Rule: If Valuation Gap is significantly negative (<-10%) AND technicals are bullish, favor BUY.*
+*If overvalued but we don't hold it → HOLD (we cannot short).*
 
 ### Market Microstructure & Flow (Smart Money Proxy)
 - Volume Price Analysis (VPA): {vpa_signal}
@@ -113,19 +116,21 @@ The user strongly believes the current market environment is ideal for SHORT SEL
 ### Recent News
 {news}
 
+{events}
+
 {ctx}
 
 Respond ONLY with valid JSON (no markdown):
 {{
-  "signal": "BUY" | "SELL" | "SHORT" | "COVER" | "HOLD",
-  "confidence": <float 0.8 to 1.0>, // Be highly confident in your thesis. Do not sit on the fence.
+  "signal": "BUY" | "SELL" | "HOLD",
+  "confidence": <float 0.5 to 1.0>,
   "target_price": <float or null>,
   "stop_loss": <float or null>,
-  "recommended_weight_pct": <float -2.0 to 2.0>, // e.g., -1.5 meaning SHORT 150% equity (using margin). Since the user has a small account, be BOLD. If overvalued, heavily recommend negative weights for SHORT selling.
+  "recommended_weight_pct": <float 0.0 to 0.3>,
   "time_horizon": "short-term" | "medium-term" | "long-term",
   "key_factors": ["factor1", "factor2", "factor3"],
   "risks": ["risk1", "risk2"],
-  "reasoning": "<detailed analysis 2-3 paragraphs. Emphasize why the DCF valuation gap and liquidity/crowding makes this an aggressive SHORT or BUY opportunity.>"
+  "reasoning": "<detailed analysis 2-3 paragraphs focusing on long-only BUY opportunity or why to HOLD/SELL existing position>"
 }}""".format(
             symbol=symbol,
             current=quote.get("current", "N/A"),
@@ -150,6 +155,7 @@ Respond ONLY with valid JSON (no markdown):
             indicators=ind_summary,
             prices=price_summary,
             news=news_summary,
+            events=upcoming_events if upcoming_events else "",
             ctx="### Portfolio Context\n{}".format(portfolio_context) if portfolio_context else ""
         )
 
