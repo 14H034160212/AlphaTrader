@@ -353,7 +353,12 @@ async def background_auto_trade_loop():
                         )
 
                         # Record to RL training dataset
-                        rl.record_signal_state(signal, quote, indicators or {}, full_context, portfolio_context)
+                        rl.record_signal_state(
+                            signal, quote, indicators or {}, 
+                            full_context, portfolio_context,
+                            catalysts=catalysts,
+                            active_macros=active_macros
+                        )
 
                         db_signal = AISignal(
                             user_id=user.id,
@@ -701,14 +706,22 @@ async def background_news_scan():
                     catalyst_context = ni.build_catalyst_context(symbol, catalysts)
                     priority_note = ni.resolve_signal_priority(symbol, catalysts, [])
 
+                    full_context = "\n\n".join(filter(None, [threat_context, catalyst_context, priority_note]))
+
                     signal = ai.analyze_stock(
                         ai_provider, api_key, symbol, quote,
                         indicators, history, news,
                         portfolio_context,
-                        "\n\n".join(filter(None, [threat_context, catalyst_context, priority_note]))
+                        full_context
                     )
 
-                    rl.record_signal_state(signal, quote, indicators or {}, threat_context, portfolio_context)
+                    rl.record_signal_state(
+                        signal, quote, indicators or {},
+                        full_context,
+                        portfolio_context,
+                        catalysts=catalysts,
+                        active_macros=[]
+                    )
 
                     db_signal = AISignal(
                         user_id=user.id,
