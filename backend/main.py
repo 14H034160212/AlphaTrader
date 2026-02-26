@@ -332,7 +332,19 @@ async def background_auto_trade_loop():
                         threat_context = ni.build_threat_context(symbol, threats)
                         sentiment_context = ss.build_sentiment_context(symbol)
                         blog_context = bm.build_blog_alert_context(blog_alerts, target_symbol=symbol)
-                        full_context = "\n\n".join(filter(None, [event_context, threat_context, macro_context, sentiment_context, blog_context, kronos_context]))
+
+                        # ── Fix 2 & 3: Positive catalysts + priority resolution ──
+                        catalysts = await loop.run_in_executor(
+                            None, ni.detect_catalysts_for_symbol, symbol, 6
+                        )
+                        catalyst_context = ni.build_catalyst_context(symbol, catalysts)
+                        priority_note = ni.resolve_signal_priority(symbol, catalysts, active_macros)
+
+                        full_context = "\n\n".join(filter(None, [
+                            event_context, threat_context, catalyst_context,
+                            priority_note, macro_context,
+                            sentiment_context, blog_context, kronos_context
+                        ]))
 
                         # AI analysis in executor (Ollama HTTP call — can take 30-60s)
                         signal = await loop.run_in_executor(
@@ -684,10 +696,16 @@ async def background_news_scan():
 
                     threat_context = ni.build_threat_context(symbol, new_threats)
 
+                    # ── Fix 2 & 3: Positive catalysts + priority resolution ──
+                    catalysts = ni.detect_catalysts_for_symbol(symbol, hours_back=6)
+                    catalyst_context = ni.build_catalyst_context(symbol, catalysts)
+                    priority_note = ni.resolve_signal_priority(symbol, catalysts, [])
+
                     signal = ai.analyze_stock(
                         ai_provider, api_key, symbol, quote,
                         indicators, history, news,
-                        portfolio_context, threat_context
+                        portfolio_context,
+                        "\n\n".join(filter(None, [threat_context, catalyst_context, priority_note]))
                     )
 
                     rl.record_signal_state(signal, quote, indicators or {}, threat_context, portfolio_context)

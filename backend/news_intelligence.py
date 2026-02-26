@@ -15,8 +15,11 @@ import sys
 sys.path.append("/home/qbao775/.local/lib/python3.8/site-packages")
 
 import logging
+import xml.etree.ElementTree as ET
+import requests
 import yfinance as yf
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +242,66 @@ def fetch_recent_news(symbol: str, hours_back: int = 24) -> list:
         return []
 
 
+def _fetch_rss_news(symbol: str, hours_back: int = 24) -> list:
+    """
+    [Fallback] Fetch news via Yahoo Finance RSS when yfinance JSON API fails.
+    No API key required; uses public RSS endpoint.
+    """
+    url = (
+        f"https://feeds.finance.yahoo.com/rss/2.0/headline"
+        f"?s={symbol}&region=US&lang=en-US"
+    )
+    cutoff = datetime.utcnow() - timedelta(hours=hours_back)
+    recent = []
+    try:
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "AlphaTrader/1.0"})
+        if resp.status_code != 200:
+            logger.debug(f"[RSS] {symbol} HTTP {resp.status_code}")
+            return []
+        root = ET.fromstring(resp.text)
+        ns = {"dc": "http://purl.org/dc/elements/1.1/"}
+        channel = root.find("channel")
+        if channel is None:
+            return []
+        for item in channel.findall("item"):
+            title_el = item.find("title")
+            pub_el = item.find("pubDate")
+            creator_el = item.find("dc:creator", ns)
+            if title_el is None or pub_el is None:
+                continue
+            try:
+                pub_time = parsedate_to_datetime(pub_el.text).replace(tzinfo=None)
+            except Exception:
+                continue
+            if pub_time < cutoff:
+                continue
+            recent.append({
+                "title": title_el.text or "",
+                "publisher": creator_el.text if creator_el is not None else "Yahoo Finance",
+                "time": pub_time.isoformat(),
+                "symbol": symbol,
+                "source": "rss",
+            })
+    except Exception as e:
+        logger.debug(f"[RSS] Could not fetch RSS for {symbol}: {e}")
+    return recent
+
+
+def fetch_news_with_fallback(symbol: str, hours_back: int = 24) -> list:
+    """
+    Primary: yfinance.  Fallback: Yahoo Finance RSS.
+    Always returns a list (empty if both sources fail).
+    """
+    results = fetch_recent_news(symbol, hours_back)
+    if results:
+        return results
+    logger.info(f"[NewsIntel] yfinance returned 0 news for {symbol}, trying RSS fallback...")
+    rss_results = _fetch_rss_news(symbol, hours_back)
+    if rss_results:
+        logger.info(f"[NewsIntel] RSS fallback returned {len(rss_results)} items for {symbol}")
+    return rss_results
+
+
 def detect_threats_for_symbol(target_symbol: str, hours_back: int = 24) -> list:
     """
     Check if any disruptors of `target_symbol` have published threatening news.
@@ -261,7 +324,7 @@ def detect_threats_for_symbol(target_symbol: str, hours_back: int = 24) -> list:
         ticker = DISRUPTOR_TICKERS.get(disruptor, disruptor)
         if ticker is None:
             continue  # Private company - skip direct fetch, rely on target's own news
-        news_items = fetch_recent_news(ticker, hours_back)
+        news_items = fetch_news_with_fallback(ticker, hours_back)
         for item in news_items:
             title_lower = item["title"].lower()
             matched_keywords = [kw for kw in keywords if kw in title_lower]
@@ -439,4 +502,278 @@ def build_macro_scenario_context(active_scenarios: list) -> str:
         "\n  ⚠️ INSTRUCTION: Adjust portfolio risk exposure based on above macro scenarios. "
         "Reduce positions in 'avoid' stocks, consider rotating into beneficiaries."
     )
+    return "\n".join(lines)
+
+
+# ── Fix 2: Positive Catalyst Map ─────────────────────────────────────────────
+# Monitors for BULLISH events: large contracts, partnerships, earnings beats,
+# product launches, regulatory approvals, etc.
+# When matched, generates a BUY-leaning context for the AI.
+
+CATALYST_MAP = {
+    "AMD": {
+        "catalyst_keywords": [
+            "major contract", "partnership", "ai chip deal", "chip deployment",
+            "gigawatt", "multi-year deal", "wins deal", "selected by", "chosen by",
+            "supply agreement", "record revenue", "beats estimates", "beat expectations",
+            "data center", "mi300", "mi350", "instinct", "hyperscaler",
+            "meta amd", "google amd", "microsoft amd", "amazon amd",
+        ],
+        "upside_thesis": "AMD MI300/MI350 AI GPU adoption by hyperscalers; server CPU share gains vs Intel",
+    },
+    "NVDA": {
+        "catalyst_keywords": [
+            "blackwell", "gb200", "h100 sold out", "record datacenter", "beats estimates",
+            "ai infrastructure", "sovereign ai", "new model", "major order",
+        ],
+        "upside_thesis": "NVIDIA Blackwell GPU cycle; sovereign AI infrastructure spending",
+    },
+    "META": {
+        "catalyst_keywords": [
+            "ai chip", "llama", "metaverse revenue", "record ad revenue", "beats estimates",
+            "reels monetization", "whatsapp business", "ai assistant adoption",
+        ],
+        "upside_thesis": "Meta AI infrastructure + ad revenue acceleration via Reels/AI",
+    },
+    "MSFT": {
+        "catalyst_keywords": [
+            "copilot revenue", "azure growth", "ai contract", "openai deal",
+            "beats estimates", "record cloud", "enterprise ai",
+        ],
+        "upside_thesis": "Azure AI growth driven by Copilot/OpenAI integration",
+    },
+    "GOOGL": {
+        "catalyst_keywords": [
+            "gemini adoption", "tpu", "cloud ai", "beats estimates", "search ai",
+            "waymo revenue", "record ad", "cloud deal",
+        ],
+        "upside_thesis": "Google Cloud AI + Gemini monetization; TPU cost advantage",
+    },
+    "TSLA": {
+        "catalyst_keywords": [
+            "robotaxi launch", "fsd", "full self-driving", "cybercab", "record deliveries",
+            "energy storage", "megapack", "beats estimates", "optimus robot",
+        ],
+        "upside_thesis": "Tesla FSD/robotaxi optionality + energy storage growth",
+    },
+    "NVDA": {
+        "catalyst_keywords": [
+            "blackwell", "gb200", "record datacenter", "beats estimates",
+            "ai infrastructure spending", "sovereign ai", "new chip",
+        ],
+        "upside_thesis": "NVIDIA Blackwell GPU supercycle; AI training demand",
+    },
+    "AMZN": {
+        "catalyst_keywords": [
+            "aws record", "trainium", "inferentia", "ai cloud", "beats estimates",
+            "prime growth", "record profit", "genai workload",
+        ],
+        "upside_thesis": "AWS AI workload growth + Trainium chip efficiency advantage",
+    },
+    "IBIT": {
+        "catalyst_keywords": [
+            "bitcoin etf inflow", "btc all time high", "institutional bitcoin",
+            "corporate treasury bitcoin", "bitcoin adoption", "sec approval",
+        ],
+        "upside_thesis": "Bitcoin ETF inflows from institutional/corporate treasury demand",
+    },
+    "MSTR": {
+        "catalyst_keywords": [
+            "bitcoin purchase", "btc acquisition", "saylor", "bitcoin strategy",
+            "bitcoin treasury", "btc all time high",
+        ],
+        "upside_thesis": "MicroStrategy leveraged Bitcoin accumulation strategy",
+    },
+    "AVGO": {
+        "catalyst_keywords": [
+            "custom asic", "xpu", "ai chip design", "hyperscaler contract",
+            "google tpu", "meta asic", "apple chip", "beats estimates", "record networking",
+        ],
+        "upside_thesis": "Broadcom custom AI ASIC design wins at Google/Meta/Apple",
+    },
+    "GLD": {
+        "catalyst_keywords": [
+            "gold all time high", "central bank buying", "haven demand",
+            "inflation hedge", "gold rally", "tariff fear", "recession fear",
+            "dollar weakness", "fed cut expectations",
+        ],
+        "upside_thesis": "Gold safe-haven demand on macro uncertainty/tariffs/rate cuts",
+    },
+    "SLV": {
+        "catalyst_keywords": [
+            "silver rally", "industrial demand", "silver all time high",
+            "solar panel demand", "precious metals", "inflation hedge",
+        ],
+        "upside_thesis": "Silver dual role: industrial demand (solar/EVs) + inflation hedge",
+    },
+    "TQQQ": {
+        "catalyst_keywords": [
+            "nasdaq rally", "tech rally", "rate cut", "fed pivot",
+            "ai rally", "risk on", "growth stock rally",
+        ],
+        "upside_thesis": "3x leveraged NASDAQ - benefits from tech/AI bull market + rate cuts",
+    },
+    "SOXL": {
+        "catalyst_keywords": [
+            "semiconductor rally", "chip demand", "ai chip boom", "record orders",
+            "tsmc capex", "chip act", "semiconductor upcycle",
+        ],
+        "upside_thesis": "3x leveraged semiconductor ETF - benefits from AI chip spending cycle",
+    },
+}
+
+
+def detect_catalysts_for_symbol(target_symbol: str, hours_back: int = 24) -> list:
+    """
+    Check if there is positive catalyst news for `target_symbol`.
+    Returns list of detected catalysts with strength scoring.
+    
+    Unlike detect_threats_for_symbol(), this looks for BULLISH signals
+    such as large contracts, partnerships, earnings beats, product launches.
+    """
+    config = CATALYST_MAP.get(target_symbol)
+    if not config:
+        return []
+
+    catalysts = []
+    keywords = [k.lower() for k in config["catalyst_keywords"]]
+
+    # Fetch news for the target stock itself (direct catalysts)
+    news_items = fetch_news_with_fallback(target_symbol, hours_back)
+
+    for item in news_items:
+        title_lower = item["title"].lower()
+        matched_keywords = [kw for kw in keywords if kw in title_lower]
+        if matched_keywords:
+            strength = len(matched_keywords)
+            catalysts.append({
+                "target_symbol": target_symbol,
+                "news_title": item["title"],
+                "publisher": item.get("publisher", ""),
+                "time": item["time"],
+                "matched_keywords": matched_keywords,
+                "upside_thesis": config["upside_thesis"],
+                "strength": strength,
+                "catalyst_level": "STRONG" if strength >= 3 else "MEDIUM" if strength >= 2 else "MILD",
+                "source": item.get("source", "yfinance"),
+            })
+
+    if catalysts:
+        for c in catalysts:
+            logger.info(
+                f"[CatalystMap] 🚀 CATALYST DETECTED: {target_symbol} — \"{c['news_title'][:60]}\" "
+                f"(keywords: {c['matched_keywords']}) → Level: {c['catalyst_level']}"
+            )
+
+    return catalysts
+
+
+def build_catalyst_context(symbol: str, catalysts: list) -> str:
+    """Build a BUY-leaning context string for the AI about detected positive catalysts."""
+    if not catalysts:
+        return ""
+
+    lines = [f"### 🚀 POSITIVE CATALYST ALERTS for {symbol}"]
+    for c in catalysts:
+        lines.append(
+            f"\n[{c['catalyst_level']}] Positive Catalyst Detected:\n"
+            f"  News: \"{c['news_title']}\"\n"
+            f"  Source: {c['publisher']} ({c['time'][:10]})\n"
+            f"  Keywords matched: {', '.join(c['matched_keywords'])}\n"
+            f"  Thesis: {c['upside_thesis']}\n"
+            f"  → INSTRUCTION: This is a BULLISH signal for {symbol}. "
+            f"Strongly consider BUY if not already positioned. "
+            f"This catalyst may outweigh general macro headwinds."
+        )
+    return "\n".join(lines)
+
+
+# ── Fix 3: Catalyst vs Macro Priority Resolution ──────────────────────────────
+# When a strong individual stock catalyst CONFLICTS with a macro bearish scenario,
+# this function produces a priority note for the AI to weigh correctly.
+#
+# Override Rules (conservative by design):
+#   MILD catalyst    (1 kw match)  → cannot override any macro scenario
+#   MEDIUM catalyst  (2 kw match)  → can override LOW severity macro scenarios
+#   STRONG catalyst  (3+ kw match) → can override MEDIUM/HIGH macro scenarios
+#                                    but NOT CRITICAL (e.g. 2028 GIC)
+
+_MACRO_SEVERITY_RANK = {
+    "BULLISH": 0,
+    "LOW": 1,
+    "MEDIUM": 2,
+    "HIGH": 3,
+    "CRITICAL": 4,
+}
+
+
+def resolve_signal_priority(symbol: str, catalysts: list, active_macros: list) -> str:
+    """
+    Produce a priority-resolution note for the AI when catalysts conflict with macros.
+
+    Returns an instruction string injected into the AI context, helping it decide
+    whether to follow the macro bias or the individual catalyst signal.
+    """
+    if not catalysts or not active_macros:
+        return ""
+
+    # Find the highest-strength catalyst for this symbol
+    best_catalyst = max(catalysts, key=lambda c: c["strength"])
+    cat_strength = best_catalyst["strength"]
+    cat_level = best_catalyst["catalyst_level"]  # MILD / MEDIUM / STRONG
+
+    # Find macro scenarios that list this symbol as one to avoid
+    conflicting_macros = [
+        m for m in active_macros
+        if symbol in m.get("stocks_to_avoid", [])
+    ]
+    if not conflicting_macros:
+        # No conflict — catalyst is purely additive
+        return (
+            f"### ✅ PRIORITY NOTE for {symbol}\n"
+            f"A [{cat_level}] catalyst was detected with no conflicting macro scenario. "
+            f"The bullish catalyst signal is ADDITIVE — weight it alongside technical analysis."
+        )
+
+    # Find the most severe conflicting macro
+    worst_macro = max(
+        conflicting_macros,
+        key=lambda m: _MACRO_SEVERITY_RANK.get(m.get("severity", "LOW"), 1)
+    )
+    macro_severity = worst_macro.get("severity", "LOW")
+    macro_rank = _MACRO_SEVERITY_RANK.get(macro_severity, 1)
+
+    # Apply override rules
+    lines = [f"### ⚖️ SIGNAL CONFLICT RESOLUTION for {symbol}"]
+    lines.append(
+        f"  MACRO SCENARIO: [{macro_severity}] {worst_macro['name']} lists {symbol} as AVOID."
+    )
+    lines.append(
+        f"  INDIVIDUAL CATALYST: [{cat_level}] \"{best_catalyst['news_title'][:70]}\" "
+        f"({len(best_catalyst['matched_keywords'])} keyword matches)"
+    )
+
+    if macro_severity == "CRITICAL":
+        lines.append(
+            f"  → VERDICT: MACRO WINS. The {macro_severity} scenario is systemic and "
+            f"cannot be overridden by individual catalysts. HOLD or exercise caution on {symbol}."
+        )
+    elif cat_strength >= 3 and macro_rank <= 3:  # STRONG catalyst vs HIGH or lower
+        lines.append(
+            f"  → VERDICT: CATALYST OVERRIDES MACRO. The {cat_level} catalyst "
+            f"({cat_strength} keyword matches) is significant enough to override the {macro_severity} "
+            f"macro headwind for {symbol} specifically. Consider a TACTICAL BUY with tight stop-loss "
+            f"(the macro risk still exists as a broader backdrop)."
+        )
+    elif cat_strength >= 2 and macro_rank <= 2:  # MEDIUM catalyst vs MEDIUM or lower
+        lines.append(
+            f"  → VERDICT: PARTIAL OVERRIDE. The catalyst partially offsets the {macro_severity} "
+            f"macro concern. Consider a REDUCED POSITION (50% of normal size) in {symbol}."
+        )
+    else:
+        lines.append(
+            f"  → VERDICT: MACRO WINS. The catalyst ({cat_level}, {cat_strength} kw) is not "
+            f"strong enough to override the {macro_severity} macro scenario. HOLD {symbol} for now."
+        )
+
     return "\n".join(lines)
