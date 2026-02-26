@@ -47,7 +47,9 @@ DEFAULT_WATCHLIST = [
     # ---- Leveraged & Broad Market ETFs ----
     "SPY", "QQQ", "TQQQ", "SOXL",
     # ---- Crypto Proxy ----
-    "IBIT", "MSTR", "COIN"
+    "IBIT", "MSTR", "COIN",
+    # ---- Gold & Silver ----
+    "GLD", "SLV"
 ]
 
 
