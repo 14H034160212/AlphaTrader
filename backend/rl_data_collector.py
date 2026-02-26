@@ -24,8 +24,15 @@ logger = logging.getLogger(__name__)
 RL_DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "rl_training_data.jsonl")
 
 
-def record_signal_state(signal: dict, quote: dict, indicators: dict,
-                         event_context: str, portfolio_context: str):
+def record_signal_state(
+    signal: dict, 
+    quote: dict, 
+    indicators: dict,
+    event_context: str, 
+    portfolio_context: str,
+    catalysts: list = None,
+    active_macros: list = None
+):
     """
     Called immediately when an AI signal is generated.
     Saves the full state + action to the JSONL dataset.
@@ -60,6 +67,10 @@ def record_signal_state(signal: dict, quote: dict, indicators: dict,
         # ── Context ───────────────────────────────────────────────────────────
         "event_context_summary": event_context[:500] if event_context else "",
         "portfolio_context": portfolio_context,
+        "intelligence_metadata": {
+            "catalysts": catalysts or [],
+            "macros": active_macros or [],
+        },
         "reasoning_summary": signal.get("reasoning", "")[:300],
         # ── Outcome (filled in later) ─────────────────────────────────────────
         "reward_1d": None,   # % P&L after 1 day
