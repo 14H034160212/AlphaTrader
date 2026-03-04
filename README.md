@@ -19,30 +19,34 @@
 
 ---
 
-## 📡 数据来源与获取渠道
+## 📡 Data Sources and Acquisition Channels
 
-AlphaTrader Pro 采用多模态数据输入，所有数据获取均集成在后台守护任务中全自动运行：
+AlphaTrader Pro utilizes multi-modal data inputs, continuously fetched in the background by automated daemon tasks:
 
-1. **市场行情与历史 K 线**
-   - **渠道**：Yahoo Finance (`yfinance` Python 库)
-   - **内容**：全球股票实时价格、历史 OHLCV K 线数据（作为 Kronos 模型的输入）、自动计算的数十种技术指标（MACD, RSI, Bollinger Bands 等）。
-   - **机制**：每 2 分钟后台自动轮询，内置 1.5s 延迟与错峰请求机制，防止触发 API 限流。
-2. **个股新闻与公司动态**
-   - **渠道**：Yahoo Finance 新闻 API、AI 公司官方博客 RSS。
-   - **内容**：指定自选股的最新新闻摘要、公司重大财报发布、行业动态。
-   - **机制**：每 15 分钟定时扫描。
-3. **社交网络散户情绪 (Social Sentiment)**
-   - **渠道**：StockTwits、Reddit（如 r/wallstreetbets, r/stocks 等）。
-   - **内容**：提取散户讨论热度、看多/看空情绪标签。
-   - **机制**：每 30 分钟轮询 API 或网页扫描。
-4. **地缘政治与宏观经济事件 (核心特色)**
-   - **渠道**：内置 15 路全球顶级资讯来源的 RSS Feed。包括政府公告（美国白宫、国务院、财政部）、权威新闻机构（路透社、BBC、半岛电视台、卫报、美联社、金融时报等）。
-   - **内容**：实时抓取爆发性的“CRITICAL”级别全球宏观事件报道（如突发战争、重大制裁、关税政策、美联储降息等）。
-   - **机制**：每 10 分钟高频并发扫描解析，一旦触发预设的正则表达式与关键词剧本，系统会立即定位受益标的并拉偏 AI 决策进行抢单。
-5. **真实世界交易场 (Trading Execution)**
-   - **渠道**：Alpaca Live API。
-   - **内容**：免佣金的 API 原生互联网券商，作为整个大脑的“动作手臂”。
-   - **机制**：执行毫秒级的实盘交易以及模拟盘测试，系统采用直接指明资金金额（Notional）的下单方式以保证最高可靠性。
+1. **Market Data & Historical K-Lines**
+   - **Channel**: Yahoo Finance (`yfinance` Python library).
+   - **Content**: Real-time global stock prices, historical OHLCV data (for Kronos model input), and dozens of auto-calculated technical indicators (MACD, RSI, etc.).
+   - **Mechanism**: Auto-polled every 2 minutes with staggered requests to prevent API rate limiting.
+2. **Stock-Specific News & Company Updates**
+   - **Channel**: Yahoo Finance News API and official AI company blog RSS feeds.
+   - **Content**: Selected watchlist news summaries, major earnings releases, and industry trends.
+   - **Mechanism**: Scanned automatically every 15 minutes.
+3. **Retail Social Sentiment**
+   - **Channel**: StockTwits and Reddit (e.g., r/wallstreetbets, r/stocks).
+   - **Content**: Extraction of retail discussion volume and bullish/bearish emotion tags.
+   - **Mechanism**: Polled via API or specific web scraping every 30 minutes.
+4. **Geopolitical & Macroeconomic Events (Core Feature)**
+   - **Channel**: 15 integrated top-tier global RSS feeds (White House, Reuters, BBC, Financial Times, etc.).
+   - **Content**: Real-time capture of "CRITICAL" global macro events such as sudden wars, major sanctions, tariffs, or rate cuts.
+   - **Mechanism**: High-frequency concurrent scanning every 10 minutes to trigger specific scenario playbooks and auto-execute trades on beneficiary assets.
+5. **Real-World Trading Execution**
+   - **Channel**: Alpaca Live API.
+   - **Content**: A commission-free, API-native broker acting as the system's "execution arm".
+   - **Mechanism**: Executes millisecond-level live/paper trades, strictly using Notional (dollar-amount) orders for maximum reliability.
+6. **Daily Trading Experience & Feedback Loop**
+   - **Channel**: Internal System Logs & Reinforcement Learning (RL) Data Collector.
+   - **Content**: Extracted insights from daily profitable and losing trades, assessing why signals succeeded or failed.
+   - **Mechanism**: Systematically archives execution records into `rl_training_data.jsonl` to form an ongoing feedback loop, fine-tuning future LLM trading logic.
 
 ---
 
