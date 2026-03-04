@@ -1,21 +1,21 @@
 # AlphaTrader Pro
 
-**AlphaTrader Pro** 是一套全自动 AI 量化交易系统，基于 Python/FastAPI 后端 + 纯 HTML/JS 前端，通过本地 DeepSeek-R1 70B + Kronos K 线预测模型进行分析，经由 Alpaca Live API 执行真实交易。
+**AlphaTrader Pro** is a fully automated AI quantitative trading system powered by a Python/FastAPI backend and a pure HTML/JS frontend. It conducts analysis using a local DeepSeek-R1 70B model combined with the Kronos K-line prediction model, and executes real trades via the Alpaca Live API.
 
 ---
 
-## 核心功能
+## Core Features
 
-- **实时行情**：Yahoo Finance 全球市场数据，自动刷新（每 2 分钟，错峰请求）
-- **K 线预测**：Kronos foundation model（在 45+ 交易所数据上训练）预测未来 5 根蜡烛
-- **AI 决策**：本地 DeepSeek-R1 70B（Ollama DRL70B）综合 K 线预测 + 技术指标 + 新闻 + 社交情绪
-- **自动交易**：置信度 ≥ 70% 自动通过 Alpaca 下单（Notional 金额下单，支持实盘 / 模拟盘）
-- **地缘政治监控**：15 路 RSS 实时监控（白宫、路透社、BBC、半岛电视台等），自动识别战争/制裁等 CRITICAL 事件
-- **宏观情景检测**：自动识别降息/关税/经济衰退/地缘冲突等宏观事件并调整仓位策略
-- **多数据源**：yfinance 新闻 + RSS + StockTwits + Reddit + AI 公司博客
-- **数据压缩归档**：90 天滚动窗口，历史信号按周聚合压缩至 `signal_archives`，元数据自动清理
-- **RL 反馈循环**：每次交易写入 `rl_training_data.jsonl`，持续积累训练数据
-- **JWT 多用户**：安全认证，每用户独立持仓/设置/交易记录
+- **Real-time Market Data**: Global market data via Yahoo Finance, auto-refreshing every 2 minutes with staggered requests to avoid rate limits.
+- **K-Line Prediction**: The Kronos foundation model (trained on data from 45+ exchanges) predicts the next 5 candles based on historical data.
+- **AI Decision Making**: Local DeepSeek-R1 70B (Ollama DRL70B) synthesizes K-line predictions, technical indicators, news, and social sentiment.
+- **Automated Trading**: Automatically places orders via Alpaca (using Notional amounts, supporting both Live and Paper trading) when confidence is ≥ 70%.
+- **Geopolitical Monitoring**: Real-time tracking of 15 RSS feeds (White House, Reuters, BBC, Al Jazeera, etc.) to auto-detect CRITICAL events like wars and sanctions.
+- **Macro Scenario Detection**: Automatically identifies macro events such as rate cuts, tariffs, recessions, and geopolitical conflicts to adjust position strategies.
+- **Multiple Data Sources**: Yahoo Finance news + RSS + StockTwits + Reddit + AI company blogs.
+- **Data Compression & Archival**: A 90-day rolling window compresses historical signals into weekly summaries in `signal_archives` while auto-cleaning metadata.
+- **RL Feedback Loop**: Every executed trade is logged into `rl_training_data.jsonl`, continuously accumulating training data.
+- **JWT Multi-User**: Secure authentication with isolated positions, settings, and trade records per user.
 
 ---
 
@@ -50,68 +50,70 @@ AlphaTrader Pro utilizes multi-modal data inputs, continuously fetched in the ba
 
 ---
 
-## 系统架构
+## System Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
-│                  信息层（后台持续运行）                │
-│  yfinance → 价格/新闻/技术指标                        │
-│  StockTwits/Reddit → 社交情绪                        │
-│  RSS(Bloomberg/CNBC/AI博客) → 宏观+催化剂事件        │
-│  地缘政治RSS(白宫/路透社/BBC/半岛等) → 战争/制裁事件  │
+│                  Information Layer (Daemon)         │
+│  yfinance → Prices/News/Technical Indicators        │
+│  StockTwits/Reddit → Social Sentiment               │
+│  RSS(Bloomberg/CNBC/AI Blogs) → Macro+Catalysts     │
+│  Geopolitical RSS(White House/Reuters/BBC, etc.)    │
+│    → War/Sanction Events                            │
 └──────────────────────┬──────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────┐
-│                  分析层                               │
-│  Kronos-base (GPU-7, A100 80GB)                      │
-│    400根K线 → 预测未来5根蜡烛                         │
-│  DeepSeek-R1 70B (Ollama, DRL70B:latest)             │
-│    综合所有信息 → BUY/SELL/HOLD + 置信度              │
-│  宏观情景引擎                                         │
-│    地缘政治 + 经济数据 → 受益/回避股票列表             │
+│                  Analysis Layer                     │
+│  Kronos-base (GPU-7, A100 80GB)                     │
+│    400 Candles → Predict next 5 candles             │
+│  DeepSeek-R1 70B (Ollama, DRL70B:latest)            │
+│    Synthesize Data → BUY/SELL/HOLD + Confidence     │
+│  Macro Scenario Engine                              │
+│    Geopolitics + Economic Data → Beneficiary/Risk   │
+│    Stock Lists                                      │
 └──────────────────────┬──────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────┐
-│                  执行层                               │
-│  Alpaca Live API → Notional金额下单（更可靠）          │
-│  Paper Mode → 模拟交易                                │
-│  SQLite → 持仓/交易/信号/归档数据                     │
+│                  Execution Layer                    │
+│  Alpaca Live API → Notional orders (High Reliability│
+│  Paper Mode → Simulated trading                     │
+│  SQLite → Positions/Trades/Signals/Archives         │
 └─────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 环境要求
+## Environment Requirements
 
-| 组件 | 版本 | 说明 |
-|------|------|------|
-| Python | 3.10（conda） | `alphatrader` conda 环境 |
-| CUDA | 12.4+ | A100 GPU 运行 Kronos |
-| Ollama | 任意版本 | 运行 DRL70B 模型 |
-| GPU | A100 80GB × 1 | 推荐 GPU-7（空闲最多） |
-| SQLite | 内置 | 无需单独安装 |
+| Component | Version | Description |
+|-----------|---------|-------------|
+| Python | 3.10 (conda) | `alphatrader` conda environment |
+| CUDA | 12.4+ | A100 GPU for running Kronos |
+| Ollama | Any | To run the DRL70B model |
+| GPU | A100 80GB × 1 | Recommend GPU-7 (most idle) |
+| SQLite | Built-in | No separate installation required |
 
 ---
 
-## 一次性安装（首次部署）
+## One-Time Installation (Initial Deployment)
 
-### 1. 克隆仓库
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/14H034160212/AlphaTrader.git
 cd /data/qbao775/AlphaTrader
 ```
 
-### 2. 创建 conda 环境并安装依赖
+### 2. Create Conda Environment and Install Dependencies
 
 ```bash
 conda create -n alphatrader python=3.10 -y
 
-# 安装 PyTorch（CUDA 12.4）
+# Install PyTorch (CUDA 12.4)
 /data/qbao775/miniconda3/envs/alphatrader/bin/pip install \
     torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 
-# 安装所有项目依赖
+# Install all project dependencies
 /data/qbao775/miniconda3/envs/alphatrader/bin/pip install \
     numpy pandas \
     fastapi "uvicorn[standard]" \
@@ -135,14 +137,14 @@ conda create -n alphatrader python=3.10 -y
     tqdm
 ```
 
-### 3. 下载 Kronos 模型代码
+### 3. Download Kronos Model Code
 
 ```bash
 cd /data/qbao775/AlphaTrader/kronos_lib
 git clone https://github.com/shiyu-coder/Kronos.git .
 ```
 
-### 4. 下载 Kronos 模型权重（HuggingFace）
+### 4. Download Kronos Model Weights (HuggingFace)
 
 ```bash
 /data/qbao775/miniconda3/envs/alphatrader/bin/python3 -c "
@@ -160,21 +162,21 @@ print('Done')
 "
 ```
 
-### 5. 安装 Ollama 并拉取 DeepSeek-R1 70B
+### 5. Install Ollama and Pull DeepSeek-R1 70B
 
 ```bash
-# 安装 Ollama（如未安装）
+# Install Ollama (if not installed)
 curl -fsSL https://ollama.com/install.sh | sh
 
-# 拉取 DeepSeek-R1 70B（约 42GB）
+# Pull DeepSeek-R1 70B (~42GB)
 ollama pull DRL70B:latest
 
-# 验证
+# Verify
 ollama list
-# 应看到：DRL70B:latest   42.5GB
+# Should display: DRL70B:latest   42.5GB
 ```
 
-### 6. 配置 systemd 自动启动
+### 6. Configure systemd for Auto-Start
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -203,71 +205,71 @@ systemctl --user enable alphatrader
 
 ---
 
-## 日常启动 / 停止
+## Daily Start / Stop
 
-### 启动服务
+### Start Service
 
 ```bash
 systemctl --user start alphatrader
 ```
 
-### 停止服务
+### Stop Service
 
 ```bash
 systemctl --user stop alphatrader
 ```
 
-### 重启服务
+### Restart Service
 
 ```bash
 systemctl --user restart alphatrader
 ```
 
-### 查看服务状态
+### Check Service Status
 
 ```bash
 systemctl --user status alphatrader
 ```
 
-### 查看实时日志
+### View Real-Time Logs
 
 ```bash
 tail -f /tmp/alphatrader.log
 ```
 
-### 验证服务正常
+### Verify Service Health
 
 ```bash
 curl http://localhost:8000/api/health
-# 返回：{"status":"ok","timestamp":"..."}
+# Returns: {"status":"ok","timestamp":"..."}
 ```
 
 ---
 
-## 初次使用配置（Web UI）
+## Initial Setup (Web UI)
 
-访问 `http://<服务器IP>:8000`，进入设置页面：
+Visit `http://<Server IP>:8000` and go to the settings page:
 
-| 设置项 | 推荐值 | 说明 |
-|--------|--------|------|
-| AI Provider | `本地 Ollama` | 使用 DRL70B（DeepSeek-R1 70B） |
-| Alpaca API Key | 你的 Key | 实盘用 Live，测试用 Paper |
-| Alpaca Secret Key | 你的 Secret | 同上 |
-| Alpaca Mode | `live` / `paper` | `paper` = 模拟，`live` = 实盘 |
-| Auto-Trading | `开启` | 置信度 ≥ 70% 自动下单 |
-| Min Confidence | `0.70` | 最低置信阈值 |
-| Risk Per Trade | `2.0%` | 每笔交易最大风险敞口 |
+| Setting | Recommended Value | Description |
+|---------|-------------------|-------------|
+| AI Provider | `Local Ollama` | Use DRL70B (DeepSeek-R1 70B) |
+| Alpaca API Key | Your Key | `Live` for real trades, `Paper` for testing |
+| Alpaca Secret Key | Your Secret | Same as above |
+| Alpaca Mode | `live` / `paper` | `paper` = simulated, `live` = real |
+| Auto-Trading | `Enabled` | Auto-order when confidence ≥ 70% |
+| Min Confidence | `0.70` | Minimum confidence threshold |
+| Risk Per Trade | `2.0%` | Max risk exposure per trade |
 
 ---
 
-## 通过 API 快速配置（命令行）
+## Quick Configuration via API (CLI)
 
 ```bash
-# 获取 token
+# Get token
 TOKEN=$(curl -s http://localhost:8000/api/auth/auto-login | \
     python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-# 配置 Alpaca 实盘
+# Configure Alpaca for Live trading
 curl -s -X POST http://localhost:8000/api/settings \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -283,7 +285,7 @@ curl -s -X POST http://localhost:8000/api/settings \
     -H "Content-Type: application/json" \
     -d '{"key":"alpaca_paper_mode","value":"false"}'
 
-# 开启自动交易
+# Enable auto-trading
 curl -s -X POST http://localhost:8000/api/settings \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -297,146 +299,146 @@ curl -s -X POST http://localhost:8000/api/settings \
 
 ---
 
-## 项目文件结构
+## Project Structure
 
-```
+```text
 AlphaTrader/
-├── start.sh                    # 启动脚本（含自动重启守护进程）
-├── stop.sh                     # 停止脚本
-├── rl_training_data.jsonl      # RL 强化学习训练数据（每次交易追加）
-├── intelligence_attribution_report.json  # 信号归因分析报告
+├── start.sh                    # Startup script (includes auto-restart daemon)
+├── stop.sh                     # Stop script
+├── rl_training_data.jsonl      # RL training data (appended per trade)
+├── intelligence_attribution_report.json  # Signal attribution analysis report
 │
 ├── backend/
-│   ├── main.py                 # FastAPI 主应用 + 所有后台任务
-│   ├── auth.py                 # JWT 认证（bcrypt 直接调用）
-│   ├── database.py             # SQLAlchemy 模型 + SQLite（含 SignalArchive）
-│   ├── trading_engine.py       # 交易引擎（Alpaca Notional 下单 + 空头保护）
-│   ├── market_data.py          # 行情获取 + 技术指标计算
-│   ├── deepseek_ai.py          # DeepSeek-R1 / Ollama AI 分析
-│   ├── kronos_analysis.py      # Kronos K 线预测（A100 GPU）
-│   ├── news_intelligence.py    # 新闻获取 + 宏观情景检测 + 地缘政治 RSS
-│   ├── social_sentiment.py     # StockTwits + Reddit 情绪扫描
-│   ├── blog_monitor.py         # AI 公司博客 RSS 监控
-│   ├── event_monitor.py        # 财报/宏观事件日历
-│   ├── intelligence_feedback.py # RL 信号反馈与奖励计算
-│   ├── rl_data_collector.py    # RL 训练数据收集器
-│   ├── quant_models.py         # 量化模型（DCF/DDM/VPA）
-│   ├── notifier.py             # 通知推送
-│   ├── trading_platform.db     # SQLite 数据库
-│   └── requirements.txt        # Python 依赖（参考，实际用 conda env）
+│   ├── main.py                 # FastAPI app + background tasks
+│   ├── auth.py                 # JWT authentication (bcrypt)
+│   ├── database.py             # SQLAlchemy models + SQLite (incl. SignalArchive)
+│   ├── trading_engine.py       # Trading engine (Alpaca Notional orders + short protection)
+│   ├── market_data.py          # Market data + technical indicators
+│   ├── deepseek_ai.py          # DeepSeek-R1 / Ollama AI analysis
+│   ├── kronos_analysis.py      # Kronos K-line prediction (A100 GPU)
+│   ├── news_intelligence.py    # News + macro scenario detection + geopolitical RSS
+│   ├── social_sentiment.py     # StockTwits + Reddit sentiment scanning
+│   ├── blog_monitor.py         # AI company blog RSS monitoring
+│   ├── event_monitor.py        # Earnings / macro event calendar
+│   ├── intelligence_feedback.py # RL signal feedback & reward calculation
+│   ├── rl_data_collector.py    # RL training data collector
+│   ├── quant_models.py         # Quantitative models (DCF/DDM/VPA)
+│   ├── notifier.py             # Notifications
+│   ├── trading_platform.db     # SQLite runtime database
+│   └── requirements.txt        # Python dependencies (for reference, use conda env)
 │
 ├── frontend/
-│   ├── index.html              # 单页应用主页面
-│   ├── app.js                  # 前端逻辑（行情/交易/AI分析）
-│   └── styles.css              # 深色主题样式
+│   ├── index.html              # SPA main page
+│   ├── app.js                  # Frontend logic (market/trading/AI analysis)
+│   └── styles.css              # Dark theme styles
 │
-└── kronos_lib/                 # Kronos 模型（git clone 进来）
-    ├── model/                  # Kronos 模型代码
+└── kronos_lib/                 # Kronos model (cloned from git)
+    ├── model/                  # Kronos code
     │   ├── __init__.py
     │   └── kronos.py           # KronosTokenizer, Kronos, KronosPredictor
-    ├── prediction_results/     # Kronos 预测结果（JSON，>90天自动 gzip 归档）
+    ├── prediction_results/     # Kronos prediction results (JSON, auto-gzipped >90 days)
     └── weights/
-        ├── Kronos-base/        # 模型权重（HuggingFace 下载）
-        └── Kronos-Tokenizer-base/  # 分词器权重
+        ├── Kronos-base/        # Model weights (HuggingFace)
+        └── Kronos-Tokenizer-base/  # Tokenizer weights
 ```
 
 ---
 
-## 数据存储
+## Data Storage
 
-| 数据 | 位置 | 说明 |
-|------|------|------|
-| 用户/持仓/交易/信号 | `backend/trading_platform.db` | SQLite，自动创建 |
-| 信号周聚合归档 | `signal_archives`（同一 DB） | 90天前的信号压缩为周摘要 |
-| 价格缓存 | 内存 | 重启后 ~2 分钟重建 |
-| Kronos 预测结果 | `kronos_lib/prediction_results/` | JSON；>90天自动 gzip 压缩 |
-| RL 训练数据 | `rl_training_data.jsonl` | JSONL 格式，持续追加 |
-| 信号归因报告 | `intelligence_attribution_report.json` | 定期更新 |
-| 服务日志 | `/tmp/alphatrader.log` | >200MB 时自动 gzip 轮转 |
+| Data | Location | Description |
+|------|----------|-------------|
+| Users/Positions/Trades/Signals | `backend/trading_platform.db` | SQLite, auto-created |
+| Weekly Signal Archives | `signal_archives` (Same DB) | >90 days signals compressed into weekly summaries |
+| Price Cache | Memory | Rebuilt ~2 mins after restart |
+| Kronos Predictions | `kronos_lib/prediction_results/` | JSON; compressed to gzip if >90 days old |
+| RL Training Data | `rl_training_data.jsonl` | JSONL format, appended continuously |
+| Signal Attribution Report | `intelligence_attribution_report.json` | Periodically updated |
+| Service Logs | `/tmp/alphatrader.log` | Auto-rotated/gzipped if >200MB |
 
-**数据保留策略（90 天）**：每天 UTC 00:00 自动执行维护任务：
-- AI 信号 >90 天 → 按 (用户, 股票, 周) 聚合写入 `signal_archives`，删除原始行
-- Kronos JSON >90 天 → gzip 压缩，删除原文件
-- 日志 >200MB → 保留最后 500 行摘要，gzip 旧日志，截断当前文件
-
----
-
-## 后台任务说明
-
-服务启动后自动运行以下后台循环：
-
-| 任务 | 频率 | 说明 |
-|------|------|------|
-| `background_price_refresh` | 每 2 分钟 | 刷新价格缓存，错峰请求防限流 |
-| `background_auto_trade_loop` | 持续 | 扫描自选股，AI 分析，自动下单 |
-| `background_news_scan` | 每 15 分钟 | yfinance 新闻 + 宏观情景检测 |
-| `background_news_scan`（地缘政治子任务） | 每 10 分钟 | 15路 RSS 地缘政治扫描，CRITICAL 事件自动触发受益股 AI 分析 |
-| `background_event_scan` | 每 15 分钟 | 竞争威胁 + 催化剂识别 |
-| `background_social_sentiment_scan` | 每 30 分钟 | StockTwits/Reddit 情绪 |
-| `background_blog_scan` | 每 15 分钟 | AI 公司博客 RSS |
-| `background_daily_summary` | 每天 | 日报摘要 |
-| `background_pending_trade_executor` | 每分钟 | 执行挂单 |
-| `_run_daily_maintenance` | 每天 UTC 00:00 | 信号压缩归档 + Kronos gzip + 日志轮转 |
+**Data Retention Policy (90 Days)**: Automated maintenance task runs daily at UTC 00:00:
+- AI Signals > 90 days → Aggregated into `signal_archives` by (user, stock, week) and deleted from original table.
+- Kronos JSON > 90 days → Gzipped, and JSON deleted.
+- Logs > 200MB → Keep last 500 lines as summary, gzip old logs, and truncate current file.
 
 ---
 
-## 地缘政治 RSS 监控
+## Background Tasks Overview
 
-系统监控以下 15 个来源，实时检测战争、制裁、关税等 CRITICAL 宏观事件：
+The following background loops run automatically once the service starts:
 
-| 来源 | 说明 |
-|------|------|
-| 美国白宫 | whitehouse.gov 官方 RSS |
-| 美国国务院 | state.gov 新闻发布 |
-| 美国财政部 | treasury.gov 公告 |
-| 路透社 | Reuters 顶级新闻 + 世界新闻 |
-| BBC | BBC 世界新闻 |
-| 半岛电视台 | Al Jazeera 英文 RSS |
-| 卫报 | The Guardian 世界版 |
-| NPR | NPR 国际新闻 |
-| 金融时报 | FT 世界新闻 |
-| 美联社 | AP 顶级头条 |
-| 以色列时报 | Times of Israel |
-| 耶路撒冷邮报 | Jerusalem Post |
-| OilPrice.com | 石油市场新闻 |
+| Task | Frequency | Description |
+|------|-----------|-------------|
+| `background_price_refresh` | Every 2 mins | Refreshes price cache; staggers requests to prevent rate limiting |
+| `background_auto_trade_loop` | Continuous | Scans watchlist, triggers AI analysis, and auto-trades |
+| `background_news_scan` | Every 15 mins | yfinance news + macro scenario detection |
+| `background_news_scan` (Geopolitical Sub-task) | Every 10 mins | 15-feed RSS geopolitical scanning; auto-triggers AI for beneficiary stocks on CRITICAL events |
+| `background_event_scan` | Every 15 mins | Competitive threats + catalyst identification |
+| `background_social_sentiment_scan` | Every 30 mins | StockTwits/Reddit sentiment |
+| `background_blog_scan` | Every 15 mins | AI company blog RSS |
+| `background_daily_summary` | Daily | Generates daily summary reports |
+| `background_pending_trade_executor` | Every 1 min | Executes pending limit/stop orders |
+| `_run_daily_maintenance` | Daily at UTC 00:00 | Signal archival + Kronos gzip + log rotation |
 
-### 已内置宏观情景
+---
 
-| 情景 | 严重级别 | 受益标的 | 回避标的 |
-|------|----------|----------|----------|
+## Geopolitical RSS Monitoring
+
+The system monitors these 15 sources to detect CRITICAL macro events such as wars, sanctions, or tariffs in real-time:
+
+| Source | Description |
+|--------|-------------|
+| US White House | whitehouse.gov official RSS |
+| US Dept of State | state.gov press releases |
+| US Treasury | treasury.gov announcements |
+| Reuters | Top news + World news |
+| BBC | BBC World news |
+| Al Jazeera | English RSS |
+| The Guardian | World edition |
+| NPR | International news |
+| Financial Times | World news |
+| Associated Press | Top headlines |
+| Times of Israel | Israel news |
+| Jerusalem Post | Israel news |
+| OilPrice.com | Oil market news |
+
+### Built-in Macro Scenarios
+
+| Scenario | Severity Level | Beneficiary Assets | Assets to Avoid |
+|----------|----------------|--------------------|-----------------|
 | `middle_east_war_2026` | CRITICAL | GLD, IAU, SLV, XOM, LMT, RTX, NOC | TSLA, AMZN, AAPL, QQQ, TQQQ, SOXL |
-| `fed_rate_cut` | HIGH | QQQ, ARKK, TSLA, NVDA, AMZN | GLD（部分） |
-| `tariff_war` | HIGH | 国内制造、农业 | 进出口依赖股 |
-| `recession_fears` | HIGH | GLD, TLT | 周期性股票 |
+| `fed_rate_cut` | HIGH | QQQ, ARKK, TSLA, NVDA, AMZN | GLD (Partially) |
+| `tariff_war` | HIGH | Domestic mfg, Agriculture | Import/Export dependent stocks |
+| `recession_fears` | HIGH | GLD, TLT | Cyclical stocks |
 
-当检测到 CRITICAL/HIGH 情景时，系统自动对受益股票触发 AI 分析，置信度 ≥ 70% 时自动下单。
-
----
-
-## Alpaca 下单说明
-
-系统使用 **Notional（金额）下单** 代替 qty（数量）下单，原因：
-
-- Alpaca 对碎股数量有最小单位限制，qty 方式小额订单常被取消
-- Notional 方式（如 `notional=18.00`）直接指定花费金额，可靠性更高
-- 最小下单金额：$1.00
-
-**空头保护**：卖出前系统自动向 Alpaca 验证是否持有该股票，若 Alpaca 端无持仓则跳过卖出，防止意外触发裸卖空导致订单被拒。
+When a CRITICAL/HIGH scenario is detected, the system automatically triggers an AI analysis for the beneficiary stocks, and issues a buy order if the confidence is ≥ 70%.
 
 ---
 
-## 故障排查
+## Alpaca Order Mechanism
 
-### 服务无法启动
+The system uses **Notional (Dollar-Amount) Orders** instead of quantity (qty) orders for the following reasons:
+
+- Alpaca limits the minimum fraction for qty orders, often causing small orders to be canceled.
+- Notional orders (e.g., `notional=18.00`) specify exact dollar amounts spent, providing much higher reliability.
+- Minimum order amount: $1.00
+
+**Short Protection Mechanism**: Before selling, the system automatically verifies your position via the Alpaca API. If Alpaca shows no holding, the sell action is skipped, preventing accidental naked shorting leading to order rejections.
+
+---
+
+## Troubleshooting
+
+### Service Fails to Start
 
 ```bash
-# 查看详细错误
+# View detailed error logs
 tail -50 /tmp/alphatrader.log
 
-# 检查端口占用
+# Check port usage
 ss -tlnp | grep 8000
 
-# 手动测试启动
+# Manual startup test
 cd /data/qbao775/AlphaTrader/backend
 /data/qbao775/miniconda3/envs/alphatrader/bin/python3 -c "
 import uvicorn
@@ -444,56 +446,56 @@ uvicorn.run('main:app', host='0.0.0.0', port=8000)
 "
 ```
 
-### Kronos 加载失败（CUDA OOM）
+### Kronos Fails to Load (CUDA OOM)
 
 ```bash
-# 检查 GPU 内存使用
+# Check GPU memory usage
 nvidia-smi --query-gpu=index,memory.used,memory.free --format=csv
 
-# 修改 start.sh，选择更空闲的 GPU
-# 将 CUDA_VISIBLE_DEVICES=7 改为其他空闲 GPU 编号
+# Modify start.sh to select a more idle GPU
+# E.g., Change CUDA_VISIBLE_DEVICES=7 to another free GPU index
 ```
 
-### Yahoo Finance 限流（Too Many Requests）
+### Yahoo Finance Throttle (Too Many Requests)
 
-价格刷新已设置 1.5s 延迟 + 2 分钟间隔，一般不会触发。
-若仍限流，可临时增加 `start.sh` 中的刷新间隔。
+The price refresh already operates with a 1.5s delay and 2-minute loop interval, usually avoiding throttling.
+If you still hit limits, temporarily increase the refresh interval in `start.sh`.
 
-### Alpaca 卖出被拒（not allowed to short）
+### Alpaca Sell Rejected (not allowed to short)
 
-系统已内置空头保护逻辑，卖出前自动验证 Alpaca 持仓。若仍报错：
+The system includes short protection that auto-verifies your Alpaca holding before selling. If the error persists:
 
 ```bash
-# 检查本地持仓与 Alpaca 实际持仓是否一致
+# Check if local portfolio syncs with Alpaca actual holding
 curl -s http://localhost:8000/api/positions -H "Authorization: Bearer $TOKEN"
 
-# 通过 Alpaca API 查询真实持仓
+# Query actual position using Alpaca API
 curl -s https://api.alpaca.markets/v2/positions \
     -H "APCA-API-KEY-ID: YOUR_KEY" \
     -H "APCA-API-SECRET-KEY: YOUR_SECRET"
 ```
 
-### Alpaca 买入订单被取消
+### Alpaca Buy Order Cancelled
 
-系统已改为 Notional 金额下单，正常情况下不会被取消。若仍被取消：
-- 检查账户余额是否足够（最低 $1）
-- 检查股票是否支持碎股交易（部分 OTC 股票不支持）
+The system uses notional orders, so normal purchases shouldn't be cancelled. If they are:
+- Ensure the account balance has enough cash (minimum $1).
+- Ensure the stock supports fractional trading (some OTC stocks might not).
 
-### Ollama 无响应
+### Ollama Unresponsive
 
 ```bash
-# 检查 Ollama 进程
+# Check Ollama processes
 ps aux | grep ollama
 
-# 验证模型可用
+# Verify model availability
 curl http://localhost:11434/api/tags
 
-# 重启 Ollama
+# Restart Ollama
 pkill ollama && ollama serve &
 ```
 
 ---
 
-## 免责声明
+## Disclaimer
 
-本项目仅供学习和实验用途。AI 交易信号不构成投资建议，开发者不对任何交易损失负责。在使用实盘模式前，请确保已充分了解相关风险并在模拟盘中验证策略。
+This project is for educational and experimental purposes only. AI trading signals do NOT constitute investment advice, and the developers hold no liability for any trading losses. Please ensure you fully understand the associated risks and validate strategies in Paper Mode before performing live trading.
