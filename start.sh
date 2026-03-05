@@ -3,7 +3,8 @@
 
 BACKEND_DIR="/data/qbao775/AlphaTrader/backend"
 LOG_FILE="/tmp/alphatrader.log"
-PYTHON="python3.8"
+PYTHON="/data/qbao775/miniconda3/envs/alphatrader/bin/python3"
+export CUDA_VISIBLE_DEVICES=7   # Use GPU-7 (~52GB free), avoid GPU 0-6 used by RL training
 
 echo "[$(date)] AlphaTrader 守护进程启动" >> "$LOG_FILE"
 

@@ -43,6 +43,7 @@ def run_attribution_analysis():
         "total_analyzed": len(processed_records),
         "catalyst_performance": {}, # keyword -> {sum_reward, count, avg}
         "macro_performance": {},    # scenario_id -> {sum_reward, count, avg}
+        "sector_performance": {},   # sector -> {sum_reward, count, avg}
         "accuracy_by_confidence": {
             "high": {"correct": 0, "total": 0},
             "medium": {"correct": 0, "total": 0},
@@ -79,10 +80,19 @@ def run_attribution_analysis():
             stats["macro_performance"][m_id]["sum_reward"] += reward
             stats["macro_performance"][m_id]["count"] += 1
 
+        # Attribute to sectors
+        sector = rec.get("sector", "Other")
+        if sector not in stats["sector_performance"]:
+            stats["sector_performance"][sector] = {"sum_reward": 0.0, "count": 0}
+        stats["sector_performance"][sector]["sum_reward"] += reward
+        stats["sector_performance"][sector]["count"] += 1
+
     # Finalize averages
     for kw, val in stats["catalyst_performance"].items():
         val["avg_reward"] = round(val["sum_reward"] / val["count"], 4)
     for m_id, val in stats["macro_performance"].items():
+        val["avg_reward"] = round(val["sum_reward"] / val["count"], 4)
+    for sector, val in stats["sector_performance"].items():
         val["avg_reward"] = round(val["sum_reward"] / val["count"], 4)
 
     # Save report
@@ -106,3 +116,8 @@ if __name__ == "__main__":
         print("\n--- Macro Scenario Impact ---")
         for m_id, data in result["macro_performance"].items():
             print(f"  {m_id}: {data['avg_reward']}% (based on {data['count']} signals)")
+
+        print("\n--- Sector-Specific Performance (RL Grounding) ---")
+        sorted_sectors = sorted(result["sector_performance"].items(), key=lambda x: x[1]["avg_reward"], reverse=True)
+        for sector, data in sorted_sectors:
+            print(f"  {sector:15}: {data['avg_reward']:+.4f}% avg reward ({data['count']} signals)")

@@ -86,6 +86,24 @@ class AISignal(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
 
 
+class PendingTrade(Base):
+    __tablename__ = "pending_trades"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    symbol = Column(String, index=True)
+    side = Column(String)  # BUY or SELL
+    trigger = Column(String, default="next_day_catalyst")
+    reason = Column(Text, nullable=True)
+    source_title = Column(Text, nullable=True)
+    execute_on = Column(DateTime, index=True)
+    status = Column(String, default="PENDING")  # PENDING | EXECUTED | FAILED | CANCELLED
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    executed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (UniqueConstraint('user_id', 'symbol', 'execute_on', 'trigger', name='_user_symbol_exec_trigger_uc'),)
+
+
 class WatchedStock(Base):
     __tablename__ = "watched_stocks"
     id = Column(Integer, primary_key=True, index=True)
@@ -96,6 +114,31 @@ class WatchedStock(Base):
 
     user = relationship("User", back_populates="watched_stocks")
     __table_args__ = (UniqueConstraint('user_id', 'symbol', name='_user_watched_symbol_uc'),)
+
+
+class SignalArchive(Base):
+    """
+    Compressed weekly summary of AI signals older than 90 days.
+    Raw ai_signals records are deleted; aggregated stats are kept here forever.
+    One row per (user_id, symbol, week_start).
+    """
+    __tablename__ = "signal_archives"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    symbol = Column(String, index=True)
+    week_start = Column(DateTime, index=True)       # Monday of that week (UTC)
+    week_end = Column(DateTime)
+    total_signals = Column(Integer, default=0)
+    buy_count = Column(Integer, default=0)
+    sell_count = Column(Integer, default=0)
+    hold_count = Column(Integer, default=0)
+    avg_confidence = Column(Float, default=0.0)
+    max_confidence = Column(Float, default=0.0)
+    dominant_signal = Column(String)                # BUY / SELL / HOLD (majority)
+    top_reasoning = Column(Text, nullable=True)     # Snippet from highest-confidence signal
+    archived_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint('user_id', 'symbol', 'week_start', name='_archive_user_sym_week_uc'),)
 
 
 class Settings(Base):

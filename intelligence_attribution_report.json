@@ -1,0 +1,36 @@
+{
+  "total_analyzed": 1,
+  "catalyst_performance": {
+    "partnership": {
+      "sum_reward": 5.5,
+      "count": 1,
+      "avg_reward": 5.5
+    },
+    "ai chip deal": {
+      "sum_reward": 5.5,
+      "count": 1,
+      "avg_reward": 5.5
+    }
+  },
+  "macro_performance": {
+    "bull_market": {
+      "sum_reward": 5.5,
+      "count": 1,
+      "avg_reward": 5.5
+    }
+  },
+  "accuracy_by_confidence": {
+    "high": {
+      "correct": 1,
+      "total": 1
+    },
+    "medium": {
+      "correct": 0,
+      "total": 0
+    },
+    "low": {
+      "correct": 0,
+      "total": 0
+    }
+  }
+}

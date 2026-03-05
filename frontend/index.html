@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AlphaTrader Pro — AI 全球股票交易平台</title>
   <meta name="description" content="由 DeepSeek-R1 驱动的全球股票市场追踪与自动交易平台" />
-  <link rel="stylesheet" href="/static/styles.css?v=4" />
+  <link rel="stylesheet" href="/static/styles.css?v=5" />
   <!-- TradingView Lightweight Charts -->
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -118,6 +118,9 @@
       <div class="nav-section-label">AI 分析</div>
       <a class="nav-item" id="nav-signals" onclick="showPage('signals')">
         <span class="nav-icon">🤖</span> AI 信号
+      </a>
+      <a class="nav-item" id="nav-layoff" onclick="showPage('layoff')">
+        <span class="nav-icon">🧩</span> 裁员事件
       </a>
       <a class="nav-item" id="nav-chat" onclick="showPage('chat')">
         <span class="nav-icon">💬</span> AI 助手
@@ -377,6 +380,81 @@
       </div>
     </main>
 
+    <!-- ─── LAYOFF FRAMEWORK PAGE ─── -->
+    <main class="main-content" id="page-layoff">
+      <div class="page-header">
+        <div>
+          <div class="page-title">🧩 裁员事件框架</div>
+          <div class="page-subtitle">自动抓取 layoff/restructuring 候选，量化公告后 20 天市场反应</div>
+        </div>
+      </div>
+
+      <div class="grid-2 mb-20">
+        <div class="card">
+          <div class="card-title">自动发现候选事件</div>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+            <div class="input-group" style="flex:1;min-width:180px;">
+              <label class="input-label">扫描范围(小时)</label>
+              <input id="layoffHoursBack" class="input" type="number" value="168" min="1" max="2160" />
+            </div>
+            <div class="input-group" style="flex:1;min-width:180px;">
+              <label class="input-label">附加股票(逗号分隔)</label>
+              <input id="layoffExtraSymbols" class="input" placeholder="SQ,PYPL,SHOP" />
+            </div>
+            <button class="btn btn-primary" onclick="discoverLayoffCandidates()">🔎 抓取候选</button>
+          </div>
+          <div id="layoffCandidates" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">事件参数与批量评估</div>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+            <div class="input-group" style="min-width:120px;">
+              <label class="input-label">基准</label>
+              <input id="layoffBenchmark" class="input" value="SPY" />
+            </div>
+            <div class="input-group" style="min-width:120px;">
+              <label class="input-label">窗口天数</label>
+              <input id="layoffLookahead" class="input" type="number" min="1" max="60" value="20" />
+            </div>
+            <button class="btn btn-gold" onclick="evaluateLayoffEvents()">📊 评估所选事件</button>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:var(--text-muted);">
+            半自动流程：先抓取候选 → 勾选/修正参数 → 点击评估。
+          </div>
+          <div id="layoffEventEditor" style="margin-top:12px;"></div>
+        </div>
+      </div>
+
+      <div class="card mb-20">
+        <div class="card-title">结果总览</div>
+        <div class="grid-3" id="layoffSummaryStats">
+          <div class="stat-card">
+            <div class="stat-label">平均 Day+1</div>
+            <div class="stat-value">--</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">平均反应持续天数</div>
+            <div class="stat-value">--</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">平均强度分数</div>
+            <div class="stat-value">--</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-20">
+        <div class="card-title">事件后 20 天走势（平均路径）</div>
+        <div id="layoffPathChart" class="layoff-path-chart"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">明细结果</div>
+        <div id="layoffResultTable"></div>
+      </div>
+    </main>
+
     <!-- ─── CHAT PAGE ─── -->
     <main class="main-content" id="page-chat">
       <div class="page-header">
@@ -582,7 +660,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=4"></script>
+  <script src="/static/app.js?v=5"></script>
 </body>
 
 </html>

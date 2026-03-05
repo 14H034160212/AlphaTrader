@@ -11,9 +11,6 @@ The system checks:
 2. News from known competitors/disruptors
 3. AI analyzes cross-company impact
 """
-import sys
-sys.path.append("/home/qbao775/.local/lib/python3.8/site-packages")
-
 import logging
 import xml.etree.ElementTree as ET
 import requests
@@ -48,9 +45,13 @@ COMPETITIVE_THREAT_MAP = {
         "disruptors": ["AMD", "INTC", "TSM", "GOOGL", "AMZN", "MSFT"],
         "threat_keywords": [
             "custom AI chip", "TPU", "Trainium", "Gaudi", "NVIDIA alternative",
-            "export ban", "China chip", "ASICs replace GPU"
+            "export ban", "China chip", "ASICs replace GPU",
+            "Taalas", "MatX", "Groq chip", "Cerebras", "SambaNova",
+            "Tenstorrent", "hardwired model", "inference chip startup",
+            "model-as-silicon", "per-model silicon", "NVIDIA competitor",
+            "challenge Nvidia", "beat Nvidia", "replace GPU"
         ],
-        "vulnerability": "GPU dominance in AI training challenged by custom silicon",
+        "vulnerability": "GPU dominance in AI training/inference challenged by custom silicon startups",
     },
     "AMD": {
         "disruptors": ["NVDA", "INTC", "QCOM", "AMZN"],
@@ -287,6 +288,392 @@ def _fetch_rss_news(symbol: str, hours_back: int = 24) -> list:
     return recent
 
 
+# ── Geopolitical RSS Sources ─────────────────────────────────────────────────
+# Global news feeds that carry breaking geopolitical events:
+# wars, sanctions, oil supply disruptions, central bank policy, etc.
+GEOPOLITICAL_RSS_SOURCES = [
+    # ── 美国政府 / 白宫 ──────────────────────────────────────────────────────
+    {
+        "name": "White House News",
+        "url": "https://www.whitehouse.gov/feed/",
+    },
+    {
+        "name": "White House Briefings",
+        "url": "https://www.whitehouse.gov/briefing-room/feed/",
+    },
+    {
+        "name": "US State Department",
+        "url": "https://www.state.gov/rss-feed/press-releases/feed/",
+    },
+    {
+        "name": "US Treasury",
+        "url": "https://home.treasury.gov/news/press-releases/feed",
+    },
+    # ── 主流国际新闻 ────────────────────────────────────────────────────────
+    {
+        "name": "Reuters World",
+        "url": "https://feeds.reuters.com/reuters/worldNews",
+    },
+    {
+        "name": "Reuters Business",
+        "url": "https://feeds.reuters.com/reuters/businessNews",
+    },
+    {
+        "name": "BBC World",
+        "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    },
+    {
+        "name": "Al Jazeera",
+        "url": "https://www.aljazeera.com/xml/rss/all.xml",
+    },
+    {
+        "name": "The Guardian World",
+        "url": "https://www.theguardian.com/world/rss",
+    },
+    {
+        "name": "NPR World",
+        "url": "https://feeds.npr.org/1004/rss.xml",
+    },
+    {
+        "name": "Financial Times",
+        "url": "https://www.ft.com/rss/home/uk",
+    },
+    {
+        "name": "Associated Press Top News",
+        "url": "https://feeds.apnews.com/rss/apf-topnews",
+    },
+    # ── 中东 / 能源 专项 ────────────────────────────────────────────────────
+    {
+        "name": "Times of Israel",
+        "url": "https://www.timesofisrael.com/feed/",
+    },
+    {
+        "name": "Jerusalem Post",
+        "url": "https://www.jpost.com/rss/rssfeedsfrontpage.aspx",
+    },
+    {
+        "name": "Oil Price News",
+        "url": "https://oilprice.com/rss/main",
+    },
+    # ── 中国财经媒体 ─────────────────────────────────────────────────────────
+    {
+        "name": "新华社财经",
+        "url": "http://www.xinhuanet.com/money/index.rss",
+    },
+    {
+        "name": "证券时报",
+        "url": "http://www.stcn.com/rss.xml",
+    },
+]
+
+# ── Tech / Semiconductor RSS Sources ─────────────────────────────────────────
+# Specialized feeds for chip industry, AI hardware, and startup news.
+# Catches: new AI chip announcements, NVIDIA competitors, semiconductor supply chain.
+TECH_RSS_SOURCES = [
+    # ── 综合科技 ─────────────────────────────────────────────────────────────
+    {
+        "name": "TechCrunch",
+        "url": "https://techcrunch.com/feed/",
+    },
+    {
+        "name": "The Verge",
+        "url": "https://www.theverge.com/rss/index.xml",
+    },
+    {
+        "name": "Ars Technica",
+        "url": "https://feeds.arstechnica.com/arstechnica/index",
+    },
+    {
+        "name": "Wired",
+        "url": "https://www.wired.com/feed/rss",
+    },
+    {
+        "name": "MIT Technology Review",
+        "url": "https://www.technologyreview.com/feed/",
+    },
+    # ── 半导体 / 芯片专项 ────────────────────────────────────────────────────
+    {
+        "name": "Tom's Hardware",
+        "url": "https://www.tomshardware.com/feeds/all",
+    },
+    {
+        "name": "IEEE Spectrum",
+        "url": "https://spectrum.ieee.org/feeds/feed.rss",
+    },
+    {
+        "name": "EE Times",
+        "url": "https://www.eetimes.com/feed/",
+    },
+    {
+        "name": "Semiconductor Engineering",
+        "url": "https://semiengineering.com/feed/",
+    },
+    {
+        "name": "The Register",
+        "url": "https://www.theregister.com/headlines.atom",
+    },
+    # ── AI / 创业公司 ────────────────────────────────────────────────────────
+    {
+        "name": "VentureBeat AI",
+        "url": "https://venturebeat.com/category/ai/feed/",
+    },
+    {
+        "name": "The Outpost AI",
+        "url": "https://theoutpost.ai/feed/",
+    },
+    {
+        "name": "Turing Post",
+        "url": "https://www.turingpost.com/feed",
+    },
+]
+
+# ── Tech keyword → affected stock mapping ─────────────────────────────────────
+# When these keywords appear in tech news, trigger re-analysis of the listed stocks.
+TECH_KEYWORD_STOCK_MAP = {
+    # AI chip startups threatening NVDA
+    "Taalas":            ["NVDA", "AMD", "AVGO"],
+    "MatX":              ["NVDA", "AMD"],
+    "Groq":              ["NVDA", "AMD"],
+    "Cerebras":          ["NVDA", "AMD"],
+    "SambaNova":         ["NVDA", "AMD"],
+    "Tenstorrent":       ["NVDA", "AMD"],
+    "Etched":            ["NVDA"],
+    "d-Matrix":          ["NVDA"],
+    "Hailo":             ["NVDA"],
+    # Hyperscaler custom silicon
+    "Trainium":          ["NVDA", "AMD"],
+    "Inferentia":        ["NVDA"],
+    "Axion":             ["NVDA", "AMD", "INTC"],
+    "Maia":              ["NVDA", "AMD"],
+    "Graviton":          ["NVDA", "AMD", "INTC"],
+    # TSMC supply chain
+    "TSMC capacity":     ["NVDA", "AMD", "AVGO", "INTC"],
+    "chip shortage":     ["NVDA", "AMD", "AVGO"],
+    "CoWoS shortage":    ["NVDA"],
+    "HBM shortage":      ["NVDA", "AMD"],
+    # Export controls
+    "export ban":        ["NVDA", "AMD", "AVGO"],
+    "chip export":       ["NVDA", "AMD"],
+    "BIS rule":          ["NVDA", "AMD"],
+    # Semiconductor broadly
+    "semiconductor":     ["NVDA", "AMD", "AVGO", "INTC", "TSM", "SOXL"],
+    "AI chip":           ["NVDA", "AMD", "AVGO"],
+    "inference chip":    ["NVDA", "AMD"],
+    "custom silicon":    ["NVDA", "AMD", "GOOGL", "AMZN", "MSFT"],
+    # Software / AI models → hardware demand
+    "DeepSeek":          ["NVDA", "AMD"],
+    "model training":    ["NVDA", "AMD"],
+    "data center GPU":   ["NVDA", "AMD"],
+}
+
+
+def fetch_tech_news(hours_back: int = 12) -> list:
+    """
+    Fetch recent tech/semiconductor news from specialized RSS sources.
+    Returns unified list of items with: title, publisher, url, time, source_name.
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=hours_back)
+    all_items = []
+
+    for source in TECH_RSS_SOURCES:
+        try:
+            resp = requests.get(
+                source["url"], timeout=10,
+                headers={"User-Agent": "AlphaTrader-TechNews/1.0"}
+            )
+            if resp.status_code != 200:
+                logger.debug(f"[TechNews] {source['name']} HTTP {resp.status_code}")
+                continue
+
+            # Try feedparser first, fall back to raw XML
+            try:
+                import feedparser
+                feed = feedparser.parse(resp.text)
+                entries = feed.entries
+            except Exception:
+                entries = []
+
+            if not entries:
+                # Manual XML parse
+                try:
+                    root = ET.fromstring(resp.content)
+                    ns = {"atom": "http://www.w3.org/2005/Atom"}
+                    entries_raw = root.findall(".//item") or root.findall(".//atom:entry", ns)
+                    for e in entries_raw:
+                        title_el = e.find("title") or e.find("atom:title", ns)
+                        link_el = e.find("link") or e.find("atom:link", ns)
+                        date_el = e.find("pubDate") or e.find("atom:updated", ns) or e.find("atom:published", ns)
+                        if title_el is None:
+                            continue
+                        title = title_el.text or ""
+                        link = (link_el.text or link_el.get("href", "")) if link_el is not None else ""
+                        pub_str = date_el.text if date_el is not None else ""
+                        try:
+                            pub_dt = parsedate_to_datetime(pub_str).replace(tzinfo=None)
+                        except Exception:
+                            pub_dt = datetime.utcnow()
+                        if pub_dt >= cutoff:
+                            all_items.append({
+                                "title": title,
+                                "publisher": source["name"],
+                                "url": link,
+                                "time": pub_dt.isoformat(),
+                            })
+                    continue
+                except Exception:
+                    continue
+
+            for entry in entries:
+                title = entry.get("title", "")
+                link = entry.get("link", "")
+                pub = entry.get("published_parsed") or entry.get("updated_parsed")
+                if pub:
+                    try:
+                        from calendar import timegm
+                        pub_dt = datetime.utcfromtimestamp(timegm(pub))
+                    except Exception:
+                        pub_dt = datetime.utcnow()
+                else:
+                    pub_dt = datetime.utcnow()
+
+                if pub_dt >= cutoff:
+                    all_items.append({
+                        "title": title,
+                        "publisher": source["name"],
+                        "url": link,
+                        "time": pub_dt.isoformat(),
+                    })
+
+        except Exception as e:
+            logger.debug(f"[TechNews] {source['name']} failed: {e}")
+
+    logger.info(f"[TechNews] Fetched {len(all_items)} items from {len(TECH_RSS_SOURCES)} sources")
+    return all_items
+
+
+def detect_tech_market_impacts(hours_back: int = 2) -> list:
+    """
+    Scan tech RSS feeds for keyword hits and return list of impacted stocks.
+    Each item: {keyword, title, publisher, url, time, affected_stocks, impact_level}
+    """
+    items = fetch_tech_news(hours_back=hours_back)
+    impacts = []
+    seen_titles = set()
+
+    for item in items:
+        title_lower = item["title"].lower()
+        for keyword, stocks in TECH_KEYWORD_STOCK_MAP.items():
+            if keyword.lower() in title_lower:
+                if item["title"] in seen_titles:
+                    continue
+                seen_titles.add(item["title"])
+                impacts.append({
+                    "keyword": keyword,
+                    "title": item["title"],
+                    "publisher": item["publisher"],
+                    "url": item.get("url", ""),
+                    "time": item["time"],
+                    "affected_stocks": stocks,
+                    "impact_level": "HIGH" if any(
+                        k in title_lower for k in ["challenge", "beat", "outperform", "replace", "rival"]
+                    ) else "MEDIUM",
+                })
+                break  # one keyword match per article is enough
+
+    if impacts:
+        logger.info(f"[TechNews] {len(impacts)} tech market impact(s) detected")
+    return impacts
+
+
+def build_tech_impact_context(symbol: str, impacts: list) -> str:
+    """Build AI context string for tech news impacts on a symbol."""
+    relevant = [i for i in impacts if symbol in i["affected_stocks"]]
+    if not relevant:
+        return ""
+    lines = [f"### 🔬 TECH/SEMICONDUCTOR NEWS ALERTS for {symbol}"]
+    for imp in relevant[:5]:  # cap at 5 items
+        lines.append(
+            f"\n[{imp['impact_level']}] Keyword: '{imp['keyword']}'\n"
+            f"  Headline: \"{imp['title']}\"\n"
+            f"  Source: {imp['publisher']} ({imp['time'][:10]})\n"
+            f"  → Monitor for competitive pressure on {symbol}."
+        )
+    return "\n".join(lines)
+
+
+def fetch_geopolitical_news(hours_back: int = 12) -> list:
+    """
+    Fetch breaking geopolitical news from major global RSS sources.
+    Returns unified list of news items with title, publisher, time.
+    These feed into macro scenario detection to catch events like:
+    - Wars, military strikes, sanctions
+    - Oil supply disruptions (Strait of Hormuz, OPEC decisions)
+    - Central bank announcements
+    - Trade war escalations
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=hours_back)
+    all_items = []
+
+    for source in GEOPOLITICAL_RSS_SOURCES:
+        try:
+            resp = requests.get(
+                source["url"], timeout=10,
+                headers={"User-Agent": "AlphaTrader-GeoNews/1.0"}
+            )
+            if resp.status_code != 200:
+                logger.debug(f"[GeoNews] {source['name']} HTTP {resp.status_code}")
+                continue
+
+            try:
+                root = ET.fromstring(resp.text)
+            except ET.ParseError:
+                # Some feeds have encoding issues; try stripping BOM
+                cleaned = resp.text.encode("utf-8", errors="replace").decode("utf-8")
+                root = ET.fromstring(cleaned)
+
+            channel = root.find("channel")
+            items_iter = channel.findall("item") if channel is not None else root.findall(".//item")
+
+            count = 0
+            for item in items_iter:
+                title_el = item.find("title")
+                pub_el = item.find("pubDate")
+                if title_el is None:
+                    continue
+                title = (title_el.text or "").strip()
+                if not title:
+                    continue
+
+                pub_time = None
+                if pub_el is not None and pub_el.text:
+                    try:
+                        pub_time = parsedate_to_datetime(pub_el.text).replace(tzinfo=None)
+                    except Exception:
+                        pass
+
+                # If no pub date, include anyway (breaking news may lack dates)
+                if pub_time and pub_time < cutoff:
+                    continue
+
+                all_items.append({
+                    "title": title,
+                    "publisher": source["name"],
+                    "time": pub_time.isoformat() if pub_time else datetime.utcnow().isoformat(),
+                    "symbol": "MACRO",
+                    "source": "geopolitical_rss",
+                })
+                count += 1
+
+            if count:
+                logger.debug(f"[GeoNews] {source['name']}: {count} items")
+
+        except Exception as e:
+            logger.debug(f"[GeoNews] {source['name']} failed: {e}")
+
+    logger.info(f"[GeoNews] Fetched {len(all_items)} geopolitical news items from {len(GEOPOLITICAL_RSS_SOURCES)} sources")
+    return all_items
+
+
 def fetch_news_with_fallback(symbol: str, hours_back: int = 24) -> list:
     """
     Primary: yfinance.  Fallback: Yahoo Finance RSS.
@@ -379,6 +766,21 @@ def build_threat_context(symbol: str, threats: list) -> str:
     return "\n".join(lines)
 
 
+# ── Sector Mapping (for RL Attribution) ──────────────────────────────────────
+SYMBOL_SECTOR_MAP = {
+    "GLD": "Gold", "IAU": "Gold", "SLV": "Silver",
+    "XLE": "Energy", "USO": "Energy", "OXY": "Energy", "XOM": "Energy", "CVX": "Energy",
+    "ITA": "Defense", "PPA": "Defense", "LMT": "Defense", "RTX": "Defense", "NOC": "Defense", "GD": "Defense",
+    "NVDA": "Semiconductors", "AMD": "Semiconductors", "AVGO": "Semiconductors", "INTC": "Semiconductors",
+    "MSFT": "Software", "AAPL": "Tech", "GOOGL": "Tech", "AMZN": "Retail", "META": "Social Media",
+    "TSLA": "EV", "BYD": "EV",
+    "SPY": "Index", "QQQ": "Index", "IWM": "Index"
+}
+
+def get_symbol_sector(symbol: str) -> str:
+    """Return the primary sector for a given ticker symbol."""
+    return SYMBOL_SECTOR_MAP.get(symbol.upper(), "Other")
+
 # ── Macro Scenario Detection ─────────────────────────────────────────────────
 # High-conviction macro narratives that affect broad market positioning.
 # When these scenarios gain traction in the news, the AI should adjust
@@ -421,6 +823,28 @@ MACRO_SCENARIOS = {
         "potential_beneficiaries": ["INTC"],
         "severity": "HIGH",
     },
+    "middle_east_war_2026": {
+        "name": "中东战争 2026 — 美以联合打击伊朗",
+        "description": (
+            "2026年2月28日，美国与以色列联合对伊朗发动军事打击（代号 Operation Shield of Judah）。"
+            "伊朗发动导弹/无人机反击，波及阿联酋、巴林、卡塔尔。"
+            "霍尔木兹海峡风险：全球每日约2000万桶原油经此通过（占全球20%）。"
+            "历史参考：类似中东冲突触发油价+15~30%，黄金+10~20%，科技股-5~15%。"
+        ),
+        "trigger_keywords": [
+            "iran", "israel attack", "tehran", "strait of hormuz",
+            "middle east war", "iran strike", "iran attack", "iranian missile",
+            "operation shield", "us military iran", "preemptive strike iran",
+            "iran retaliation", "iran nuclear", "iranian drone",
+            "abu dhabi explosion", "bahrain strike", "gulf war",
+            "oil supply disruption", "hormuz blockade", "persian gulf",
+            "iran war", "israel iran", "netanyahu iran", "trump iran",
+        ],
+        "sectors_at_risk": ["Technology", "Airlines", "Consumer Discretionary", "Automotive"],
+        "stocks_to_avoid": ["TSLA", "AMZN", "AAPL", "QQQ", "TQQQ", "SOXL"],
+        "potential_beneficiaries": ["GLD", "IAU", "SLV", "XOM", "LMT", "RTX", "NOC"],
+        "severity": "CRITICAL",
+    },
     "trump_global_tariffs_2026": {
         "name": "Trump 2026 全球关税冲击",
         "description": (
@@ -440,20 +864,119 @@ MACRO_SCENARIOS = {
         "potential_beneficiaries": ["GLD", "IAU", "SLV", "IBIT", "XOM"],  # Gold / Silver / Oil safe havens
         "severity": "HIGH",
     },
+    "sector_overextension_risk": {
+        "name": "Sector Over-extension Risk (High Points)",
+        "description": (
+            "Key sectors (Gold, Energy, Defense) are at multi-year highs or significantly "
+            "overextended from their long-term means. Risk of 'mean reversion' or "
+            "'sell-the-news' profit taking is high. Caution on chasing momentum here."
+        ),
+        "trigger_keywords": [
+            "gold record", "oil peak", "defense stock high", "overextended",
+            "overbought", "exhaustion gap", "52-week high", "all-time high",
+            "parabolic move", "mean reversion risk"
+        ],
+        "sectors_at_risk": ["Precious Metals", "Energy", "Aerospace & Defense"],
+        "stocks_to_avoid": ["GLD", "IAU", "XOM", "CVX", "LMT", "RTX", "NOC", "GD"],
+        "potential_beneficiaries": ["SPY", "QQQ", "VIX"],
+        "severity": "MEDIUM",
+    },
 }
+
+# ── Auto-Watchlist Expansion Maps ────────────────────────────────────────────
+# When a macro scenario activates, automatically add these tickers to watchlist
+SCENARIO_AUTO_WATCHLIST: dict = {
+    "middle_east_war_2026": [
+        "USO", "UCO", "BNO",            # 原油ETF
+        "FRO", "STNG", "NAT", "DHT",    # 油轮股（霍尔木兹封锁最大受益）
+        "OXY", "CVX", "MRO",            # 石油生产商
+        "NOC", "GD",                    # 防务扩展
+        "GDX", "NEM",                   # 黄金矿业
+    ],
+    "trump_global_tariffs_2026": [
+        "GDX", "NEM",                   # 黄金矿业
+        "WMT", "COST",                  # 国内零售（进口替代受益）
+        "DXY", "UUP",                   # 美元走强
+    ],
+    "china_tech_decoupling": [
+        "INTC", "MRVL", "ON",           # 美国本土芯片
+        "AMAT", "LRCX", "KLAC",         # 美国芯片设备
+    ],
+}
+
+# 新闻关键词 → 自动添加标的（覆盖场景之外的突发事件）
+NEWS_KEYWORD_AUTO_WATCHLIST: dict = {
+    "hormuz": ["USO", "UCO", "FRO", "STNG", "BNO"],
+    "oil blockade": ["USO", "UCO", "FRO", "BNO", "STNG"],
+    "oil tanker": ["FRO", "STNG", "NAT", "DHT"],
+    "crude oil spike": ["USO", "UCO", "XOM", "CVX", "OXY"],
+    "gold record": ["GLD", "GDX", "NEM", "IAU"],
+    "gold all-time": ["GLD", "GDX", "NEM"],
+    "nuclear": ["CCJ", "NLR", "URA"],
+    "cyber attack": ["CRWD", "PANW", "ZS", "FTNT"],
+    "taiwan strait": ["GLD", "AMAT", "ASML", "LMT", "NOC"],
+    "ukraine": ["GLD", "LMT", "RTX", "NOC", "OXY"],
+    "bank collapse": ["GLD", "IBIT", "JPM"],
+    "fed cut": ["TLT", "GLD", "IBIT"],
+    "recession": ["GLD", "SLV", "TLT"],
+    "semiconductor shortage": ["AMAT", "KLAC", "LRCX"],
+    "bitcoin etf": ["IBIT", "MSTR", "COIN"],
+    "debt ceiling": ["GLD", "SLV", "IBIT", "TLT"],
+}
+
+
+def get_watchlist_additions(
+    active_scenarios: list,
+    recent_news: list,
+    current_watchlist: list,
+) -> tuple:
+    """
+    Given active macro scenarios and recent news, return (new_tickers, reason_str).
+    Only returns tickers NOT already in current_watchlist.
+    """
+    to_add: set = set()
+    reasons: list = []
+    current_set = set(current_watchlist)
+
+    # 1. Scenario-based additions
+    for scenario in active_scenarios:
+        sid = scenario.get("scenario_id", "")
+        additions = SCENARIO_AUTO_WATCHLIST.get(sid, [])
+        new_for_scenario = [s for s in additions if s not in current_set and s not in to_add]
+        if new_for_scenario:
+            to_add.update(new_for_scenario)
+            reasons.append(f"场景[{scenario['name']}] → {new_for_scenario}")
+
+    # 2. News-keyword-based additions
+    for item in recent_news:
+        title_lower = item.get("title", "").lower()
+        for keyword, tickers in NEWS_KEYWORD_AUTO_WATCHLIST.items():
+            if keyword in title_lower:
+                new_for_kw = [s for s in tickers if s not in current_set and s not in to_add]
+                if new_for_kw:
+                    to_add.update(new_for_kw)
+                    reasons.append(f'关键词"{keyword}" → {new_for_kw}')
+
+    reason_str = "; ".join(reasons) if reasons else ""
+    return list(to_add), reason_str
 
 
 def detect_active_macro_scenarios(hours_back: int = 6) -> list:
     """
-    Scan recent financial news (via SPY, QQQ, general tickers) for macro scenario keywords.
+    Scan recent financial news AND geopolitical RSS feeds for macro scenario keywords.
     Returns list of active scenario names with evidence.
     """
     active = []
-    # Use broad market ETFs as proxy for macro news coverage
-    proxy_tickers = ["SPY", "QQQ", "VIX"]
+    # Use broad market ETFs as proxy for macro/financial news
+    proxy_tickers = ["SPY", "QQQ", "VIX", "GLD", "XOM"]
     all_news = []
     for ticker in proxy_tickers:
         all_news.extend(fetch_recent_news(ticker, hours_back))
+
+    # Also scan geopolitical RSS feeds (Reuters, BBC, Al Jazeera, etc.)
+    geo_news = fetch_geopolitical_news(hours_back=max(hours_back, 12))
+    all_news.extend(geo_news)
+    logger.info(f"[MacroScan] Scanning {len(all_news)} total news items ({len(geo_news)} geopolitical)")
 
     for scenario_id, scenario in MACRO_SCENARIOS.items():
         keywords = [k.lower() for k in scenario["trigger_keywords"]]
@@ -480,6 +1003,54 @@ def detect_active_macro_scenarios(hours_back: int = 6) -> list:
             )
 
     return active
+
+
+def detect_technical_overextension(watchlist: list, db_session) -> list:
+    """
+    Check for stocks that are technically overextended (RSI > 80 or >25% above MA200).
+    Returns a custom 'technical macro' scenario if many stocks are at high points.
+    """
+    import market_data as md
+    overextended = []
+    
+    for symbol in watchlist:
+        try:
+            indicators = md.get_technical_indicators(symbol)
+            if not indicators:
+                continue
+                
+            rsi = indicators.get("rsi", 50)
+            dist_ma200 = indicators.get("dist_from_ma200_pct", 0)
+            
+            # Criteria for 'High Point' over-extension
+            is_high = rsi > 80 or dist_ma200 > 25
+            
+            if is_high:
+                overextended.append({
+                    "symbol": symbol,
+                    "rsi": rsi,
+                    "dist_ma200": dist_ma200,
+                    "reason": "RSI > 80" if rsi > 80 else f"MA200 distance > 25% ({dist_ma200:.1f}%)"
+                })
+        except Exception:
+            continue
+            
+    if not overextended:
+        return []
+        
+    # If we have overextended stocks, return a synthetic scenario
+    symbols = [o["symbol"] for o in overextended]
+    evidence = [f"{o['symbol']} at high point: {o['reason']}" for o in overextended[:5]]
+    
+    return [{
+        "scenario_id": "technical_overextension",
+        "name": "Technical Over-extension (RSI/MA200 Extremes)",
+        "severity": "MEDIUM",
+        "description": "Multiple stocks in watchlist are hitting extreme technical overbought levels (RSI > 80 or >25% above MA200), suggesting a high probability of mean reversion or pullback.",
+        "evidence": [{"title": e, "keywords": ["overextended"]} for e in evidence],
+        "stocks_to_avoid": symbols,
+        "potential_beneficiaries": ["VIX"],
+    }]
 
 
 def build_macro_scenario_context(active_scenarios: list) -> str:
@@ -620,7 +1191,128 @@ CATALYST_MAP = {
         ],
         "upside_thesis": "3x leveraged semiconductor ETF - benefits from AI chip spending cycle",
     },
+    "XOM": {
+        "catalyst_keywords": [
+            "oil price surge", "crude rally", "brent rises", "oil supply disruption",
+            "hormuz", "opec cut", "iran war", "middle east conflict", "energy rally",
+            "record profit", "beats estimates", "upstream growth", "lng demand",
+        ],
+        "upside_thesis": "ExxonMobil benefits from oil price spikes driven by Middle East conflict/OPEC cuts",
+    },
+    "LMT": {
+        "catalyst_keywords": [
+            "defense contract", "pentagon contract", "military spending", "nato",
+            "war", "conflict", "f-35", "missile defense", "hypersonic",
+            "ukraine weapons", "israel weapons", "iran strike", "defense budget",
+            "record contract", "billion contract",
+        ],
+        "upside_thesis": "Lockheed Martin benefits from increased defense spending during geopolitical conflicts",
+    },
+    "RTX": {
+        "catalyst_keywords": [
+            "defense contract", "raytheon missile", "patriot missile", "iron dome",
+            "air defense", "military spending", "nato", "war", "conflict",
+            "pentagon", "ukraine", "israel defense", "iran strike",
+        ],
+        "upside_thesis": "RTX (Raytheon) benefits from missile/air defense demand in Middle East conflicts",
+    },
 }
+
+
+# ── Next-Day Buy Rules (Event-Driven) ────────────────────────────────────────
+# These are specific, high-impact catalysts that we want to buy on the next
+# market open (e.g., Meta buying AMD chips; NVDA earnings beat).
+NEXT_DAY_BUY_RULES = {
+    "AMD": {
+        "title_keywords_any": [
+            "meta", "facebook", "instagram"
+        ],
+        "title_keywords_all": [
+            ["amd", "chip"],
+            ["amd", "gpu"],
+            ["amd", "mi300"],
+            ["amd", "instinct"],
+            ["amd", "ai chip"],
+            ["amd", "accelerator"],
+            ["amd", "order"],
+            ["amd", "purchase"],
+            ["amd", "buy"],
+            ["amd", "deal"],
+        ],
+        "extra_symbols_to_check": ["META"],
+        "reason": "Meta procurement/partnership signals demand acceleration for AMD AI GPUs.",
+    },
+    "NVDA": {
+        "title_keywords_any": [
+            "earnings", "results", "quarter", "guidance"
+        ],
+        "title_keywords_all": [
+            ["beat", "expectations"],
+            ["beats", "expectations"],
+            ["beat", "estimates"],
+            ["beats", "estimates"],
+            ["tops", "estimates"],
+            ["raises", "guidance"],
+            ["guidance", "raised"],
+            ["outlook", "raised"],
+        ],
+        "extra_symbols_to_check": [],
+        "reason": "Earnings beat or raised guidance tends to drive strong next-day momentum.",
+    },
+}
+
+
+def detect_next_day_buy_signals(target_symbol: str, hours_back: int = 24) -> list:
+    """
+    Detect high-impact catalysts that should trigger a next-market-open BUY.
+    Returns list of signals with title + reason.
+    """
+    rule = NEXT_DAY_BUY_RULES.get(target_symbol)
+    if not rule:
+        return []
+
+    symbols_to_check = [target_symbol] + rule.get("extra_symbols_to_check", [])
+    seen_titles = set()
+    signals = []
+
+    for sym in symbols_to_check:
+        news_items = fetch_news_with_fallback(sym, hours_back)
+        for item in news_items:
+            title = (item.get("title") or "").strip()
+            if not title or title in seen_titles:
+                continue
+            seen_titles.add(title)
+
+            title_lower = title.lower()
+            any_ok = any(kw in title_lower for kw in rule["title_keywords_any"])
+            if not any_ok:
+                continue
+
+            all_ok = any(
+                all(k in title_lower for k in group)
+                for group in rule["title_keywords_all"]
+            )
+            if not all_ok:
+                continue
+
+            signals.append({
+                "target_symbol": target_symbol,
+                "news_title": title,
+                "publisher": item.get("publisher", ""),
+                "time": item.get("time", ""),
+                "source": item.get("source", "yfinance"),
+                "reason": rule["reason"],
+                "matched_any": [kw for kw in rule["title_keywords_any"] if kw in title_lower],
+            })
+
+    if signals:
+        for s in signals:
+            logger.info(
+                f"[NextDayBuy] TRIGGER: {target_symbol} — \"{s['news_title'][:70]}\" "
+                f"(source: {s['source']})"
+            )
+
+    return signals
 
 
 def detect_catalysts_for_symbol(target_symbol: str, hours_back: int = 24) -> list:
