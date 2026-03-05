@@ -15,8 +15,7 @@ Usage in trading pipeline:
 Model loaded once at startup and kept in GPU memory (A100 80GB).
 """
 import sys
-sys.path.append("/home/qbao775/.local/lib/python3.8/site-packages")
-sys.path.insert(0, "/data/home/qbao775/stock-trading-platform/kronos_lib")
+sys.path.insert(0, "/data/qbao775/AlphaTrader/kronos_lib")
 
 import logging
 import numpy as np
@@ -30,10 +29,10 @@ logger = logging.getLogger(__name__)
 _kronos_model = None
 _kronos_tokenizer = None
 _kronos_predictor = None
-_device = "cuda"  # A100 GPU
+_device = "cuda:0"  # Will be GPU-7 physically (CUDA_VISIBLE_DEVICES=7 in start.sh)
 
-KRONOS_TOKENIZER_ID = "NeoQuasar/Kronos-Tokenizer-base"
-KRONOS_MODEL_ID = "NeoQuasar/Kronos-base"   # Use base model on A100 80GB
+KRONOS_TOKENIZER_ID = "/data/qbao775/AlphaTrader/kronos_lib/weights/Kronos-Tokenizer-base"
+KRONOS_MODEL_ID = "/data/qbao775/AlphaTrader/kronos_lib/weights/Kronos-base"
 
 LOOKBACK_BARS = 400    # Number of historical candles fed to Kronos
 PRED_BARS = 5          # Predict next 5 trading sessions (~1 week)

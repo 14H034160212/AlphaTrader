@@ -1148,6 +1148,31 @@ body {
   font-size: 40px;
 }
 
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.layoff-edit-input {
+  min-width: 92px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.layoff-path-chart {
+  width: 100%;
+  height: 280px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(56, 139, 253, 0.04), rgba(255, 255, 255, 0.7));
+  overflow: hidden;
+}
+
+.layoff-svg {
+  width: 100%;
+  height: 100%;
+}
+
 /* ─── Watchlist item ─── */
 .watchlist-item {
   display: flex;
@@ -1281,7 +1306,10 @@ body {
   #positionsTable,
   #tradesTable,
   #watchlistContent,
-  #signalsList {
+  #signalsList,
+  #layoffCandidates,
+  #layoffEventEditor,
+  #layoffResultTable {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }

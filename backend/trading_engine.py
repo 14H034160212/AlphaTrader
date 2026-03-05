@@ -1,14 +1,13 @@
 """Paper trading engine and Alpaca Live Trading engine - simulates order execution or routes to Alpaca."""
 import logging
 from datetime import datetime
-import sys
-sys.path.append("/home/qbao775/.local/lib/python3.8/site-packages")
 
 from typing import Optional
 from sqlalchemy.orm import Session
 from database import Trade, Position, get_setting
 import alpaca_trade_api as tradeapi
 from alpaca_trade_api.rest import APIError
+import position_sizer as ps
 
 logger = logging.getLogger(__name__)
 
@@ -86,15 +85,22 @@ class TradingEngine:
 
         if self.use_alpaca:
             try:
-                qty_val = int(quantity) if quantity.is_integer() else quantity
+                notional_amount = round(total_cost, 2)
+                if notional_amount < 1.0:
+                    return {"success": False, "error": f"Notional amount ${notional_amount:.2f} below Alpaca minimum $1"}
+                # alpaca-trade-api 0.48 does not support 'notional'; convert to qty
+                if price and price > 0:
+                    qty_amount = round(notional_amount / price, 6)
+                else:
+                    qty_amount = quantity
                 order = self.alpaca.submit_order(
                     symbol=symbol,
-                    qty=qty_val,
+                    qty=qty_amount,
                     side='buy',
                     type='market',
                     time_in_force='day'
                 )
-                logger.info(f"Alpaca BUY submitted: {order.id}")
+                logger.info(f"Alpaca BUY qty={qty_amount} (~${notional_amount:.2f}) submitted: {order.id}")
             except Exception as e:
                 logger.error(f"Alpaca API Error on BUY: {e}")
                 return {"success": False, "error": f"Alpaca Error: {str(e)}"}
@@ -186,6 +192,16 @@ class TradingEngine:
 
         if self.use_alpaca:
             try:
+                # Verify position exists in Alpaca before selling to prevent shorts
+                try:
+                    alpaca_pos = self.alpaca.get_position(symbol)
+                    alpaca_qty = float(alpaca_pos.qty)
+                    if alpaca_qty <= 0:
+                        return {"success": False, "skipped": True, "reason": f"No Alpaca position in {symbol}"}
+                    quantity = min(quantity, alpaca_qty)
+                except Exception:
+                    return {"success": False, "skipped": True, "reason": f"No Alpaca position in {symbol} (cannot short)"}
+
                 qty_val = int(quantity) if quantity.is_integer() else quantity
                 order = self.alpaca.submit_order(
                     symbol=symbol,
@@ -260,7 +276,7 @@ class TradingEngine:
             }
         }
 
-    def auto_trade(self, signal: dict, current_price: float) -> dict:
+    def auto_trade(self, signal: dict, current_price: float, indicators: dict = None) -> dict:
         """Execute an auto-trade based on an AI signal with DCF weight ratio."""
         symbol = signal.get("symbol")
         action = signal.get("signal")
@@ -294,14 +310,35 @@ class TradingEngine:
             except Exception:
                 total_equity = cash
                 
-        # Use AI recommended optimal weight from DCF math if available (cap at 2x leverage), 
-        # else fallback to default risk setting
-        if weight is not None:
+        # ── Position sizing: Kelly → DCF weight → fixed risk% (priority order) ──
+        target_price = signal.get("target_price")
+        stop_loss    = signal.get("stop_loss")
+
+        kelly_sz = None
+        if (action in ("BUY", "COVER") and
+                target_price and stop_loss and
+                target_price > current_price and stop_loss < current_price):
+            kelly_sz = ps.kelly_position_size(
+                confidence=confidence,
+                current_price=current_price,
+                target_price=float(target_price),
+                stop_loss=float(stop_loss),
+                portfolio_value=total_equity,
+                indicators=indicators,
+            )
+
+        if kelly_sz and not kelly_sz["skip"]:
+            risk_amount = kelly_sz["dollar_amount"]
+            logger.info(
+                f"[Kelly] {symbol} sizing: {kelly_sz['reason']}"
+            )
+        elif weight is not None:
+            # Fallback: AI-recommended DCF weight (cap at 2× leverage)
             target_allocation_pct = min(200.0, abs(float(weight)) * 100)
+            risk_amount = total_equity * (target_allocation_pct / 100)
         else:
-            target_allocation_pct = risk_per_trade_pct
-            
-        risk_amount = total_equity * (target_allocation_pct / 100)
+            risk_amount = total_equity * (risk_per_trade_pct / 100)
+
         quantity = round(risk_amount / current_price, 4)
 
         if action in ["BUY", "COVER"]:

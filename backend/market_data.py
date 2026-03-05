@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 import logging
 from quant_models import QuantitativeModels
+import ashare_data
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,12 @@ GLOBAL_INDICES = {
         "^AXJO": {"name": "ASX 200", "region": "Australia"},
         "^STI": {"name": "STI", "region": "Singapore"},
         "^KS11": {"name": "KOSPI", "region": "SouthKorea"},
+    },
+    "China A": {
+        "000001.SS": {"name": "上证指数", "region": "China"},
+        "399001.SZ": {"name": "深证成指", "region": "China"},
+        "399006.SZ": {"name": "创业板指", "region": "China"},
+        "000300.SS": {"name": "沪深300", "region": "China"},
     }
 }
 
@@ -93,6 +100,8 @@ def get_all_indices() -> dict:
 
 def get_stock_quote(symbol: str) -> dict:
     """Fetch current quote for a stock."""
+    if ashare_data.is_ashare_symbol(symbol):
+        return ashare_data.get_ashare_quote(symbol)
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
@@ -166,6 +175,8 @@ def get_stock_quote(symbol: str) -> dict:
 
 def get_stock_history(symbol: str, period: str = "3mo", interval: str = "1d") -> list:
     """Fetch OHLCV historical data for charting."""
+    if ashare_data.is_ashare_symbol(symbol):
+        return ashare_data.get_ashare_history(symbol, period, interval)
     try:
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period=period, interval=interval)
@@ -189,6 +200,8 @@ def get_stock_history(symbol: str, period: str = "3mo", interval: str = "1d") ->
 
 def get_technical_indicators(symbol: str) -> dict:
     """Calculate basic technical indicators."""
+    if ashare_data.is_ashare_symbol(symbol):
+        return ashare_data.get_ashare_indicators(symbol)
     try:
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period="6mo")
@@ -226,11 +239,21 @@ def get_technical_indicators(symbol: str) -> dict:
         avg_volume = float(volumes.rolling(20).mean().iloc[-1])
         volume_ratio = float(volumes.iloc[-1]) / avg_volume if avg_volume > 0 else 1
 
+        # RSI State
+        rsi_state = "NEUTRAL"
+        if rsi > 70: rsi_state = "OVERBOUGHT"
+        elif rsi < 30: rsi_state = "OVERSOLD"
+        
+        # MA200 Distance
+        dist_ma200 = ((current - ma200) / ma200) if ma200 else 0
+
         return {
             "ma20": round(ma20, 2),
             "ma50": round(ma50, 2) if ma50 else None,
             "ma200": round(ma200, 2) if ma200 else None,
+            "dist_from_ma200_pct": round(dist_ma200 * 100, 2) if ma200 else 0,
             "rsi": round(rsi, 2),
+            "rsi_state": rsi_state,
             "macd": round(macd, 4),
             "macd_signal": round(signal, 4),
             "bb_upper": round(bb_upper, 2),
@@ -239,6 +262,7 @@ def get_technical_indicators(symbol: str) -> dict:
             "volume_ratio": round(volume_ratio, 2),
             "above_ma20": current > ma20,
             "above_ma50": current > ma50 if ma50 else None,
+            "above_ma200": current > ma200 if ma200 else None,
         }
     except Exception as e:
         logger.error(f"Error calculating indicators for {symbol}: {e}")
@@ -247,6 +271,8 @@ def get_technical_indicators(symbol: str) -> dict:
 
 def get_stock_news(symbol: str, limit: int = 5) -> list:
     """Fetch recent news for a stock."""
+    if ashare_data.is_ashare_symbol(symbol):
+        return ashare_data.get_ashare_news(symbol, limit)
     try:
         ticker = yf.Ticker(symbol)
         news = ticker.news or []

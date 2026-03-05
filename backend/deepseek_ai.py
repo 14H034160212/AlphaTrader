@@ -7,7 +7,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_MODEL = "deepseek-reasoner"  # DeepSeek API Model
-OLLAMA_MODEL = "deepseek-r1:14b"      # Local Ollama Model
+OLLAMA_MODEL = "DRL70B:latest"        # Local DeepSeek-R1 70B via Ollama
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/chat/completions"
 
 
@@ -43,7 +43,7 @@ def _call_ollama(messages, temperature=0.1):
         }
     }
     try:
-        resp = requests.post(url, json=payload, timeout=120)
+        resp = requests.post(url, json=payload, timeout=360)
         resp.raise_for_status()
         data = resp.json()
         return data["message"]["content"]
@@ -51,7 +51,7 @@ def _call_ollama(messages, temperature=0.1):
         raise ConnectionError("Cannot connect to local Ollama. Is it running?")
 
 
-def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context="", upcoming_events=""):
+def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context="", upcoming_events="", rl_lessons="", sector="Other"):
     """Use DeepSeek-R1 (Local or API) to analyze a stock and generate trading signal."""
     if ai_provider == "deepseek_api" and not api_key:
         return {
@@ -78,7 +78,20 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
 
         news_items = ["  - {} ({})".format(n.get("title",""), n.get("publisher","")) for n in news[:5]]
         news_summary = "\n".join(news_items) if news_items else "No recent news"
-        ind_summary = json.dumps(indicators, indent=2) if indicators else "Not available"
+        
+        # Enhanced Indicators with Over-extension logic
+        ind_data = indicators.copy() if indicators else {}
+        rsi_state = ind_data.get("rsi_state", "NEUTRAL")
+        dist_ma200 = ind_data.get("dist_from_ma200_pct", 0)
+        
+        overextension_msg = ""
+        if rsi_state == "OVERBOUGHT" or dist_ma200 > 15:
+            overextension_msg = (
+                "\n⚠️ WARNING: This stock is technically OVEREXTENDED (RSI: {}, MA200 Dist: {:.1f}%). "
+                "The 'High Point' risk is elevated. Favor mean-reversion caution over momentum chasing."
+            ).format(ind_data.get("rsi"), dist_ma200)
+
+        ind_summary = json.dumps(ind_data, indent=2) if ind_data else "Not available"
 
         prompt = """You are an expert quantitative stock analyst advising a LONG-ONLY small-account trader.
 CRITICAL CONSTRAINT: This account does NOT support short selling. Never output SHORT or COVER.
@@ -107,11 +120,15 @@ If a stock looks overvalued but we don't hold it, output HOLD — never SHORT.
 - Market Liquidity: {liquidity}
 - Trade Crowding Risk: {crowding} (0.0=Low, 1.0=Extreme)
 
-### Technical Indicators
+### Technical Indicators & Mean Reversion Risk
 {indicators}
+{overextend}
 
 ### Recent Price Action (Last 10 Sessions)
 {prices}
+
+### Lessons from Past Performance (RL Ground Truth)
+{rl_feedback}
 
 ### Recent News
 {news}
@@ -141,7 +158,7 @@ Respond ONLY with valid JSON (no markdown):
             volume=quote.get("volume", 0),
             mktcap=quote.get("market_cap", "N/A"),
             pe=quote.get("pe_ratio", "N/A"),
-            sector=quote.get("sector", "N/A"),
+            sector=sector,
             wklow=quote.get("fifty_two_week_low", "N/A"),
             wkhigh=quote.get("fifty_two_week_high", "N/A"),
             dcf=quote.get("dcf_value", "N/A"),
@@ -153,7 +170,9 @@ Respond ONLY with valid JSON (no markdown):
             liquidity=quote.get("liquidity", "N/A"),
             crowding=quote.get("crowding", "N/A"),
             indicators=ind_summary,
+            overextend=overextension_msg,
             prices=price_summary,
+            rl_feedback=rl_lessons if rl_lessons else "No prior reinforcement learning feedback available yet.",
             news=news_summary,
             events=upcoming_events if upcoming_events else "",
             ctx="### Portfolio Context\n{}".format(portfolio_context) if portfolio_context else ""

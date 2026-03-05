@@ -31,7 +31,8 @@ def record_signal_state(
     event_context: str, 
     portfolio_context: str,
     catalysts: list = None,
-    active_macros: list = None
+    active_macros: list = None,
+    sector: str = "Other"
 ):
     """
     Called immediately when an AI signal is generated.
@@ -41,6 +42,7 @@ def record_signal_state(
     record = {
         "timestamp": datetime.utcnow().isoformat(),
         "symbol": signal.get("symbol"),
+        "sector": signal.get("sector", "Other"),
         # ── Action (what AI decided) ──────────────────────────────────────────
         "action": signal.get("signal", "HOLD"),
         "confidence": signal.get("confidence", 0),

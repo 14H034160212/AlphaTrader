@@ -13,6 +13,9 @@ let marketData = {};
 let portfolioData = {};
 let priceCache = {};
 let chatHistory = [];
+let layoffCandidatesData = [];
+let layoffEventsData = [];
+let layoffResultsData = null;
 let COLORS = ['#388bfd', '#3fb950', '#d4a820', '#f85149', '#a371f7', '#58a6ff', '#e3b341', '#f0883e'];
 
 let authToken = localStorage.getItem('auth_token') || '';
@@ -166,6 +169,7 @@ function showPage(name) {
     if (name === 'signals') loadSignals();
     if (name === 'watchlist') loadWatchlist();
     if (name === 'settings') loadSettings();
+    if (name === 'layoff') initLayoffPage();
 }
 
 // ─────────────────────────────────────────────
@@ -281,10 +285,10 @@ async function loadChart() {
         const up = q.change_pct >= 0;
         document.getElementById('chartMeta').innerHTML = `
       <span style="font-size:16px;font-weight:700;">${q.name || symbol}</span>
-      <span class="font-mono" style="font-size:20px;font-weight:700;color:${up ? 'var(--green)' : 'var(--red)'}">$${q.current?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+      <span class="font-mono" style="font-size:20px;font-weight:700;color:${up ? 'var(--green)' : 'var(--red)'}">${q.currency === 'CNY' ? '¥' : '$'}${q.current?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
       <span class="${up ? 'text-green' : 'text-red'}" style="font-size:14px;">${up ? '▲' : '▼'}${Math.abs(q.change_pct).toFixed(2)}%</span>
       <span class="text-muted" style="font-size:12px;">P/E: ${q.pe_ratio?.toFixed(1) || 'N/A'}</span>
-      <span class="text-muted" style="font-size:12px;">52W: $${q.fifty_two_week_low?.toFixed(2) || '--'} - $${q.fifty_two_week_high?.toFixed(2) || '--'}</span>
+      <span class="text-muted" style="font-size:12px;">52W: ${q.currency === 'CNY' ? '¥' : '$'}${q.fifty_two_week_low?.toFixed(2) || '--'} - ${q.currency === 'CNY' ? '¥' : '$'}${q.fifty_two_week_high?.toFixed(2) || '--'}</span>
     `;
 
         // Clear & render chart
@@ -555,7 +559,7 @@ async function loadWatchlist() {
             return `<tr>
             <td style="font-weight:600;cursor:pointer;" onclick="loadChartFor('${q.symbol}')">${q.symbol}</td>
             <td style="color:var(--text-secondary);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${q.name || ''}</td>
-            <td>$${q.current?.toFixed(2)}</td>
+            <td>${q.currency === 'CNY' ? '¥' : '$'}${q.current?.toFixed(2)}</td>
             <td class="${up ? 'text-green' : 'text-red'}">${up ? '+' : ''}${q.change?.toFixed(2)}</td>
             <td class="${up ? 'text-green' : 'text-red'}">${up ? '+' : ''}${q.change_pct?.toFixed(2)}%</td>
             <td>${(q.volume / 1000000).toFixed(2)}M</td>
@@ -823,6 +827,354 @@ function showReasoning(encoded, symbol, signal) {
     <div class="ai-analysis-box" style="max-height:60vh;">${text}</div>
   </div>`;
     document.body.appendChild(overlay);
+}
+
+// ─────────────────────────────────────────────
+// Layoff Framework
+// ─────────────────────────────────────────────
+function initLayoffPage() {
+    renderLayoffCandidates();
+    renderLayoffEventEditor();
+    renderLayoffSummary(null);
+    renderLayoffPathChart([]);
+    renderLayoffResultTable([]);
+}
+
+function escapeHTML(text) {
+    return (text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+async function discoverLayoffCandidates() {
+    const hoursBack = parseInt(document.getElementById('layoffHoursBack').value || '168', 10);
+    const extra = (document.getElementById('layoffExtraSymbols').value || '')
+        .split(',')
+        .map(s => s.trim().toUpperCase())
+        .filter(Boolean);
+
+    const panel = document.getElementById('layoffCandidates');
+    panel.innerHTML = '<div class="loading"><div class="spinner"></div>抓取中...</div>';
+
+    try {
+        const res = await authFetch('/api/layoff-framework/discover', {
+            method: 'POST',
+            body: JSON.stringify({
+                use_watchlist: true,
+                symbols: extra,
+                hours_back: hoursBack,
+                max_items: 100
+            })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || '抓取失败');
+        }
+        const data = await res.json();
+        layoffCandidatesData = data.candidates || [];
+        if (!layoffEventsData.length && layoffCandidatesData.length) {
+            layoffEventsData = layoffCandidatesData.slice(0, 20).map(c => ({
+                symbol: c.symbol,
+                announcement_date: c.announcement_date,
+                layoff_percentage: c.layoff_percentage ?? '',
+                layoff_employees: c.layoff_employees ?? '',
+                guidance_change: c.guidance_change || '',
+            }));
+        }
+        renderLayoffCandidates();
+        renderLayoffEventEditor();
+        showToast(`✅ 已发现 ${layoffCandidatesData.length} 条候选事件`, 'success');
+    } catch (e) {
+        panel.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>${e.message}</div></div>`;
+    }
+}
+
+function importSelectedCandidates() {
+    const selected = layoffCandidatesData.filter((_, idx) => {
+        const el = document.getElementById(`layoff-candidate-${idx}`);
+        return el && el.checked;
+    });
+    if (!selected.length) {
+        showToast('请至少勾选一条候选事件', 'error');
+        return;
+    }
+
+    const exists = new Set(layoffEventsData.map(e => `${e.symbol}|${e.announcement_date}`));
+    selected.forEach(c => {
+        const key = `${c.symbol}|${c.announcement_date}`;
+        if (!exists.has(key)) {
+            layoffEventsData.push({
+                symbol: c.symbol,
+                announcement_date: c.announcement_date,
+                layoff_percentage: c.layoff_percentage ?? '',
+                layoff_employees: c.layoff_employees ?? '',
+                guidance_change: c.guidance_change || '',
+            });
+        }
+    });
+    renderLayoffEventEditor();
+    showToast(`✅ 已导入 ${selected.length} 条事件`, 'success');
+}
+
+function addManualLayoffEvent() {
+    layoffEventsData.push({
+        symbol: '',
+        announcement_date: '',
+        layoff_percentage: '',
+        layoff_employees: '',
+        guidance_change: '',
+    });
+    renderLayoffEventEditor();
+}
+
+function removeLayoffEvent(idx) {
+    layoffEventsData.splice(idx, 1);
+    renderLayoffEventEditor();
+}
+
+function syncLayoffEventsFromEditor() {
+    layoffEventsData = layoffEventsData.map((_, idx) => ({
+        symbol: (document.getElementById(`layoff-symbol-${idx}`)?.value || '').trim().toUpperCase(),
+        announcement_date: (document.getElementById(`layoff-date-${idx}`)?.value || '').trim(),
+        layoff_percentage: (document.getElementById(`layoff-pct-${idx}`)?.value || '').trim(),
+        layoff_employees: (document.getElementById(`layoff-emp-${idx}`)?.value || '').trim(),
+        guidance_change: (document.getElementById(`layoff-guide-${idx}`)?.value || '').trim().toLowerCase(),
+    })).filter(e => e.symbol && e.announcement_date);
+}
+
+function renderLayoffCandidates() {
+    const container = document.getElementById('layoffCandidates');
+    if (!layoffCandidatesData.length) {
+        container.innerHTML = '<div class="empty-state" style="padding:20px;"><div class="empty-icon">📰</div><div>暂无候选事件，点击“抓取候选”开始扫描</div></div>';
+        return;
+    }
+
+    container.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap;">
+      <div style="font-size:12px;color:var(--text-muted);">共 ${layoffCandidatesData.length} 条匹配关键词新闻</div>
+      <button class="btn btn-success btn-sm" onclick="importSelectedCandidates()">导入勾选项</button>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th></th><th>股票</th><th>公告日</th><th>标题</th><th>线索</th></tr></thead>
+        <tbody>
+          ${layoffCandidatesData.map((c, idx) => `
+            <tr>
+              <td><input type="checkbox" id="layoff-candidate-${idx}" checked /></td>
+              <td>${c.symbol}</td>
+              <td>${c.announcement_date}</td>
+              <td style="max-width:420px;white-space:normal;font-family:'Inter',sans-serif;">
+                ${c.link ? `<a href="${escapeHTML(c.link)}" target="_blank" style="color:var(--accent-bright);">${escapeHTML(c.headline)}</a>` : escapeHTML(c.headline)}
+              </td>
+              <td style="white-space:normal;font-family:'Inter',sans-serif;color:var(--text-secondary);">
+                ${c.layoff_percentage ? `裁员比例 ${c.layoff_percentage}% ` : ''}
+                ${c.layoff_employees ? `人数 ${c.layoff_employees} ` : ''}
+                ${c.guidance_change ? `指引 ${c.guidance_change}` : ''}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function renderLayoffEventEditor() {
+    const container = document.getElementById('layoffEventEditor');
+    if (!layoffEventsData.length) {
+        container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+          <div class="text-muted" style="font-size:12px;">还没有事件，先导入候选或手动新增</div>
+          <button class="btn btn-ghost btn-sm" onclick="addManualLayoffEvent()">+ 手动新增</button>
+        </div>`;
+        return;
+    }
+    container.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div style="font-size:12px;color:var(--text-muted);">待评估事件: ${layoffEventsData.length}</div>
+      <button class="btn btn-ghost btn-sm" onclick="addManualLayoffEvent()">+ 手动新增</button>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>股票</th><th>公告日</th><th>裁员%</th><th>裁员人数</th><th>指引</th><th></th></tr></thead>
+        <tbody>
+          ${layoffEventsData.map((e, idx) => `
+            <tr>
+              <td><input id="layoff-symbol-${idx}" class="input layoff-edit-input" value="${escapeHTML(e.symbol)}" /></td>
+              <td><input id="layoff-date-${idx}" class="input layoff-edit-input" value="${escapeHTML(e.announcement_date)}" placeholder="YYYY-MM-DD" /></td>
+              <td><input id="layoff-pct-${idx}" class="input layoff-edit-input" value="${escapeHTML(String(e.layoff_percentage ?? ''))}" /></td>
+              <td><input id="layoff-emp-${idx}" class="input layoff-edit-input" value="${escapeHTML(String(e.layoff_employees ?? ''))}" /></td>
+              <td><input id="layoff-guide-${idx}" class="input layoff-edit-input" value="${escapeHTML(e.guidance_change || '')}" placeholder="up/down/none" /></td>
+              <td><button class="btn btn-ghost btn-sm" onclick="removeLayoffEvent(${idx})">移除</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function evaluateLayoffEvents() {
+    syncLayoffEventsFromEditor();
+    if (!layoffEventsData.length) {
+        showToast('没有可评估事件', 'error');
+        return;
+    }
+
+    const events = layoffEventsData.map(e => ({
+        symbol: e.symbol,
+        announcement_date: e.announcement_date,
+        layoff_percentage: e.layoff_percentage === '' ? null : parseFloat(e.layoff_percentage),
+        layoff_employees: e.layoff_employees === '' ? null : parseInt(e.layoff_employees, 10),
+        guidance_change: e.guidance_change || null,
+    }));
+    const benchmark = (document.getElementById('layoffBenchmark').value || 'SPY').trim().toUpperCase();
+    const lookaheadDays = parseInt(document.getElementById('layoffLookahead').value || '20', 10);
+
+    document.getElementById('layoffResultTable').innerHTML = '<div class="loading"><div class="spinner"></div>评估中...</div>';
+    try {
+        const res = await authFetch('/api/layoff-framework/evaluate', {
+            method: 'POST',
+            body: JSON.stringify({
+                events,
+                benchmark_symbol: benchmark,
+                lookahead_days: lookaheadDays
+            })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || '评估失败');
+        }
+        layoffResultsData = await res.json();
+        renderLayoffSummary(layoffResultsData);
+        renderLayoffResultTable(layoffResultsData.results || []);
+        const avgPath = buildAveragePath(layoffResultsData.results || []);
+        renderLayoffPathChart(avgPath);
+        showToast('✅ 裁员事件框架评估完成', 'success');
+    } catch (e) {
+        document.getElementById('layoffResultTable').innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>${e.message}</div></div>`;
+    }
+}
+
+function renderLayoffSummary(data) {
+    const root = document.getElementById('layoffSummaryStats');
+    if (!data) {
+        root.innerHTML = `
+        <div class="stat-card"><div class="stat-label">平均 Day+1</div><div class="stat-value">--</div></div>
+        <div class="stat-card"><div class="stat-label">平均反应持续天数</div><div class="stat-value">--</div></div>
+        <div class="stat-card"><div class="stat-label">平均强度分数</div><div class="stat-value">--</div></div>`;
+        return;
+    }
+    const d1 = data.avg_day1_return_pct;
+    const d1Cls = (d1 || 0) >= 0 ? 'text-green' : 'text-red';
+    root.innerHTML = `
+      <div class="stat-card">
+        <div class="stat-label">平均 Day+1</div>
+        <div class="stat-value ${d1Cls}">${d1 == null ? '--' : `${d1 >= 0 ? '+' : ''}${d1.toFixed(2)}%`}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">平均反应持续天数</div>
+        <div class="stat-value">${data.avg_reaction_duration_days == null ? '--' : data.avg_reaction_duration_days}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">平均强度分数</div>
+        <div class="stat-value">${data.avg_event_strength_score == null ? '--' : data.avg_event_strength_score}</div>
+      </div>`;
+}
+
+function renderLayoffResultTable(results) {
+    const container = document.getElementById('layoffResultTable');
+    if (!results.length) {
+        container.innerHTML = '<div class="empty-state"><div class="empty-icon">📉</div><div>暂无结果</div></div>';
+        return;
+    }
+    container.innerHTML = `
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>股票</th><th>公告日</th><th>Day+1</th><th>Day+5</th><th>Day+20</th><th>超额Day+5</th><th>持续天数</th><th>强度</th></tr></thead>
+        <tbody>
+          ${results.map(r => {
+              if (r.error) {
+                  return `<tr><td>${r.symbol || '--'}</td><td>${r.announcement_date || '--'}</td><td colspan="6" style="color:var(--red);font-family:'Inter',sans-serif;">${escapeHTML(r.error)}</td></tr>`;
+              }
+              const ret = r.event_window_returns_pct || {};
+              const abn = r.abnormal_returns_pct || {};
+              const d1 = ret.day_1;
+              const d5 = ret.day_5;
+              const d20 = ret.day_20;
+              const a5 = abn.day_5;
+              return `<tr>
+                <td>${r.symbol}</td>
+                <td>${r.announcement_date}</td>
+                <td class="${(d1 || 0) >= 0 ? 'text-green' : 'text-red'}">${d1 == null ? '--' : `${d1 >= 0 ? '+' : ''}${d1.toFixed(2)}%`}</td>
+                <td class="${(d5 || 0) >= 0 ? 'text-green' : 'text-red'}">${d5 == null ? '--' : `${d5 >= 0 ? '+' : ''}${d5.toFixed(2)}%`}</td>
+                <td class="${(d20 || 0) >= 0 ? 'text-green' : 'text-red'}">${d20 == null ? '--' : `${d20 >= 0 ? '+' : ''}${d20.toFixed(2)}%`}</td>
+                <td class="${(a5 || 0) >= 0 ? 'text-green' : 'text-red'}">${a5 == null ? '--' : `${a5 >= 0 ? '+' : ''}${a5.toFixed(2)}%`}</td>
+                <td>${r.reaction_duration_days}</td>
+                <td>${r.event_strength_score}</td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function buildAveragePath(results) {
+    const valid = results.filter(r => !r.error && Array.isArray(r.path_returns_pct) && r.path_returns_pct.length);
+    if (!valid.length) return [];
+    const byDay = {};
+    valid.forEach(r => {
+        r.path_returns_pct.forEach(p => {
+            if (!byDay[p.day]) byDay[p.day] = [];
+            byDay[p.day].push(p.return_pct);
+        });
+    });
+    return Object.keys(byDay)
+        .map(k => Number(k))
+        .sort((a, b) => a - b)
+        .map(day => {
+            const vals = byDay[day];
+            const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+            return { day, return_pct: avg };
+        });
+}
+
+function renderLayoffPathChart(path) {
+    const container = document.getElementById('layoffPathChart');
+    if (!path.length) {
+        container.innerHTML = '<div class="empty-state"><div class="empty-icon">📈</div><div>评估后显示平均路径</div></div>';
+        return;
+    }
+
+    const width = Math.max(680, container.clientWidth || 680);
+    const height = 280;
+    const pad = { l: 42, r: 18, t: 18, b: 28 };
+    const xs = path.map(p => p.day);
+    const ys = path.map(p => p.return_pct);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(0, ...ys);
+    const maxY = Math.max(0, ...ys);
+    const yRange = (maxY - minY) || 1;
+
+    const xTo = (x) => pad.l + (x / (maxX || 1)) * (width - pad.l - pad.r);
+    const yTo = (y) => pad.t + (1 - ((y - minY) / yRange)) * (height - pad.t - pad.b);
+    const points = path.map(p => `${xTo(p.day).toFixed(2)},${yTo(p.return_pct).toFixed(2)}`).join(' ');
+    const zeroY = yTo(0);
+    const last = path[path.length - 1];
+    const lineColor = last.return_pct >= 0 ? '#1a7f37' : '#d1242f';
+
+    container.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="layoff-svg">
+      <line x1="${pad.l}" y1="${zeroY}" x2="${width - pad.r}" y2="${zeroY}" stroke="rgba(31,35,40,0.22)" stroke-dasharray="4 4"/>
+      <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${height - pad.b}" stroke="rgba(31,35,40,0.22)"/>
+      <line x1="${pad.l}" y1="${height - pad.b}" x2="${width - pad.r}" y2="${height - pad.b}" stroke="rgba(31,35,40,0.22)"/>
+      <polyline fill="none" stroke="${lineColor}" stroke-width="2.5" points="${points}" />
+      ${path.map(p => `<circle cx="${xTo(p.day)}" cy="${yTo(p.return_pct)}" r="2.5" fill="${lineColor}" />`).join('')}
+      <text x="${pad.l}" y="${height - 8}" fill="#59636e" font-size="11">Day 0</text>
+      <text x="${width - 62}" y="${height - 8}" fill="#59636e" font-size="11">Day ${maxX}</text>
+      <text x="8" y="${zeroY - 4}" fill="#59636e" font-size="11">0%</text>
+      <text x="${width - 136}" y="${pad.t + 10}" fill="${lineColor}" font-size="12">Avg: ${last.return_pct >= 0 ? '+' : ''}${last.return_pct.toFixed(2)}%</text>
+    </svg>`;
 }
 
 // ─────────────────────────────────────────────
@@ -1204,3 +1556,8 @@ async function handleQuickRecharge() {
 window.openModal = openModal;
 window.closeModal = closeModal;
 window.handleQuickRecharge = handleQuickRecharge;
+window.discoverLayoffCandidates = discoverLayoffCandidates;
+window.importSelectedCandidates = importSelectedCandidates;
+window.addManualLayoffEvent = addManualLayoffEvent;
+window.removeLayoffEvent = removeLayoffEvent;
+window.evaluateLayoffEvents = evaluateLayoffEvents;
