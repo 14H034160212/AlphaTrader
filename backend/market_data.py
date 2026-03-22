@@ -1,4 +1,4 @@
-"""Market data service using yfinance for global stock market data."""
+"""Market data service using yfinance + Sina Finance for global stock market data."""
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
@@ -6,44 +6,203 @@ from typing import Optional
 import logging
 from quant_models import QuantitativeModels
 import ashare_data
+from market_calendar import detect_market, get_currency
 
 logger = logging.getLogger(__name__)
 
-# Global market indices
+# ── Global market indices ─────────────────────────────────────────────────────
 GLOBAL_INDICES = {
+    # ── Americas ──────────────────────────────────────────────────────────────
     "Americas": {
-        "^GSPC": {"name": "S&P 500", "region": "US"},
-        "^IXIC": {"name": "NASDAQ", "region": "US"},
-        "^DJI": {"name": "Dow Jones", "region": "US"},
-        "^RUT": {"name": "Russell 2000", "region": "US"},
-        "^BVSP": {"name": "Bovespa", "region": "Brazil"},
-        "^MXX": {"name": "IPC Mexico", "region": "Mexico"},
+        "^GSPC":   {"name": "S&P 500",      "region": "US"},
+        "^IXIC":   {"name": "NASDAQ",        "region": "US"},
+        "^DJI":    {"name": "道琼斯",         "region": "US"},
+        "^RUT":    {"name": "Russell 2000",  "region": "US"},
+        "^VIX":    {"name": "VIX 恐慌指数",  "region": "US"},
+        "^BVSP":   {"name": "巴西 Bovespa",  "region": "Brazil"},
+        "^MXX":    {"name": "墨西哥 IPC",    "region": "Mexico"},
+        "^GSPTSE": {"name": "加拿大 TSX",    "region": "Canada"},
+        "^MERV":   {"name": "阿根廷 MERVAL", "region": "Argentina"},
+        "^IPSA":   {"name": "智利 IPSA",     "region": "Chile"},
     },
+    # ── Europe ────────────────────────────────────────────────────────────────
     "Europe": {
-        "^FTSE": {"name": "FTSE 100", "region": "UK"},
-        "^GDAXI": {"name": "DAX", "region": "Germany"},
-        "^FCHI": {"name": "CAC 40", "region": "France"},
-        "^STOXX50E": {"name": "Euro Stoxx 50", "region": "EU"},
-        "^AEX": {"name": "AEX", "region": "Netherlands"},
-        "FTSEMIB.MI": {"name": "FTSE MIB", "region": "Italy"},
+        "^FTSE":    {"name": "英国 FTSE 100",    "region": "UK"},
+        "^GDAXI":   {"name": "德国 DAX",          "region": "Germany"},
+        "^FCHI":    {"name": "法国 CAC 40",        "region": "France"},
+        "^STOXX50E":{"name": "欧洲 Stoxx 50",     "region": "EU"},
+        "^AEX":     {"name": "荷兰 AEX",          "region": "Netherlands"},
+        "FTSEMIB.MI":{"name": "意大利 FTSE MIB",  "region": "Italy"},
+        "^IBEX":    {"name": "西班牙 IBEX 35",    "region": "Spain"},
+        "^SSMI":    {"name": "瑞士 SMI",          "region": "Switzerland"},
+        "^OMX":     {"name": "斯德哥尔摩 OMX",   "region": "Sweden"},
+        "IMOEX.ME": {"name": "俄罗斯 MOEX",       "region": "Russia"},
+        "^BFX":     {"name": "比利时 BEL 20",     "region": "Belgium"},
     },
+    # ── Asia Pacific ──────────────────────────────────────────────────────────
     "Asia Pacific": {
-        "^N225": {"name": "Nikkei 225", "region": "Japan"},
-        "^HSI": {"name": "Hang Seng", "region": "HongKong"},
-        "000001.SS": {"name": "Shanghai Composite", "region": "China"},
-        "^AXJO": {"name": "ASX 200", "region": "Australia"},
-        "^STI": {"name": "STI", "region": "Singapore"},
-        "^KS11": {"name": "KOSPI", "region": "SouthKorea"},
+        "^N225":   {"name": "日经 225",         "region": "Japan"},
+        "^HSI":    {"name": "恒生指数",          "region": "HongKong"},
+        "^AXJO":   {"name": "澳大利亚 ASX 200", "region": "Australia"},
+        "^STI":    {"name": "新加坡 STI",       "region": "Singapore"},
+        "^KS11":   {"name": "韩国 KOSPI",       "region": "SouthKorea"},
+        "^TWII":   {"name": "台湾加权指数",      "region": "Taiwan"},
+        "^NSEI":   {"name": "印度 NIFTY 50",    "region": "India"},
+        "^BSESN":  {"name": "印度 SENSEX",      "region": "India"},
+        "^KLSE":   {"name": "马来西亚 KLCI",    "region": "Malaysia"},
+        "^SET.BK": {"name": "泰国 SET",         "region": "Thailand"},
+        "^JKSE":   {"name": "印尼 IDX",         "region": "Indonesia"},
+        "^PSI":    {"name": "菲律宾 PSEi",      "region": "Philippines"},
     },
+    # ── China A-shares ────────────────────────────────────────────────────────
     "China A": {
-        "000001.SS": {"name": "上证指数", "region": "China"},
-        "399001.SZ": {"name": "深证成指", "region": "China"},
-        "399006.SZ": {"name": "创业板指", "region": "China"},
-        "000300.SS": {"name": "沪深300", "region": "China"},
-    }
+        "000001.SS": {"name": "上证指数",   "region": "China"},
+        "399001.SZ": {"name": "深证成指",   "region": "China"},
+        "399006.SZ": {"name": "创业板指",   "region": "China"},
+        "000300.SS": {"name": "沪深300",    "region": "China"},
+        "000016.SS": {"name": "上证50",     "region": "China"},
+        "399905.SZ": {"name": "中证500",    "region": "China"},
+        "000688.SS": {"name": "科创50",     "region": "China"},
+        "^HSI":      {"name": "恒生指数",   "region": "HongKong"},
+        "^HSCE":     {"name": "国企指数",   "region": "HongKong"},
+    },
+    # ── Middle East & Africa ──────────────────────────────────────────────────
+    "Middle East & Africa": {
+        "^TASI.SR": {"name": "沙特 Tadawul", "region": "Saudi Arabia"},
+        "^DFMGI":   {"name": "迪拜 DFM",     "region": "UAE"},
+        "^TA125.TA":{"name": "以色列 TA-125","region": "Israel"},
+        "^J203.JO": {"name": "南非 JSE Top40","region": "South Africa"},
+        "^EGX30":   {"name": "埃及 EGX 30",  "region": "Egypt"},
+    },
 }
 
-# Popular stocks to track
+# ── Popular international stocks (yfinance tickers) ───────────────────────────
+# These are organized by region for easy discovery
+
+GLOBAL_POPULAR_STOCKS = {
+    "US_TECH": [
+        "NVDA", "AAPL", "MSFT", "GOOGL", "META", "AMZN", "TSLA",
+        "AMD", "AVGO", "TSM", "ASML", "QCOM", "MU", "INTC",
+    ],
+    "US_FINANCE": ["JPM", "BAC", "GS", "MS", "BLK", "V", "MA", "AXP"],
+    "US_ENERGY":  ["XOM", "CVX", "COP", "OXY", "SLB"],
+    "US_ETF":     ["SPY", "QQQ", "TQQQ", "SOXL", "GLD", "SLV", "IAU", "IWM",
+                   "IBIT", "MSTR", "COIN"],
+    # US-accessible global ETFs — tradeable via Alpaca, no Futu/IBKR needed
+    "GLOBAL_ETF": [
+        "EWJ",   # Japan (iShares MSCI Japan)
+        "FXI",   # China Large-Cap (iShares China)
+        "EWT",   # Taiwan (iShares MSCI Taiwan)
+        "EWY",   # South Korea (iShares MSCI South Korea)
+        "EWG",   # Germany (iShares MSCI Germany)
+        "EWU",   # UK (iShares MSCI UK)
+        "EWA",   # Australia (iShares MSCI Australia)
+        "EWZ",   # Brazil (iShares MSCI Brazil)
+        "INDA",  # India (iShares MSCI India)
+        "VGK",   # Europe (Vanguard FTSE Europe)
+        "EEM",   # Emerging Markets (iShares MSCI EM)
+        "EFA",   # Developed Markets ex-US (iShares MSCI EAFE)
+    ],
+    "HK": [
+        "0700.HK",   # 腾讯 Tencent
+        "9988.HK",   # 阿里巴巴 Alibaba
+        "3690.HK",   # 美团 Meituan
+        "9618.HK",   # 京东 JD.com
+        "1810.HK",   # 小米 Xiaomi
+        "0941.HK",   # 中国移动 China Mobile
+        "2318.HK",   # 中国平安 Ping An
+        "1299.HK",   # 友邦保险 AIA
+        "0005.HK",   # 汇丰银行 HSBC
+        "0388.HK",   # 港交所 HKEX
+        "2269.HK",   # 药明生物 WuXi Bio
+        "1211.HK",   # 比亚迪 BYD
+        "0175.HK",   # 吉利汽车 Geely
+        "6690.HK",   # 海尔智家 Haier
+        "9999.HK",   # 网易 NetEase
+    ],
+    "CN_ASHARE": [
+        "600519.SH",  # 贵州茅台
+        "000858.SZ",  # 五粮液
+        "600036.SH",  # 招商银行
+        "601318.SH",  # 中国平安
+        "600276.SH",  # 恒瑞医药
+        "300750.SZ",  # 宁德时代
+        "601888.SH",  # 中国中免
+        "000333.SZ",  # 美的集团
+        "002594.SZ",  # 比亚迪
+        "601628.SH",  # 中国人寿
+        "600900.SH",  # 长江电力
+        "601166.SH",  # 兴业银行
+        "000001.SZ",  # 平安银行
+        "600031.SH",  # 三一重工
+        "688981.SH",  # 中芯国际 (STAR)
+    ],
+    "JP": [
+        "7203.T",   # Toyota
+        "6758.T",   # Sony
+        "6861.T",   # Keyence
+        "9984.T",   # SoftBank
+        "8306.T",   # MUFG
+        "6502.T",   # Toshiba
+        "7267.T",   # Honda
+        "9433.T",   # KDDI
+    ],
+    "EU": [
+        "SAP.DE",    # SAP (Germany)
+        "ASML.AS",   # ASML (Netherlands) - US ADR also: ASML
+        "MC.PA",     # LVMH (France)
+        "OR.PA",     # L'Oréal (France)
+        "NESN.SW",   # Nestlé (Switzerland)
+        "ROG.SW",    # Roche (Switzerland)
+        "NOVN.SW",   # Novartis (Switzerland)
+        "SHEL.L",    # Shell (UK)
+        "AZN.L",     # AstraZeneca (UK)
+        "BP.L",      # BP (UK)
+        "HSBA.L",    # HSBC (UK)
+        "SIE.DE",    # Siemens (Germany)
+        "BAYN.DE",   # Bayer (Germany)
+        "BMW.DE",    # BMW (Germany)
+        "VOW3.DE",   # Volkswagen (Germany)
+    ],
+    "AU": [
+        "BHP.AX",    # BHP Group
+        "CBA.AX",    # Commonwealth Bank
+        "CSL.AX",    # CSL Limited
+        "NAB.AX",    # NAB
+        "RIO.AX",    # Rio Tinto
+        "WBC.AX",    # Westpac
+    ],
+    "KR": [
+        "005930.KS",  # Samsung Electronics
+        "000660.KS",  # SK Hynix
+        "005380.KS",  # Hyundai Motor
+        "035420.KS",  # NAVER
+        "051910.KS",  # LG Chem
+    ],
+    "IN": [
+        "RELIANCE.NS",  # Reliance Industries
+        "TCS.NS",       # Tata Consultancy
+        "INFY.NS",      # Infosys
+        "HDFCBANK.NS",  # HDFC Bank
+        "ICICIBANK.NS", # ICICI Bank
+    ],
+    "BR": [
+        "VALE3.SA",   # Vale
+        "PETR4.SA",   # Petrobras
+        "ITUB4.SA",   # Itaú Unibanco
+        "WEGE3.SA",   # WEG
+        "ABEV3.SA",   # Ambev
+    ],
+    "SG": [
+        "D05.SI",  # DBS Group
+        "U11.SI",  # UOB
+        "O39.SI",  # OCBC
+        "Z74.SI",  # Singtel
+        "C09.SI",  # City Dev
+    ],
+}
+
+# Default watchlist (US-focused, backward compatible)
 DEFAULT_WATCHLIST = [
     # ---- AI & Semiconductors ----
     "NVDA", "TSM", "ASML", "AMD", "AVGO",
@@ -56,15 +215,31 @@ DEFAULT_WATCHLIST = [
     # ---- Crypto Proxy ----
     "IBIT", "MSTR", "COIN",
     # ---- Gold & Silver ----
-    "GLD", "SLV"
+    "GLD", "SLV",
+    # ---- HK / China ADR ----
+    "0700.HK", "9988.HK", "1810.HK",
+    # ---- Defense ----
+    "LMT", "RTX",
 ]
 
 
 def get_index_data(symbol: str) -> dict:
     """Fetch current data for a market index."""
+    # CN A-share indices → Sina Finance
+    if ashare_data.is_ashare_symbol(symbol):
+        data = ashare_data.get_ashare_quote(symbol)
+        if data:
+            return {
+                "symbol": symbol,
+                "current": data["current"],
+                "change": data["change"],
+                "change_pct": data["change_pct"],
+                "volume": data["volume"],
+                "timestamp": data["timestamp"],
+            }
+        return None
     try:
         ticker = yf.Ticker(symbol)
-        info = ticker.fast_info
         hist = ticker.history(period="2d")
         if hist.empty:
             return None
@@ -78,6 +253,7 @@ def get_index_data(symbol: str) -> dict:
             "change": round(change, 2),
             "change_pct": round(change_pct, 3),
             "volume": int(hist["Volume"].iloc[-1]) if not pd.isna(hist["Volume"].iloc[-1]) else 0,
+            "currency": get_currency(symbol),
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
@@ -87,19 +263,33 @@ def get_index_data(symbol: str) -> dict:
 
 def get_all_indices() -> dict:
     """Fetch all global market indices."""
+    from market_calendar import is_market_open, detect_market
     result = {}
     for region, indices in GLOBAL_INDICES.items():
         result[region] = []
         for symbol, meta in indices.items():
             data = get_index_data(symbol)
             if data:
+                mkt = detect_market(symbol)
                 data.update(meta)
+                data["market_open"] = is_market_open(mkt)
+                data["market_code"] = mkt
                 result[region].append(data)
     return result
 
 
+def get_global_popular_stocks(region: str = None) -> list:
+    """Return list of popular international stock symbols, optionally filtered by region."""
+    if region and region in GLOBAL_POPULAR_STOCKS:
+        return GLOBAL_POPULAR_STOCKS[region]
+    all_stocks = []
+    for stocks in GLOBAL_POPULAR_STOCKS.values():
+        all_stocks.extend(stocks)
+    return list(dict.fromkeys(all_stocks))  # deduplicate while preserving order
+
+
 def get_stock_quote(symbol: str) -> dict:
-    """Fetch current quote for a stock."""
+    """Fetch current quote for a stock (all markets)."""
     if ashare_data.is_ashare_symbol(symbol):
         return ashare_data.get_ashare_quote(symbol)
     try:
@@ -156,8 +346,9 @@ def get_stock_quote(symbol: str) -> dict:
             "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
             "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
             "sector": info.get("sector", ""),
-            "currency": info.get("currency", "USD"),
+            "currency": info.get("currency", "") or get_currency(symbol),
             "exchange": info.get("exchange", ""),
+            "market": detect_market(symbol),
             "timestamp": datetime.utcnow().isoformat(),
             "dcf_value": round(dcf_value, 2),
             "ddm_value": round(ddm_value, 2),
@@ -209,7 +400,18 @@ def get_technical_indicators(symbol: str) -> dict:
             return {}
 
         closes = hist["Close"]
+        highs  = hist["High"]
+        lows   = hist["Low"]
         volumes = hist["Volume"]
+
+        # ATR (Average True Range, 14-day) — used for adaptive stop-loss
+        prev_close = closes.shift(1)
+        tr = (highs - lows).combine(
+            (highs - prev_close).abs(), max
+        ).combine(
+            (lows - prev_close).abs(), max
+        )
+        atr14 = float(tr.rolling(14).mean().iloc[-1]) if len(tr) >= 14 else float(highs.iloc[-1] - lows.iloc[-1])
 
         # Moving averages
         ma20 = float(closes.rolling(20).mean().iloc[-1])
@@ -263,6 +465,8 @@ def get_technical_indicators(symbol: str) -> dict:
             "above_ma20": current > ma20,
             "above_ma50": current > ma50 if ma50 else None,
             "above_ma200": current > ma200 if ma200 else None,
+            "atr14": round(atr14, 4),
+            "atr14_pct": round(atr14 / current * 100, 2) if current > 0 else 0,
         }
     except Exception as e:
         logger.error(f"Error calculating indicators for {symbol}: {e}")
@@ -291,20 +495,69 @@ def get_stock_news(symbol: str, limit: int = 5) -> list:
 
 
 def search_stocks(query: str) -> list:
-    """Search for stocks by symbol or name."""
-    try:
-        results = []
-        # Try direct symbol lookup
-        ticker = yf.Ticker(query.upper())
-        info = ticker.info
-        if info.get("longName"):
-            results.append({
-                "symbol": query.upper(),
-                "name": info.get("longName", ""),
-                "exchange": info.get("exchange", ""),
-                "sector": info.get("sector", ""),
-            })
-        return results
-    except Exception as e:
-        logger.error(f"Error searching for {query}: {e}")
-        return []
+    """Search for stocks by symbol or name (global markets)."""
+    results = []
+    q = query.strip()
+
+    # Try as-is first (handles AAPL, 0700.HK, 600519.SH, SAP.DE, etc.)
+    for sym in [q, q.upper()]:
+        try:
+            if ashare_data.is_ashare_symbol(sym):
+                quote = ashare_data.get_ashare_quote(sym)
+                if quote:
+                    results.append({
+                        "symbol": sym,
+                        "name": quote.get("name", sym),
+                        "exchange": quote.get("exchange", ""),
+                        "sector": quote.get("sector", "A股"),
+                        "currency": "CNY",
+                        "market": "CN",
+                    })
+                    return results
+            else:
+                ticker = yf.Ticker(sym)
+                info = ticker.info
+                if info.get("longName") or info.get("shortName"):
+                    results.append({
+                        "symbol": sym.upper(),
+                        "name": info.get("longName") or info.get("shortName", sym),
+                        "exchange": info.get("exchange", ""),
+                        "sector": info.get("sector", ""),
+                        "currency": info.get("currency", get_currency(sym)),
+                        "market": detect_market(sym),
+                    })
+                    return results
+        except Exception:
+            pass
+
+    # Search popular international stocks by name keyword
+    search_lower = q.lower()
+    for stocks in GLOBAL_POPULAR_STOCKS.values():
+        for sym in stocks:
+            if search_lower in sym.lower():
+                results.append({"symbol": sym, "name": sym, "exchange": "", "sector": "",
+                                 "currency": get_currency(sym), "market": detect_market(sym)})
+
+    return results[:10]
+
+
+def get_all_market_statuses() -> dict:
+    """Return open/closed status for all global markets."""
+    from market_calendar import get_all_market_statuses as _get_statuses
+    return _get_statuses()
+
+
+def get_multi_market_quotes(symbols: list) -> dict:
+    """
+    Batch-fetch quotes for a list of symbols from multiple markets.
+    Returns {symbol: quote_dict} mapping.
+    """
+    result = {}
+    for symbol in symbols:
+        try:
+            quote = get_stock_quote(symbol)
+            if quote:
+                result[symbol] = quote
+        except Exception as e:
+            logger.debug(f"[MultiMarket] Could not fetch {symbol}: {e}")
+    return result

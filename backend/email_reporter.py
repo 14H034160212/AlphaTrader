@@ -49,6 +49,34 @@ def _pct(val) -> str:
     return f"{sign}{val:.2f}%"
 
 
+def _market_arrow(chg: float) -> str:
+    if chg > 0.5: return f'<span style="color:#27ae60;">▲ {chg:+.2f}%</span>'
+    if chg < -0.5: return f'<span style="color:#e74c3c;">▼ {chg:+.2f}%</span>'
+    return f'<span style="color:#f39c12;">— {chg:+.2f}%</span>'
+
+
+def _health_badge(status: str) -> str:
+    styles = {
+        "working": "background:#27ae60;color:#fff",
+        "mixed":   "background:#f39c12;color:#fff",
+        "failing": "background:#e74c3c;color:#fff",
+        "unknown": "background:#7f8c8d;color:#fff",
+    }
+    labels = {"working": "✅ 叙事有效", "mixed": "⚡ 混合信号", "failing": "⚠️ 叙事失效", "unknown": "❓ 未知"}
+    s = styles.get(status, styles["unknown"])
+    l = labels.get(status, status)
+    return f'<span style="{s};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;">{l}</span>'
+
+
+def _region_flag(region: str) -> str:
+    flags = {
+        "US": "🇺🇸", "HK": "🇭🇰", "CN": "🇨🇳", "JP": "🇯🇵",
+        "EU": "🇪🇺", "AU": "🇦🇺", "KR": "🇰🇷", "IN": "🇮🇳",
+        "BR": "🇧🇷", "SG": "🇸🇬", "GLOBAL_ETF": "🌍",
+    }
+    return flags.get(region, "🌐")
+
+
 def generate_report_html(
     date_str: str,
     alpaca_account: dict,
@@ -56,6 +84,11 @@ def generate_report_html(
     signals: list,
     macro_scenarios: list,
     planned_trades: list,
+    yesterday_trades: list = None,
+    market_regime: str = "NORMAL",
+    global_context: dict = None,
+    scenario_healths: list = None,
+    global_scan_signals: list = None,
 ) -> str:
     """Generate a full HTML daily report email."""
 
@@ -65,6 +98,15 @@ def generate_report_html(
     day_pnl = alpaca_account.get("unrealized_pl", 0)
     day_pnl_pct = (day_pnl / (equity - day_pnl) * 100) if (equity - day_pnl) != 0 else 0
     pnl_color = _color(day_pnl)
+
+    # Total unrealized P&L across all positions
+    total_unrealized = sum(float(p.get("unrealized_pl", p.get("unrealized_pnl", 0))) for p in positions)
+    total_cost_basis = sum(
+        float(p.get("avg_entry_price", p.get("avg_cost", 0))) * float(p.get("qty", p.get("quantity", 0)))
+        for p in positions
+    )
+    total_unrealized_pct = (total_unrealized / total_cost_basis * 100) if total_cost_basis > 0 else 0
+    unrealized_color = _color(total_unrealized)
 
     # ── Positions table rows ─────────────────────────────────────────────────
     pos_rows = ""
@@ -127,30 +169,178 @@ def generate_report_html(
     else:
         macro_html = '<p style="color:#999;">无活跃宏观事件</p>'
 
+    # ── Yesterday's executed trades ──────────────────────────────────────────
+    ytd_rows = ""
+    yesterday_trades = yesterday_trades or []
+    if yesterday_trades:
+        for t in yesterday_trades:
+            sym  = t.get("symbol", "")
+            side = t.get("side", "")
+            qty  = t.get("quantity", 0)
+            price = t.get("price", 0)
+            total = t.get("total_value", float(qty) * float(price))
+            conf  = t.get("ai_confidence") or 0
+            reason = (t.get("reasoning") or "")[:120]
+            ts    = (t.get("timestamp") or "")[:16]
+            stop_flag = "🛑 " if "[STOP-LOSS]" in (t.get("reasoning") or "") else ""
+            side_c = "#27ae60" if side == "BUY" else "#e74c3c"
+            ytd_rows += f"""
+            <tr>
+              <td style="padding:8px;font-weight:600;">{stop_flag}{sym}</td>
+              <td style="padding:8px;"><span style="color:{side_c};font-weight:bold;">{side}</span></td>
+              <td style="padding:8px;">{float(qty):.4f}</td>
+              <td style="padding:8px;">${float(price):.2f}</td>
+              <td style="padding:8px;">${float(total):.2f}</td>
+              <td style="padding:8px;color:#999;font-size:11px;">{ts}</td>
+              <td style="padding:8px;color:#555;font-size:11px;">{reason}</td>
+            </tr>"""
+    else:
+        ytd_rows = '<tr><td colspan="7" style="padding:8px;color:#999;text-align:center;">昨日无成交记录</td></tr>'
+
     # ── Planned trades ───────────────────────────────────────────────────────
+    regime_badge = {
+        "BEAR": '<span style="background:#e74c3c;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">🐻 熊市过滤已激活 — 暂停买入</span>',
+        "BULL": '<span style="background:#27ae60;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">🐂 牛市模式</span>',
+    }.get(market_regime, '<span style="background:#f39c12;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">➡️ 中性市场</span>')
+
     plan_rows = ""
     if planned_trades:
         for t in planned_trades:
-            sym = t.get("symbol", "")
+            sym    = t.get("symbol", "")
             action = t.get("action", "")
-            reason = t.get("reason", "")[:100]
-            conf = t.get("confidence", 0)
+            reason = t.get("reason", "")[:120]
+            conf   = t.get("confidence", 0)
+            target = t.get("target_price")
+            stop   = t.get("stop_loss")
             c = "#27ae60" if action == "BUY" else "#e74c3c"
+            target_str = f"${float(target):.2f}" if target else "—"
+            stop_str   = f"${float(stop):.2f}"   if stop   else "—"
             plan_rows += f"""
             <tr>
               <td style="padding:8px;font-weight:600;">{sym}</td>
               <td style="padding:8px;"><span style="color:{c};font-weight:bold;">{action}</span></td>
               <td style="padding:8px;">{int(conf*100)}%</td>
+              <td style="padding:8px;color:#27ae60;">{target_str}</td>
+              <td style="padding:8px;color:#e74c3c;">{stop_str}</td>
               <td style="padding:8px;color:#555;font-size:12px;">{reason}</td>
             </tr>"""
     else:
-        plan_rows = '<tr><td colspan="4" style="padding:8px;color:#999;text-align:center;">暂无计划交易</td></tr>'
+        plan_rows = '<tr><td colspan="6" style="padding:8px;color:#999;text-align:center;">暂无计划交易</td></tr>'
+
+    # ── Global market overview section ───────────────────────────────────────
+    global_context = global_context or {}
+    gc_risk = global_context.get("risk_environment", "NORMAL")
+    gc_vix  = (global_context.get("vix") or {}).get("value", 0)
+    gc_vix_level = (global_context.get("vix") or {}).get("level", "")
+    gc_score = global_context.get("risk_score", 0)
+    gc_narrative = global_context.get("ai_narrative", "")
+
+    risk_env_colors = {"RISK_ON": "#27ae60", "RISK_OFF": "#e74c3c", "NEUTRAL": "#f39c12"}
+    risk_env_color  = risk_env_colors.get(gc_risk, "#7f8c8d")
+
+    def _gc_chg(path):
+        keys = path.split(".")
+        obj = global_context
+        for k in keys:
+            obj = (obj or {}).get(k, {})
+        return obj.get("change_pct", 0) or 0
+
+    global_markets_rows = ""
+    market_map = [
+        ("🇺🇸 S&P 500",    _gc_chg("us_markets.sp500")),
+        ("🇺🇸 NASDAQ",     _gc_chg("us_markets.nasdaq")),
+        ("🇺🇸 Russell2000", _gc_chg("us_markets.russell2000")),
+        ("🇨🇳 上证指数",    _gc_chg("china_markets.sse_composite")),
+        ("🇭🇰 恒生指数",    _gc_chg("asia_markets.hangseng")),
+        ("🇯🇵 日经225",     _gc_chg("asia_markets.nikkei")),
+        ("🇰🇷 韩国综合",    _gc_chg("asia_markets.kospi")),
+        ("🇮🇳 Nifty 50",   _gc_chg("asia_markets.nifty50")),
+        ("🇩🇪 DAX",        _gc_chg("europe_markets.dax")),
+        ("🇬🇧 FTSE 100",   _gc_chg("europe_markets.ftse100")),
+        ("🇫🇷 CAC 40",     _gc_chg("europe_markets.cac40")),
+        ("🪙 黄金",         _gc_chg("commodities.gold")),
+        ("🛢️ 原油",         _gc_chg("commodities.oil")),
+        ("💵 DXY 美元",     _gc_chg("currencies.dxy")),
+        ("¥ USD/JPY",       _gc_chg("currencies.usdjpy")),
+    ]
+    for name, chg in market_map:
+        global_markets_rows += (
+            f'<tr><td style="padding:5px 8px;font-size:12px;">{name}</td>'
+            f'<td style="padding:5px 8px;font-size:12px;">{_market_arrow(chg)}</td></tr>'
+        )
+
+    sector_rot = global_context.get("sector_rotation", {})
+    top_sectors_html = ""
+    if sector_rot:
+        winners = sector_rot.get("winners", [])[:3]
+        losers  = sector_rot.get("losers",  [])[:3]
+        if winners:
+            top_sectors_html += f'<div style="font-size:12px;margin-top:6px;"><strong style="color:#27ae60;">领涨板块:</strong> {" · ".join(winners)}</div>'
+        if losers:
+            top_sectors_html += f'<div style="font-size:12px;margin-top:4px;"><strong style="color:#e74c3c;">领跌板块:</strong> {" · ".join(losers)}</div>'
+
+    northbound = (global_context.get("china_markets") or {}).get("northbound_flow", {})
+    nb_total = northbound.get("total_net_bn_cny", 0) or 0
+    nb_html = (
+        f'<div style="font-size:12px;margin-top:6px;">'
+        f'北向资金净流入: <strong style="color:{"#27ae60" if nb_total >= 0 else "#e74c3c"};">'
+        f'{nb_total:+.1f}亿CNY</strong></div>'
+    ) if nb_total != 0 else ""
+
+    # ── Scenario health section ───────────────────────────────────────────────
+    scenario_healths = scenario_healths or []
+    scenario_rows = ""
+    for sh in scenario_healths:
+        name    = sh.get("name", "")[:45]
+        status  = sh.get("status", "unknown")
+        avg_pct = sh.get("avg_pct", 0)
+        days    = sh.get("days_active", 0)
+        perstock = sh.get("per_stock_summary", "")
+        scenario_rows += f"""
+        <tr>
+          <td style="padding:7px 8px;font-size:12px;font-weight:600;">{name}</td>
+          <td style="padding:7px 8px;">{_health_badge(status)}</td>
+          <td style="padding:7px 8px;font-size:12px;color:{'#27ae60' if avg_pct >= 0 else '#e74c3c'};font-weight:600;">{avg_pct:+.1f}%</td>
+          <td style="padding:7px 8px;font-size:11px;color:#777;">{days}天</td>
+          <td style="padding:7px 8px;font-size:11px;color:#555;">{perstock[:100]}</td>
+        </tr>"""
+    if not scenario_rows:
+        scenario_rows = '<tr><td colspan="5" style="padding:8px;color:#999;text-align:center;">暂无追踪中的宏观场景</td></tr>'
+
+    # ── Global scan opportunities section ────────────────────────────────────
+    global_scan_signals = global_scan_signals or []
+    gscan_buy_rows = ""
+    gscan_sell_rows = ""
+    for gs in global_scan_signals:
+        sym    = gs.get("symbol", "")
+        region = gs.get("region", "US")
+        sig    = gs.get("signal", "HOLD")
+        conf   = gs.get("confidence", 0)
+        reason = (gs.get("reasoning") or "")[:130]
+        ts     = (gs.get("timestamp") or "")[:16]
+        flag   = _region_flag(region)
+        row = f"""
+        <tr>
+          <td style="padding:6px 8px;font-weight:600;">{flag} {sym}</td>
+          <td style="padding:6px 8px;font-size:11px;color:#777;">{region}</td>
+          <td style="padding:6px 8px;">{_signal_badge(sig)}</td>
+          <td style="padding:6px 8px;font-size:12px;">{int(conf*100)}%</td>
+          <td style="padding:6px 8px;font-size:11px;color:#555;">{reason}</td>
+          <td style="padding:6px 8px;font-size:10px;color:#aaa;">{ts}</td>
+        </tr>"""
+        if sig == "BUY":
+            gscan_buy_rows += row
+        else:
+            gscan_sell_rows += row
+
+    if not gscan_buy_rows:
+        gscan_buy_rows = '<tr><td colspan="6" style="padding:8px;color:#999;text-align:center;">暂无全球买入机会信号</td></tr>'
 
     html = f"""<!DOCTYPE html>
 <html lang="zh">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#f4f6f8;font-family:'Helvetica Neue',Arial,sans-serif;color:#2c3e50;">
-<div style="max-width:680px;margin:24px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+<div style="max-width:720px;margin:24px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
 
   <!-- Header -->
   <div style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);padding:28px 32px;color:#fff;">
@@ -166,6 +356,9 @@ def generate_report_html(
       <div><div style="font-size:12px;color:#999;">现金</div><div style="font-size:18px;font-weight:600;">${cash:.2f}</div></div>
       <div><div style="font-size:12px;color:#999;">今日盈亏</div>
         <div style="font-size:18px;font-weight:600;color:{pnl_color};">{'+' if day_pnl >= 0 else ''}${day_pnl:.2f} ({_pct(day_pnl_pct)})</div>
+      </div>
+      <div><div style="font-size:12px;color:#999;">总浮动盈亏</div>
+        <div style="font-size:18px;font-weight:600;color:{unrealized_color};">{'+' if total_unrealized >= 0 else ''}${total_unrealized:.2f} ({'+' if total_unrealized_pct >= 0 else ''}{total_unrealized_pct:.2f}%)</div>
       </div>
     </div>
   </div>
@@ -207,18 +400,100 @@ def generate_report_html(
     <h3 style="margin:24px 0 12px;font-size:15px;color:#2c3e50;border-bottom:2px solid #e74c3c;padding-bottom:6px;">🌍 宏观预警</h3>
     {macro_html}
 
+    <!-- Yesterday's Trades -->
+    <h3 style="margin:24px 0 12px;font-size:15px;color:#2c3e50;border-bottom:2px solid #e67e22;padding-bottom:6px;">📅 昨日实际交易</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead>
+        <tr style="background:#ecf0f1;">
+          <th style="padding:8px;text-align:left;">标的</th>
+          <th style="padding:8px;text-align:left;">方向</th>
+          <th style="padding:8px;text-align:left;">数量</th>
+          <th style="padding:8px;text-align:left;">成交价</th>
+          <th style="padding:8px;text-align:left;">金额</th>
+          <th style="padding:8px;text-align:left;">时间</th>
+          <th style="padding:8px;text-align:left;">策略原因</th>
+        </tr>
+      </thead>
+      <tbody>{ytd_rows}</tbody>
+    </table>
+
     <!-- Tomorrow's Plan -->
-    <h3 style="margin:24px 0 12px;font-size:15px;color:#2c3e50;border-bottom:2px solid #27ae60;padding-bottom:6px;">📋 明日计划交易</h3>
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#2c3e50;border-bottom:2px solid #27ae60;padding-bottom:6px;">📋 明日交易策略</h3>
+    <div style="margin-bottom:10px;">{regime_badge}</div>
     <table style="width:100%;border-collapse:collapse;font-size:13px;">
       <thead>
         <tr style="background:#ecf0f1;">
           <th style="padding:8px;text-align:left;">标的</th>
           <th style="padding:8px;text-align:left;">操作</th>
           <th style="padding:8px;text-align:left;">置信度</th>
-          <th style="padding:8px;text-align:left;">理由</th>
+          <th style="padding:8px;text-align:left;">目标价</th>
+          <th style="padding:8px;text-align:left;">止损价</th>
+          <th style="padding:8px;text-align:left;">AI策略理由</th>
         </tr>
       </thead>
       <tbody>{plan_rows}</tbody>
+    </table>
+
+    <!-- Global Market Overview -->
+    <h3 style="margin:24px 0 12px;font-size:15px;color:#2c3e50;border-bottom:2px solid #1abc9c;padding-bottom:6px;">🌍 全球市场总览</h3>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
+      <div style="padding:10px 16px;background:#f8f9fa;border-radius:6px;border-left:4px solid {risk_env_color};">
+        <div style="font-size:11px;color:#999;">市场情绪</div>
+        <div style="font-size:16px;font-weight:700;color:{risk_env_color};">{gc_risk}</div>
+        <div style="font-size:11px;color:#777;">综合评分 {gc_score:+.2f}</div>
+      </div>
+      <div style="padding:10px 16px;background:#f8f9fa;border-radius:6px;border-left:4px solid #8e44ad;">
+        <div style="font-size:11px;color:#999;">VIX 恐慌指数</div>
+        <div style="font-size:16px;font-weight:700;">{gc_vix:.1f}</div>
+        <div style="font-size:11px;color:#777;">{gc_vix_level}</div>
+      </div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead><tr style="background:#ecf0f1;">
+        <th style="padding:6px 8px;text-align:left;font-size:12px;">市场</th>
+        <th style="padding:6px 8px;text-align:left;font-size:12px;">涨跌幅</th>
+        <th style="padding:6px 8px;text-align:left;font-size:12px;">市场</th>
+        <th style="padding:6px 8px;text-align:left;font-size:12px;">涨跌幅</th>
+      </tr></thead>
+      <tbody>
+        {"".join(
+            f'<tr><td style="padding:5px 8px;font-size:12px;">{market_map[i][0]}</td>'
+            f'<td style="padding:5px 8px;font-size:12px;">{_market_arrow(market_map[i][1])}</td>'
+            f'<td style="padding:5px 8px;font-size:12px;">{market_map[i+1][0] if i+1 < len(market_map) else ""}</td>'
+            f'<td style="padding:5px 8px;font-size:12px;">{_market_arrow(market_map[i+1][1]) if i+1 < len(market_map) else ""}</td></tr>'
+            for i in range(0, len(market_map)-1, 2)
+        )}
+      </tbody>
+    </table>
+    {top_sectors_html}
+    {nb_html}
+    {"<div style='font-size:12px;margin-top:8px;color:#555;font-style:italic;'>" + gc_narrative[:300] + ("..." if len(gc_narrative) > 300 else "") + "</div>" if gc_narrative else ""}
+
+    <!-- Scenario Health Tracker -->
+    <h3 style="margin:24px 0 12px;font-size:15px;color:#2c3e50;border-bottom:2px solid #e67e22;padding-bottom:6px;">🎯 宏观叙事追踪（自入场以来实际表现）</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead><tr style="background:#ecf0f1;">
+        <th style="padding:7px 8px;text-align:left;">场景</th>
+        <th style="padding:7px 8px;text-align:left;">状态</th>
+        <th style="padding:7px 8px;text-align:left;">均涨跌</th>
+        <th style="padding:7px 8px;text-align:left;">活跃时长</th>
+        <th style="padding:7px 8px;text-align:left;">持仓表现</th>
+      </tr></thead>
+      <tbody>{scenario_rows}</tbody>
+    </table>
+
+    <!-- Global Scan Opportunities -->
+    <h3 style="margin:24px 0 12px;font-size:15px;color:#2c3e50;border-bottom:2px solid #2980b9;padding-bottom:6px;">🔍 全球市场扫描 — AI买入机会</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead><tr style="background:#ecf0f1;">
+        <th style="padding:6px 8px;text-align:left;">标的</th>
+        <th style="padding:6px 8px;text-align:left;">地区</th>
+        <th style="padding:6px 8px;text-align:left;">信号</th>
+        <th style="padding:6px 8px;text-align:left;">置信度</th>
+        <th style="padding:6px 8px;text-align:left;">AI 分析摘要</th>
+        <th style="padding:6px 8px;text-align:left;">时间</th>
+      </tr></thead>
+      <tbody>{gscan_buy_rows}</tbody>
     </table>
 
     <!-- Reply Instructions -->

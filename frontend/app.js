@@ -48,18 +48,18 @@ async function authFetch(url, options = {}) {
 // ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
     startClock();
+
+    // Catch OAuth Redirect Token
+    const urlParams = new URLSearchParams(window.location.search);
+    const oauthToken = urlParams.get('token');
+    if (oauthToken) {
+        authToken = oauthToken;
+        localStorage.setItem('auth_token', authToken);
+        window.history.replaceState({}, document.title, "/");
+    }
+
     if (!authToken) {
-        // Auto-login without requiring credentials
-        try {
-            const res = await fetch('/api/auth/auto-login');
-            if (res.ok) {
-                const data = await res.json();
-                authToken = data.access_token;
-                localStorage.setItem('auth_token', authToken);
-            }
-        } catch (e) {
-            console.error('Auto-login failed:', e);
-        }
+        // Legacy auto-login removed in favor of OAuth
     }
     if (authToken) {
         await initApp();
@@ -90,6 +90,13 @@ async function initApp() {
         loadSettings();
         loadSignals();
         loadWatchlist();
+        // Load global market status & broker status
+        refreshMarketStatusBar();
+        refreshBrokerStatus();
+        refreshGlobalContext();
+        // Refresh market status every 60s, global context every 5 min
+        setInterval(refreshMarketStatusBar, 60000);
+        setInterval(refreshGlobalContext, 300000);
     } catch (e) {
         handleLogout();
     }
@@ -228,9 +235,12 @@ async function refreshMarkets() {
 function showRegion(region) {
     currentRegion = region;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    [...document.querySelectorAll('.tab')].find(t => t.textContent.includes(
-        region === 'Americas' ? '美洲' : region === 'Europe' ? '欧洲' : '亚太'
-    ))?.classList.add('active');
+    const regionLabels = {
+        'Americas': '美洲', 'Europe': '欧洲', 'Asia Pacific': '亚太',
+        'China A': 'A股', 'Middle East & Africa': '中东'
+    };
+    const targetLabel = regionLabels[region] || region;
+    [...document.querySelectorAll('.tab')].find(t => t.textContent.includes(targetLabel))?.classList.add('active');
 
     const grid = document.getElementById('indicesGrid');
     const indices = marketData[region] || [];
@@ -240,17 +250,212 @@ function showRegion(region) {
     }
     grid.innerHTML = indices.map(idx => {
         const up = idx.change_pct >= 0;
+        const mktOpen = idx.market_open;
+        const openBadge = mktOpen !== undefined
+            ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:${mktOpen ? '#16a34a33' : '#6b728033'};color:${mktOpen ? 'var(--green)' : 'var(--text-muted)'};">${mktOpen ? '开盘' : '休市'}</span>`
+            : '';
+        const currency = idx.currency || 'USD';
+        const priceStr = idx.current != null ? idx.current.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--';
         return `<div class="index-card ${up ? 'up' : 'down'}" onclick="loadChartFor('${idx.symbol}')">
-      <div class="index-name">${idx.name}</div>
-      <div class="index-region">${idx.region || ''}</div>
-      <div class="index-price" style="color:${up ? 'var(--green)' : 'var(--red)'}">${idx.current?.toLocaleString('en-US', { minimumFractionDigits: 2 }) || '--'}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="index-name">${idx.name}</div>
+        ${openBadge}
+      </div>
+      <div class="index-region">${idx.region || ''} · ${currency}</div>
+      <div class="index-price" style="color:${up ? 'var(--green)' : 'var(--red)'}">${priceStr}</div>
       <div class="index-change ${up ? 'text-green' : 'text-red'}">
         <span>${up ? '▲' : '▼'}</span>
-        <span>${Math.abs(idx.change_pct).toFixed(2)}%</span>
-        <span style="color:var(--text-muted)">${up ? '+' : ''}${idx.change?.toFixed(2) || '0.00'}</span>
+        <span>${Math.abs(idx.change_pct || 0).toFixed(2)}%</span>
+        <span style="color:var(--text-muted)">${up ? '+' : ''}${(idx.change || 0).toFixed(2)}</span>
       </div>
     </div>`;
     }).join('');
+}
+
+// ── Market Status Bar ─────────────────────────────────────────────────────────
+async function refreshMarketStatusBar() {
+    try {
+        const res = await authFetch('/api/market-status');
+        if (!res.ok) return;
+        const data = await res.json();
+        const markets = data.markets || {};
+        const badgeMap = {
+            'US': 'msUS', 'CN': 'msCN', 'HK': 'msHK', 'JP': 'msJP',
+            'GB': 'msGB', 'DE': 'msDE', 'AU': 'msAU', 'KR': 'msKR',
+            'SG': 'msSG', 'IN': 'msIN',
+        };
+        const labels = {
+            'US': '🇺🇸 美股', 'CN': '🇨🇳 A股', 'HK': '🇭🇰 港股', 'JP': '🇯🇵 日股',
+            'GB': '🇬🇧 英股', 'DE': '🇩🇪 德股', 'AU': '🇦🇺 澳股', 'KR': '🇰🇷 韩股',
+            'SG': '🇸🇬 新加坡', 'IN': '🇮🇳 印度',
+        };
+        for (const [mkt, elId] of Object.entries(badgeMap)) {
+            const el = document.getElementById(elId);
+            if (!el) continue;
+            const info = markets[mkt];
+            if (!info) continue;
+            const isOpen = info.open;
+            el.textContent = labels[mkt];
+            el.style.background = isOpen ? '#16a34a22' : '#6b728022';
+            el.style.color = isOpen ? 'var(--green)' : 'var(--text-muted)';
+            el.style.border = `1px solid ${isOpen ? '#16a34a55' : 'var(--border)'}`;
+            el.title = `${info.name} · 本地时间 ${info.local_time} · ${isOpen ? '开盘中' : '休市'}`;
+        }
+        const timeEl = document.getElementById('marketStatusTime');
+        if (timeEl) timeEl.textContent = new Date().toLocaleTimeString('zh-CN');
+    } catch (e) {
+        // silent
+    }
+}
+
+// ── Broker Status ─────────────────────────────────────────────────────────────
+async function refreshBrokerStatus() {
+    try {
+        const res = await authFetch('/api/broker-status');
+        if (!res.ok) return;
+        const d = await res.json();
+
+        const statusIcon = (s) => s === 'active' || s === 'connected' ? '🟢' : s === 'not_configured' || s === 'disabled' ? '⚪' : '🟡';
+        const statusText = (s) => s === 'active' ? '活跃' : s === 'connected' ? '已连接' : s === 'not_configured' ? '未配置' : s === 'disabled' ? '已禁用' : '离线';
+
+        const alpacaEl = document.getElementById('alpacaStatusText');
+        if (alpacaEl) alpacaEl.textContent = statusIcon(d.alpaca?.status) + ' ' + statusText(d.alpaca?.status);
+
+        const futuEl = document.getElementById('futuStatusText');
+        if (futuEl) futuEl.textContent = statusIcon(d.futu?.status) + ' ' + statusText(d.futu?.status);
+
+        const ibkrEl = document.getElementById('ibkrStatusText');
+        if (ibkrEl) ibkrEl.textContent = statusIcon(d.ibkr?.status) + ' ' + statusText(d.ibkr?.status);
+
+        const paperEl = document.getElementById('paperStatusText');
+        if (paperEl) paperEl.textContent = d.paper?.active ? '🟢 活跃' : '⚪ 待机';
+    } catch (e) {
+        // silent
+    }
+}
+
+// ── Global Context Panel ──────────────────────────────────────────────────────
+async function refreshGlobalContext() {
+    try {
+        const res = await authFetch('/api/global-context');
+        if (!res.ok) return;
+        const d = await res.json();
+
+        const panel = document.getElementById('globalContextPanel');
+        if (!panel) return;
+        panel.style.display = 'block';
+
+        // Risk environment badge
+        const riskBadge = document.getElementById('gcRiskBadge');
+        if (riskBadge) {
+            const env = d.risk_environment || 'NEUTRAL';
+            const colorMap = { RISK_ON: '#16a34a', NEUTRAL: '#d97706', RISK_OFF: '#dc2626' };
+            const labelMap = { RISK_ON: '✅ 风险偏好', NEUTRAL: '⚠️ 中性', RISK_OFF: '🔴 避险模式' };
+            riskBadge.textContent = labelMap[env] || env;
+            riskBadge.style.background = (colorMap[env] || '#888') + '22';
+            riskBadge.style.color = colorMap[env] || '#888';
+            riskBadge.style.border = `1px solid ${colorMap[env] || '#888'}55`;
+        }
+
+        // Metrics
+        const vix = d.indicators?.VIX;
+        const el = (id) => document.getElementById(id);
+        if (el('gcVix')) el('gcVix').textContent = vix != null ? vix.toFixed(1) : '--';
+        if (el('gcRiskScore')) {
+            const rs = d.risk_score;
+            el('gcRiskScore').textContent = rs != null ? (rs > 0 ? '+' : '') + rs.toFixed(2) : '--';
+            el('gcRiskScore').style.color = rs > 0.1 ? 'var(--green)' : rs < -0.1 ? 'var(--red)' : 'var(--text-primary)';
+        }
+        if (el('gcSectorTheme')) el('gcSectorTheme').textContent = d.sector_rotation?.theme || '--';
+        if (el('gcNorthbound')) {
+            const nb = d.northbound_flow_bn;
+            el('gcNorthbound').textContent = nb != null ? (nb > 0 ? '+' : '') + nb.toFixed(1) + '亿' : '--';
+            if (nb != null) el('gcNorthbound').style.color = nb > 0 ? 'var(--green)' : 'var(--red)';
+        }
+        if (el('gcBreadthUp')) el('gcBreadthUp').textContent = d.breadth?.up_count != null ? d.breadth.up_count : '--';
+        if (el('gcBreadthDown')) el('gcBreadthDown').textContent = d.breadth?.down_count != null ? d.breadth.down_count : '--';
+
+        // Cross-market signals
+        const signalsEl = el('gcSignals');
+        if (signalsEl) {
+            const signals = d.cross_market_signals || [];
+            signalsEl.innerHTML = signals.length
+                ? signals.map(s => `<span style="margin-right:16px;">• ${s}</span>`).join('')
+                : '<span style="color:var(--text-muted);">暂无跨市场信号</span>';
+        }
+
+        // Timestamp
+        const tsEl = el('gcTimestamp');
+        if (tsEl && d.timestamp) {
+            const ts = new Date(d.timestamp + 'Z');
+            tsEl.textContent = `数据时间: ${ts.toLocaleString('zh-CN')} · 每5分钟自动更新`;
+        }
+    } catch (e) {
+        // silent
+    }
+}
+
+// ── Futu broker settings ──────────────────────────────────────────────────────
+async function saveFutuSettings() {
+    const enabled = document.getElementById('futuEnabledToggle')?.checked;
+    const host    = document.getElementById('futuHost')?.value || '127.0.0.1';
+    const port    = document.getElementById('futuPort')?.value || '11111';
+    const env     = document.getElementById('futuTradeEnv')?.value || 'SIMULATE';
+    const cnAcc   = document.getElementById('futuCnAccId')?.value || '0';
+    const hkAcc   = document.getElementById('futuHkAccId')?.value || '0';
+
+    const statusEl = document.getElementById('futuStatus');
+    if (statusEl) statusEl.textContent = '⏳ 正在保存并测试连接...';
+
+    try {
+        const res = await authFetch('/api/broker/futu/configure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host, port: parseInt(port), trade_env: env,
+                cn_acc_id: cnAcc, hk_acc_id: hkAcc, enabled }),
+        });
+        const d = await res.json();
+        if (d.configured) {
+            const connText = d.connected ? '✅ OpenD 已连接' : '⚠️ OpenD 未连接（请先启动 Futu OpenD）';
+            if (statusEl) statusEl.innerHTML = `<span style="color:${d.connected?'var(--green)':'var(--gold)'}">${connText}</span>`;
+            showToast(d.connected ? '✅ Futu 已连接' : '⚠️ Futu 配置已保存，但 OpenD 未响应', d.connected ? 'success' : 'warning');
+        }
+    } catch (e) {
+        if (statusEl) statusEl.textContent = '❌ 保存失败: ' + e.message;
+        showToast('Futu 配置失败', 'error');
+    }
+    refreshBrokerStatus();
+}
+
+// ── IBKR broker settings ──────────────────────────────────────────────────────
+async function saveIbkrSettings() {
+    const enabled   = document.getElementById('ibkrEnabledToggle')?.checked;
+    const host      = document.getElementById('ibkrHost')?.value || '127.0.0.1';
+    const port      = document.getElementById('ibkrPort')?.value || '7497';
+    const clientId  = document.getElementById('ibkrClientId')?.value || '10';
+    const account   = document.getElementById('ibkrAccount')?.value || '';
+
+    const statusEl = document.getElementById('ibkrStatus');
+    if (statusEl) statusEl.textContent = '⏳ 正在保存并测试连接...';
+
+    try {
+        const res = await authFetch('/api/broker/ibkr/configure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host, port: parseInt(port), client_id: parseInt(clientId),
+                account, enabled }),
+        });
+        const d = await res.json();
+        if (d.configured) {
+            const connText = d.connected ? '✅ TWS/Gateway 已连接' : '⚠️ 未连接（请先启动 IBKR TWS 或 Gateway）';
+            if (statusEl) statusEl.innerHTML = `<span style="color:${d.connected?'var(--green)':'var(--gold)'}">${connText}</span>`;
+            showToast(d.connected ? '✅ IBKR 已连接' : '⚠️ IBKR 配置已保存', d.connected ? 'success' : 'warning');
+        }
+    } catch (e) {
+        if (statusEl) statusEl.textContent = '❌ 保存失败: ' + e.message;
+        showToast('IBKR 配置失败', 'error');
+    }
+    refreshBrokerStatus();
 }
 
 // ─────────────────────────────────────────────
@@ -1094,16 +1299,16 @@ function renderLayoffResultTable(results) {
         <thead><tr><th>股票</th><th>公告日</th><th>Day+1</th><th>Day+5</th><th>Day+20</th><th>超额Day+5</th><th>持续天数</th><th>强度</th></tr></thead>
         <tbody>
           ${results.map(r => {
-              if (r.error) {
-                  return `<tr><td>${r.symbol || '--'}</td><td>${r.announcement_date || '--'}</td><td colspan="6" style="color:var(--red);font-family:'Inter',sans-serif;">${escapeHTML(r.error)}</td></tr>`;
-              }
-              const ret = r.event_window_returns_pct || {};
-              const abn = r.abnormal_returns_pct || {};
-              const d1 = ret.day_1;
-              const d5 = ret.day_5;
-              const d20 = ret.day_20;
-              const a5 = abn.day_5;
-              return `<tr>
+        if (r.error) {
+            return `<tr><td>${r.symbol || '--'}</td><td>${r.announcement_date || '--'}</td><td colspan="6" style="color:var(--red);font-family:'Inter',sans-serif;">${escapeHTML(r.error)}</td></tr>`;
+        }
+        const ret = r.event_window_returns_pct || {};
+        const abn = r.abnormal_returns_pct || {};
+        const d1 = ret.day_1;
+        const d5 = ret.day_5;
+        const d20 = ret.day_20;
+        const a5 = abn.day_5;
+        return `<tr>
                 <td>${r.symbol}</td>
                 <td>${r.announcement_date}</td>
                 <td class="${(d1 || 0) >= 0 ? 'text-green' : 'text-red'}">${d1 == null ? '--' : `${d1 >= 0 ? '+' : ''}${d1.toFixed(2)}%`}</td>
@@ -1113,7 +1318,7 @@ function renderLayoffResultTable(results) {
                 <td>${r.reaction_duration_days}</td>
                 <td>${r.event_strength_score}</td>
               </tr>`;
-          }).join('')}
+    }).join('')}
         </tbody>
       </table>
     </div>`;
@@ -1271,6 +1476,32 @@ async function loadSettings() {
         if (settings.alpaca_secret_key_set) {
             document.getElementById('alpacaSecretKeyInput').placeholder = `已配置 (隐藏显示)`;
         }
+
+        // Futu Settings
+        const futuToggle = document.getElementById('futuEnabledToggle');
+        if (futuToggle) futuToggle.checked = settings.futu_enabled === 'true';
+        const futuHostEl = document.getElementById('futuHost');
+        if (futuHostEl && settings.futu_host) futuHostEl.value = settings.futu_host;
+        const futuPortEl = document.getElementById('futuPort');
+        if (futuPortEl && settings.futu_port) futuPortEl.value = settings.futu_port;
+        const futuEnvEl = document.getElementById('futuTradeEnv');
+        if (futuEnvEl && settings.futu_trade_env) futuEnvEl.value = settings.futu_trade_env;
+        const futuCnEl = document.getElementById('futuCnAccId');
+        if (futuCnEl && settings.futu_cn_acc_id) futuCnEl.value = settings.futu_cn_acc_id;
+        const futuHkEl = document.getElementById('futuHkAccId');
+        if (futuHkEl && settings.futu_hk_acc_id) futuHkEl.value = settings.futu_hk_acc_id;
+
+        // IBKR Settings
+        const ibkrToggle = document.getElementById('ibkrEnabledToggle');
+        if (ibkrToggle) ibkrToggle.checked = settings.ibkr_enabled === 'true';
+        const ibkrHostEl = document.getElementById('ibkrHost');
+        if (ibkrHostEl && settings.ibkr_host) ibkrHostEl.value = settings.ibkr_host;
+        const ibkrPortEl = document.getElementById('ibkrPort');
+        if (ibkrPortEl && settings.ibkr_port) ibkrPortEl.value = settings.ibkr_port;
+        const ibkrCidEl = document.getElementById('ibkrClientId');
+        if (ibkrCidEl && settings.ibkr_client_id) ibkrCidEl.value = settings.ibkr_client_id;
+        const ibkrAccEl = document.getElementById('ibkrAccount');
+        if (ibkrAccEl && settings.ibkr_account) ibkrAccEl.value = settings.ibkr_account;
 
     } catch (e) { console.error(e); }
 }
@@ -1561,3 +1792,9 @@ window.importSelectedCandidates = importSelectedCandidates;
 window.addManualLayoffEvent = addManualLayoffEvent;
 window.removeLayoffEvent = removeLayoffEvent;
 window.evaluateLayoffEvents = evaluateLayoffEvents;
+// Multi-market
+window.saveFutuSettings = saveFutuSettings;
+window.saveIbkrSettings = saveIbkrSettings;
+window.refreshBrokerStatus = refreshBrokerStatus;
+window.refreshMarketStatusBar = refreshMarketStatusBar;
+window.refreshGlobalContext = refreshGlobalContext;

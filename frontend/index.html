@@ -20,42 +20,19 @@
         <p id="authSubtitle" style="font-size:13px;color:var(--text-secondary);">请登录您的交易账户</p>
       </div>
 
-      <div id="loginForm">
-        <div class="input-group" style="margin-bottom:16px;">
-          <label class="input-label">用户名</label>
-          <input class="input" id="loginUsername" placeholder="您的用户名" />
-        </div>
-        <div class="input-group" style="margin-bottom:20px;">
-          <label class="input-label">密码</label>
-          <input class="input" id="loginPassword" type="password" placeholder="请输入密码" />
-        </div>
-        <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;" onclick="handleLogin()">
-          立即登录
+      <div id="loginForm" style="display:flex; flex-direction:column; align-items:center; gap:20px; padding: 20px 0;">
+        <p style="font-size:14px; color:var(--text-secondary); text-align:center;">
+          为提供无缝的美股交易体验，本平台已全面接入 Alpaca Broker 授权。
+        </p>
+        <button class="btn btn-primary"
+          style="width:100%; justify-content:center; padding:14px; font-size:16px; font-weight:bold; background-color: #FACC15; color: #000; border: none; cursor: pointer;"
+          onclick="window.location.href='/api/auth/alpaca/login'">
+          <img src="https://avatars.githubusercontent.com/u/31777085?s=20&v=4"
+            style="width:20px; height:20px; margin-right:8px; border-radius: 4px;" alt="Alpaca Logo" />
+          Login with Alpaca
         </button>
-        <div class="auth-footer" style="margin-top:20px;">
-          没有账户？ <span class="auth-link" onclick="toggleAuthMode('register')">点击注册</span>
-        </div>
-      </div>
-
-      <div id="registerForm" style="display:none;">
-        <div class="input-group" style="margin-bottom:16px;">
-          <label class="input-label">用户名</label>
-          <input class="input" id="regUsername" placeholder="设置用户名" />
-        </div>
-        <div class="input-group" style="margin-bottom:16px;">
-          <label class="input-label">电子邮箱</label>
-          <input class="input" id="regEmail" type="email" placeholder="optional@example.com" />
-        </div>
-        <div class="input-group" style="margin-bottom:20px;">
-          <label class="input-label">密码</label>
-          <input class="input" id="regPassword" type="password" placeholder="设置 6 位以上密码" />
-        </div>
-        <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;"
-          onclick="handleRegister()">
-          免费注册
-        </button>
-        <div class="auth-footer" style="margin-top:20px;">
-          已有账户？ <span class="auth-link" onclick="toggleAuthMode('login')">返回登录</span>
+        <div class="auth-footer" style="margin-top:10px;">
+          点击登录即表示您同意授权本平台读取您的持仓并执行 AI 交易
         </div>
       </div>
     </div>
@@ -183,11 +160,47 @@
         </div>
       </div>
 
+      <!-- Global Market Status Bar -->
+      <div id="marketStatusBar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;background:var(--bg-card);border-radius:8px;border:1px solid var(--border);font-size:12px;">
+        <span style="color:var(--text-secondary);margin-right:4px;">市场状态:</span>
+        <span id="msUS"   class="market-badge">🇺🇸 美股</span>
+        <span id="msCN"   class="market-badge">🇨🇳 A股</span>
+        <span id="msHK"   class="market-badge">🇭🇰 港股</span>
+        <span id="msJP"   class="market-badge">🇯🇵 日股</span>
+        <span id="msGB"   class="market-badge">🇬🇧 英股</span>
+        <span id="msDE"   class="market-badge">🇩🇪 德股</span>
+        <span id="msAU"   class="market-badge">🇦🇺 澳股</span>
+        <span id="msKR"   class="market-badge">🇰🇷 韩股</span>
+        <span id="msSG"   class="market-badge">🇸🇬 新加坡</span>
+        <span id="msIN"   class="market-badge">🇮🇳 印度</span>
+        <span style="margin-left:auto;color:var(--text-muted);" id="marketStatusTime">--:--</span>
+      </div>
+
+      <!-- Global Market Context Panel -->
+      <div id="globalContextPanel" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:14px;display:none;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+          <span style="font-weight:600;font-size:13px;">🌐 全球宏观环境</span>
+          <span id="gcRiskBadge" style="font-size:11px;padding:2px 8px;border-radius:12px;font-weight:600;">--</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:10px;" id="gcMetrics">
+          <div class="gc-metric"><div class="gc-label">VIX 恐慌指数</div><div class="gc-val" id="gcVix">--</div></div>
+          <div class="gc-metric"><div class="gc-label">风险评分</div><div class="gc-val" id="gcRiskScore">--</div></div>
+          <div class="gc-metric"><div class="gc-label">板块轮动</div><div class="gc-val" id="gcSectorTheme">--</div></div>
+          <div class="gc-metric"><div class="gc-label">北向资金</div><div class="gc-val" id="gcNorthbound">--</div></div>
+          <div class="gc-metric"><div class="gc-label">市场宽度↑</div><div class="gc-val" id="gcBreadthUp">--</div></div>
+          <div class="gc-metric"><div class="gc-label">市场宽度↓</div><div class="gc-val" id="gcBreadthDown">--</div></div>
+        </div>
+        <div id="gcSignals" style="font-size:11px;color:var(--text-secondary);line-height:1.7;border-top:1px solid var(--border);padding-top:8px;"></div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:6px;" id="gcTimestamp"></div>
+      </div>
+
       <!-- Region Tabs -->
       <div class="tabs">
         <button class="tab active" onclick="showRegion('Americas')">🇺🇸 美洲</button>
         <button class="tab" onclick="showRegion('Europe')">🇪🇺 欧洲</button>
         <button class="tab" onclick="showRegion('Asia Pacific')">🌏 亚太</button>
+        <button class="tab" onclick="showRegion('China A')">🇨🇳 A股</button>
+        <button class="tab" onclick="showRegion('Middle East & Africa')">🌍 中东非洲</button>
       </div>
 
       <div id="indicesGrid" class="grid-auto mb-20">
@@ -510,6 +523,7 @@
           <div class="settings-group" id="apiKeyGroup">
             <label>DEEPSEEK API KEY</label>
             <input type="password" id="apiKeyInput" placeholder="sk-..." class="form-control">
+            <div id="apiKeyStatus" style="margin-top:8px;"></div>
             <small class="settings-hint">从 <a href="https://platform.deepseek.com" target="_blank"
                 style="color:var(--accent-bright);">platform.deepseek.com</a> 获取 API Key</small>
           </div>
@@ -591,6 +605,114 @@
           </div>
         </div>
 
+        <!-- Futu Broker Settings (CN/HK) -->
+        <div class="settings-card">
+          <h3>🦋 富途 Futu OpenD (A股 / 港股)</h3>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">
+            支持中国A股（沪深）、港股、美股实盘交易。需先在本机安装并启动
+            <a href="https://openapi.futunn.com/" target="_blank" style="color:var(--accent-bright)">Futu OpenD</a>。
+          </div>
+          <div class="settings-group">
+            <div class="toggle-row">
+              <label>启用 Futu 交易</label>
+              <label class="switch">
+                <input type="checkbox" id="futuEnabledToggle">
+                <span class="slider round"></span>
+              </label>
+            </div>
+          </div>
+          <div class="settings-group">
+            <label>OpenD 地址</label>
+            <input class="form-control" id="futuHost" value="127.0.0.1" placeholder="127.0.0.1" />
+          </div>
+          <div class="settings-group">
+            <label>OpenD 端口</label>
+            <input class="form-control" id="futuPort" type="number" value="11111" placeholder="11111" />
+          </div>
+          <div class="settings-group">
+            <label>交易环境</label>
+            <select class="form-control" id="futuTradeEnv">
+              <option value="SIMULATE">SIMULATE（模拟盘）</option>
+              <option value="REAL">REAL（真实盘 ⚠️）</option>
+            </select>
+          </div>
+          <div class="settings-group">
+            <label>A股账户ID（可留空）</label>
+            <input class="form-control" id="futuCnAccId" placeholder="0" />
+          </div>
+          <div class="settings-group">
+            <label>港股账户ID（可留空）</label>
+            <input class="form-control" id="futuHkAccId" placeholder="0" />
+          </div>
+          <div id="futuStatus" style="margin-bottom:8px;font-size:12px;"></div>
+          <button class="btn btn-primary btn-block" onclick="saveFutuSettings()">💾 保存 Futu 配置 & 测试连接</button>
+        </div>
+
+        <!-- IBKR Broker Settings (Global) -->
+        <div class="settings-card">
+          <h3>🌐 Interactive Brokers (全球市场)</h3>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">
+            支持美国、欧洲、日本、澳洲、韩国等全球市场。需安装
+            <a href="https://www.interactivebrokers.com/en/trading/tws.php" target="_blank" style="color:var(--accent-bright)">IBKR TWS</a>
+            或 Gateway 并开启 API 连接。
+          </div>
+          <div class="settings-group">
+            <div class="toggle-row">
+              <label>启用 IBKR 交易</label>
+              <label class="switch">
+                <input type="checkbox" id="ibkrEnabledToggle">
+                <span class="slider round"></span>
+              </label>
+            </div>
+          </div>
+          <div class="settings-group">
+            <label>TWS/Gateway 地址</label>
+            <input class="form-control" id="ibkrHost" value="127.0.0.1" placeholder="127.0.0.1" />
+          </div>
+          <div class="settings-group">
+            <label>端口 (TWS模拟7497 / 实盘7496 / Gateway实盘4001)</label>
+            <input class="form-control" id="ibkrPort" type="number" value="7497" placeholder="7497" />
+          </div>
+          <div class="settings-group">
+            <label>Client ID</label>
+            <input class="form-control" id="ibkrClientId" type="number" value="10" placeholder="10" />
+          </div>
+          <div class="settings-group">
+            <label>账户号码（可留空自动选择）</label>
+            <input class="form-control" id="ibkrAccount" placeholder="" />
+          </div>
+          <div id="ibkrStatus" style="margin-bottom:8px;font-size:12px;"></div>
+          <button class="btn btn-primary btn-block" onclick="saveIbkrSettings()">💾 保存 IBKR 配置 & 测试连接</button>
+        </div>
+
+        <!-- Broker Status Overview -->
+        <div class="card" style="grid-column:1/-1;">
+          <div class="card-title">🔌 券商连接状态</div>
+          <div id="brokerStatusGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:8px;">
+            <div class="stat-card" id="brokerCardAlpaca">
+              <div class="stat-label">🏦 Alpaca (美股)</div>
+              <div class="stat-value" id="alpacaStatusText" style="font-size:14px;">---</div>
+              <div class="stat-sub">NYSE / NASDAQ</div>
+            </div>
+            <div class="stat-card" id="brokerCardFutu">
+              <div class="stat-label">🦋 Futu (中国+港股)</div>
+              <div class="stat-value" id="futuStatusText" style="font-size:14px;">---</div>
+              <div class="stat-sub">上交所 / 深交所 / 港交所</div>
+            </div>
+            <div class="stat-card" id="brokerCardIBKR">
+              <div class="stat-label">🌐 IBKR (全球)</div>
+              <div class="stat-value" id="ibkrStatusText" style="font-size:14px;">---</div>
+              <div class="stat-sub">50+ 全球交易所</div>
+            </div>
+            <div class="stat-card" id="brokerCardPaper">
+              <div class="stat-label">📝 Paper (模拟)</div>
+              <div class="stat-value" id="paperStatusText" style="font-size:14px;">活跃</div>
+              <div class="stat-sub">全市场模拟</div>
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm" style="margin-top:12px;" onclick="refreshBrokerStatus()">🔄 刷新连接状态</button>
+        </div>
+
         <!-- Data Refresh -->
         <div class="card">
           <div class="card-title">🔄 数据刷新设置</div>
@@ -601,8 +723,7 @@
             </div>
             <button class="btn btn-primary" onclick="saveRefreshInterval()">保存</button>
             <div style="font-size:11px;color:var(--text-muted);">
-              ℹ️ 本平台使用 Yahoo Finance 获取延迟行情数据（非实时）。
-              若需要实时数据，可接入付费数据服务。
+              ℹ️ 本平台使用 Yahoo Finance + 新浪财经获取延迟行情数据。支持美股、A股、港股、日股、欧股等全球市场。
             </div>
           </div>
         </div>

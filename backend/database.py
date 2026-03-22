@@ -43,15 +43,19 @@ class Trade(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     symbol = Column(String, index=True)
-    side = Column(String)  # BUY or SELL
+    side = Column(String)  # BUY / SELL / SHORT / COVER
     quantity = Column(Float)
     price = Column(Float)
     total_value = Column(Float)
-    order_type = Column(String, default="MARKET")
+    order_type = Column(String, default="MARKET")   # MARKET / Alpaca / Futu / IBKR / Paper
     status = Column(String, default="FILLED")
     ai_triggered = Column(Boolean, default=False)
     ai_confidence = Column(Float, nullable=True)
     reasoning = Column(Text, nullable=True)
+    # Multi-market additions
+    broker = Column(String, default="Paper")        # Alpaca | Futu | IBKR | Paper
+    currency = Column(String, default="USD")        # USD | CNY | HKD | JPY | ...
+    market = Column(String, default="US")           # US | CN | HK | JP | GB | ...
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="trades")
@@ -67,6 +71,10 @@ class Position(Base):
     current_price = Column(Float, default=0)
     unrealized_pnl = Column(Float, default=0)
     last_updated = Column(DateTime, default=datetime.utcnow)
+    # Multi-market additions
+    broker = Column(String, default="Paper")        # Alpaca | Futu | IBKR | Paper
+    currency = Column(String, default="USD")        # USD | CNY | HKD | JPY | ...
+    market = Column(String, default="US")           # US | CN | HK | JP | GB | ...
 
     user = relationship("User", back_populates="positions")
     __table_args__ = (UniqueConstraint('user_id', 'symbol', name='_user_symbol_uc'),)
@@ -154,6 +162,38 @@ class Settings(Base):
 
 def create_tables():
     Base.metadata.create_all(bind=engine)
+    _migrate_add_columns()
+
+
+def _migrate_add_columns():
+    """Add new columns to existing tables without dropping data (idempotent)."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+
+        def _add_col_if_missing(table, col, col_def):
+            cur.execute(f"PRAGMA table_info({table})")
+            cols = [r[1] for r in cur.fetchall()]
+            if col not in cols:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
+
+        # trades table
+        _add_col_if_missing("trades", "broker",   "TEXT DEFAULT 'Paper'")
+        _add_col_if_missing("trades", "currency", "TEXT DEFAULT 'USD'")
+        _add_col_if_missing("trades", "market",   "TEXT DEFAULT 'US'")
+
+        # positions table
+        _add_col_if_missing("positions", "broker",   "TEXT DEFAULT 'Paper'")
+        _add_col_if_missing("positions", "currency", "TEXT DEFAULT 'USD'")
+        _add_col_if_missing("positions", "market",   "TEXT DEFAULT 'US'")
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[DB Migration] {e}")
 
 
 def get_db():
