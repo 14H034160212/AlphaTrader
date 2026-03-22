@@ -32,6 +32,8 @@ import kronos_analysis as ka
 import notifier
 import cot_data as cot
 import position_sizer as ps
+import global_context as gc
+import scenario_tracker as st
 from trading_engine import TradingEngine
 from database import create_tables, get_db, get_setting, set_setting, Trade, AISignal, WatchedStock, Settings, User, PendingTrade, SignalArchive
 from auth import get_current_user, create_access_token, get_password_hash, verify_password
@@ -67,7 +69,9 @@ async def lifespan(app: FastAPI):
     task8 = asyncio.create_task(background_pending_trade_executor())
     task9 = asyncio.create_task(background_email_reporter())
     task10 = asyncio.create_task(background_email_reply_checker())
-    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker")
+    task11 = asyncio.create_task(background_stop_loss_monitor())
+    task12 = asyncio.create_task(background_global_market_scan())
+    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan")
     yield
     task1.cancel()
     task2.cancel()
@@ -79,6 +83,8 @@ async def lifespan(app: FastAPI):
     task8.cancel()
     task9.cancel()
     task10.cancel()
+    task11.cancel()
+    task12.cancel()
     logger.info("Shutting down trading platform")
 
 
@@ -425,6 +431,28 @@ async def background_auto_trade_loop():
                 watchlist = json.loads(watchlist_json)
 
                 engine = TradingEngine(db, user.id)
+
+                # ── Sync local DB positions with Alpaca before making any decision ──
+                if engine.use_alpaca:
+                    n = engine.sync_positions_from_alpaca()
+                    logger.info(f"[AutoTrade] Synced {n} positions from Alpaca for {user.username}")
+
+                # ── Market Regime Filter: skip BUY signals when SPY is below its 20-day MA ──
+                spy_bear_market = False
+                try:
+                    spy_indicators = await loop.run_in_executor(None, md.get_technical_indicators, "SPY")
+                    if spy_indicators:
+                        spy_price = (price_cache.get("SPY") or {}).get("current", 0)
+                        spy_ma20  = spy_indicators.get("ma20", 0)
+                        if spy_price and spy_ma20 and spy_price < spy_ma20:
+                            spy_bear_market = True
+                            logger.warning(
+                                f"[AutoTrade] BEAR MARKET filter active — SPY ${spy_price:.2f} < MA20 ${spy_ma20:.2f}. "
+                                f"All BUY signals will be suppressed this cycle."
+                            )
+                except Exception as _e:
+                    logger.debug(f"[AutoTrade] SPY trend check failed: {_e}")
+
                 portfolio_context = await loop.run_in_executor(
                     None, build_rich_portfolio_context, db, user.id, engine
                 )
@@ -435,6 +463,14 @@ async def background_auto_trade_loop():
                 active_macros = await loop.run_in_executor(None, lambda: ni.detect_active_macro_scenarios(hours_back=6))
                 macro_context = ni.build_macro_scenario_context(active_macros)
                 blog_alerts = await loop.run_in_executor(None, lambda: bm.scan_all_blogs(hours_back=12))
+
+                # ── Build global market context once per cycle (5-min TTL cached) ──
+                try:
+                    global_ctx = await loop.run_in_executor(None, gc.build_global_context)
+                    logger.info(f"[AutoTrade] Global context: {gc.get_global_context_summary(global_ctx)}")
+                except Exception as _gce:
+                    logger.warning(f"[AutoTrade] Global context build failed: {_gce}")
+                    global_ctx = None
 
                 rl_lessons = get_rl_lessons()
                 for symbol in watchlist:
@@ -506,9 +542,17 @@ async def background_auto_trade_loop():
                         # AI analysis in executor (Ollama HTTP call — can take 30-60s)
                         signal = await loop.run_in_executor(
                             None, ai.analyze_stock,
-                            ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context, full_context, rl_lessons
+                            ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context, full_context, rl_lessons, sector, global_ctx
                         )
                         signal["sector"] = sector
+
+                        # Apply per-market confidence modifier from global context
+                        if global_ctx:
+                            raw_conf = signal.get("confidence", 0.5)
+                            modifier = gc.get_confidence_modifier(global_ctx, symbol)
+                            signal["confidence"] = max(0.0, min(1.0, raw_conf * modifier))
+                            if modifier != 1.0:
+                                logger.debug(f"[AutoTrade] {symbol} confidence {raw_conf:.2f} × {modifier:.2f} = {signal['confidence']:.2f}")
 
                         # Record to RL training dataset
                         rl.record_signal_state(
@@ -532,13 +576,35 @@ async def background_auto_trade_loop():
                         db.commit()
 
                         if signal.get("signal") in ("BUY", "SELL"):
-                            # Gap Filter for BUY: skip if stock already up >3% today
                             gap_pct = quote.get("change_pct", 0)
-                            if signal.get("signal") == "BUY" and gap_pct > 3.0:
-                                logger.warning(
-                                    f"[AutoTrade] {symbol} BUY skipped — already up {gap_pct:.1f}% today "
-                                    f"(gap filter), risk of chasing top"
-                                )
+                            action  = signal.get("signal")
+                            skip_reason = None
+
+                            # Gap Filter: skip BUY if stock already up >3% today
+                            if action == "BUY" and gap_pct > 3.0:
+                                skip_reason = f"gap filter ({gap_pct:.1f}% up today)"
+
+                            # Bear Market Filter: suppress BUY when SPY < MA20
+                            elif action == "BUY" and spy_bear_market:
+                                skip_reason = "bear market filter (SPY below MA20)"
+
+                            # Cooldown Filter: skip BUY within 3 days of a losing sell on this symbol
+                            elif action == "BUY":
+                                cooldown_cutoff = datetime.utcnow() - timedelta(days=3)
+                                recent_loss = db.query(Trade).filter(
+                                    Trade.user_id == user.id,
+                                    Trade.symbol == symbol,
+                                    Trade.side == "SELL",
+                                    Trade.timestamp >= cooldown_cutoff,
+                                ).order_by(Trade.timestamp.desc()).first()
+                                if recent_loss:
+                                    # Only block if we sold at a loss (sell price < position avg_cost at the time)
+                                    # Approximation: check if there's still an open position with lower avg or use reasoning
+                                    if recent_loss.reasoning and "[STOP-LOSS]" in recent_loss.reasoning:
+                                        skip_reason = f"cooldown: stop-loss triggered on {recent_loss.timestamp.date()}, 3-day ban"
+
+                            if skip_reason:
+                                logger.warning(f"[AutoTrade] {symbol} {action} skipped — {skip_reason}")
                             else:
                                 auto_result = engine.auto_trade(signal, quote["current"], indicators=indicators)
                                 if auto_result.get("success"):
@@ -703,7 +769,8 @@ async def background_blog_scan():
                                 ai_provider, api_key, symbol, quote,
                                 indicators, history, news,
                                 portfolio_context, blog_context,
-                                rl_lessons=rl_lessons
+                                rl_lessons=rl_lessons,
+                                global_context=gc.build_global_context()
                             )
 
                             db_signal = AISignal(
@@ -789,7 +856,8 @@ async def background_event_scan():
                             ai_provider, api_key, symbol, quote,
                             indicators, history, news,
                             portfolio_context, event_context,
-                            rl_lessons=rl_lessons
+                            rl_lessons=rl_lessons,
+                            global_context=gc.build_global_context()
                         )
 
                         db_signal = AISignal(
@@ -835,6 +903,7 @@ async def background_news_scan():
             users = db.query(User).all()
 
             for user in users:
+                rl_lessons = get_rl_lessons()  # Define at user loop start
                 auto_trade_enabled = get_setting(db, "auto_trade_enabled", user.id, "false") == "true"
                 if not auto_trade_enabled:
                     continue
@@ -884,7 +953,8 @@ async def background_news_scan():
                         indicators, history, news,
                         portfolio_context,
                         full_context,
-                        rl_lessons=rl_lessons
+                        rl_lessons=rl_lessons,
+                        global_context=gc.build_global_context()
                     )
                     signal["sector"] = sector
 
@@ -946,19 +1016,35 @@ async def background_news_scan():
 
                 critical_macros = [m for m in active_macros if m["severity"] in ("CRITICAL", "HIGH")]
                 if critical_macros:
+                    # ── Get current VIX for proportional position scaling (not binary on/off) ──
+                    geo_vix = 0.0
+                    try:
+                        _gctx = gc.build_global_context()
+                        geo_vix = _gctx.get("vix", {}).get("value", 0) or 0
+                    except Exception:
+                        pass
+
                     for macro in critical_macros:
-                        logger.warning(
-                            f"[GeoScan] 🚨 CRITICAL MACRO: {macro['name']} — "
-                            f"beneficiaries: {macro['potential_beneficiaries']}"
+                        # ── Adaptive scenario health check (replaces rigid "7 day" age gate) ──
+                        # Assess actual price performance of beneficiaries since first trade.
+                        # The AI will receive this context and decide position size accordingly.
+                        scenario_health = st.get_scenario_health(
+                            macro.get("name", ""),
+                            macro.get("potential_beneficiaries", []),
+                            db, user.id, price_cache,
                         )
-                        # Trigger immediate AI analysis for beneficiary stocks in watchlist
+                        scenario_mult = scenario_health["position_mult"]  # 1.0 / 0.6 / 0.3
+
+                        logger.warning(
+                            f"[GeoScan] 🌍 MACRO: {macro['name']} — "
+                            f"health={scenario_health['status']} ({scenario_health['avg_pct']:+.1f}%) "
+                            f"VIX={geo_vix:.1f} pos_mult={scenario_mult:.1f}"
+                        )
+
                         today_str = datetime.utcnow().strftime("%Y-%m-%d")
-                        # Purge stale in-memory cooldown entries from previous days
                         for _k in list(_geo_traded_today.keys()):
                             if _geo_traded_today[_k] != today_str:
                                 del _geo_traded_today[_k]
-                        # Seed from DB so cooldown survives restarts:
-                        # any BUY trade today = already geo-traded (don't double-buy)
                         if not _geo_traded_today:
                             _already = db.query(Trade).filter(
                                 Trade.user_id == user.id,
@@ -967,6 +1053,7 @@ async def background_news_scan():
                             ).all()
                             for _t in _already:
                                 _geo_traded_today[_t.symbol] = today_str
+
                         for sym in macro["potential_beneficiaries"]:
                             if sym not in watchlist:
                                 continue
@@ -981,23 +1068,44 @@ async def background_news_scan():
                             news_items = md.get_stock_news(sym)
                             engine = TradingEngine(db, user.id)
                             portfolio_ctx = build_rich_portfolio_context(db, user.id, engine)
-                            macro_context = ni.build_macro_scenario_context([macro])
+
+                            # Build enriched macro context: scenario health + VIX level
+                            base_macro_ctx = ni.build_macro_scenario_context([macro])
+                            vix_note = (
+                                f"\n### MARKET REGIME\n"
+                                f"Current VIX: {geo_vix:.1f} — "
+                                f"{'EXTREME FEAR: use very small size' if geo_vix > 35 else 'HIGH FEAR: reduce size' if geo_vix > 25 else 'ELEVATED: moderate caution' if geo_vix > 20 else 'Normal'}\n"
+                                f"Position size has been automatically scaled to "
+                                f"{ps.vix_position_scale(geo_vix, 1.0) * 100:.0f}% of normal due to VIX.\n"
+                                f"Scenario position multiplier: {scenario_mult:.1f}× (based on actual price performance)."
+                            )
+                            enriched_macro_ctx = base_macro_ctx + "\n" + scenario_health["context_str"] + vix_note
+
+                            # Compute ATR-based stop-loss for this symbol
+                            atr = (indicators or {}).get("atr14", 0)
+                            current_price = quote.get("current", 0)
+                            adaptive_stop = ps.atr_stop_loss(current_price, atr) if current_price > 0 else None
+
                             sector = ni.get_symbol_sector(sym)
                             signal = ai.analyze_stock(
                                 ai_provider, api_key, sym, quote,
                                 indicators, history, news_items,
-                                portfolio_ctx, macro_context,
+                                portfolio_ctx, enriched_macro_ctx,
                                 rl_lessons=rl_lessons,
-                                sector=sector # Added
+                                sector=sector,
+                                global_context=gc.build_global_context()
                             )
                             signal["sector"] = sector
+                            # Inject ATR stop-loss if AI didn't provide one
+                            if adaptive_stop and not signal.get("stop_loss"):
+                                signal["stop_loss"] = adaptive_stop
 
                             rl.record_signal_state(
                                 signal, quote, indicators or {},
-                                macro_context, portfolio_ctx,
+                                enriched_macro_ctx, portfolio_ctx,
                                 catalysts=[],
                                 active_macros=[macro],
-                                sector=sector # Added
+                                sector=sector
                             )
 
                             db_signal = AISignal(
@@ -1012,27 +1120,42 @@ async def background_news_scan():
                             )
                             db.add(db_signal)
                             db.commit()
+
                             if signal.get("signal") in ("BUY", "COVER"):
-                                # Gap Filter: skip if stock already gapped up >3% today
-                                # (buying at the spike top risks "sell-the-news" reversal)
-                                gap_pct = abs(quote.get("change_pct", 0))
-                                if gap_pct > 3.0 and quote.get("change_pct", 0) > 0:
-                                    logger.warning(
-                                        f"[GeoScan] {sym} skipped — already up {gap_pct:.1f}% today "
-                                        f"(gap filter >3%), risk of sell-the-news reversal"
-                                    )
+                                # Gap Filter only: don't buy stocks that already spiked >3% today
+                                # (all other risk management is now adaptive/proportional)
+                                gap_pct = quote.get("change_pct", 0)
+                                if gap_pct > 3.0:
+                                    logger.warning(f"[GeoScan] {sym} skipped — already up {gap_pct:.1f}% today")
                                     continue
+
+                                # Apply VIX + scenario health scaling to position size
+                                base_risk = float(get_setting(db, "risk_per_trade_pct", user.id, "2.0"))
+                                scaled_risk = ps.vix_position_scale(geo_vix, base_risk)
+                                scaled_risk = ps.scenario_position_scale(scaled_risk, scenario_mult)
+                                # Temporarily write scaled risk to DB so auto_trade picks it up
+                                set_setting(db, "risk_per_trade_pct", str(scaled_risk), user.id)
+
                                 auto_result = engine.auto_trade(signal, quote["current"], indicators=indicators)
+
+                                # Restore original risk %
+                                set_setting(db, "risk_per_trade_pct", str(base_risk), user.id)
+
                                 if auto_result.get("success"):
                                     _geo_traded_today[sym] = today_str
-                                    logger.info(f"[GeoScan] Geopolitical trade: {sym} → BUY ({macro['name']})")
+                                    logger.info(
+                                        f"[GeoScan] Trade: {sym} → BUY | risk={scaled_risk:.2f}% "
+                                        f"(VIX={geo_vix:.1f}, scenario={scenario_health['status']})"
+                                    )
                                     await broadcast({
                                         "type": "auto_trade",
                                         "user": user.username,
                                         "symbol": sym,
                                         "result": auto_result,
                                         "trigger": "geopolitical_macro",
-                                        "macro": macro["name"]
+                                        "macro": macro["name"],
+                                        "scenario_health": scenario_health["status"],
+                                        "vix": geo_vix,
                                     })
 
                 # ── Tech / Semiconductor News Scan ───────────────────────────
@@ -1047,7 +1170,6 @@ async def background_news_scan():
                                 affected_syms.add(s)
                     
                     if affected_syms:
-                        rl_lessons = get_rl_lessons()
                         for sym in affected_syms:
                             quote = price_cache.get(sym) or md.get_stock_quote(sym)
                             if not quote: continue
@@ -1066,7 +1188,8 @@ async def background_news_scan():
                                 indicators, history, news_items,
                                 portfolio_ctx, tech_context,
                                 rl_lessons=rl_lessons,
-                                sector=sector
+                                sector=sector,
+                                global_context=gc.build_global_context()
                             )
                             signal["sector"] = sector
 
@@ -1463,104 +1586,85 @@ async def broadcast(data: dict):
         if ws in active_connections:
             active_connections.remove(ws)
 
-# ─────────────────────────────────────────────
-# Auth Endpoints
-# ─────────────────────────────────────────────
+@app.get("/api/auth/alpaca/login")
+async def alpaca_login():
+    client_id = os.environ.get("ALPACA_OAUTH_CLIENT_ID")
+    redirect_uri = os.environ.get("ALPACA_OAUTH_REDIRECT_URI", "http://localhost:8000/api/auth/alpaca/callback")
+    if not client_id:
+        raise HTTPException(status_code=500, detail="Alpaca OAuth not configured on server")
+    url = f"https://app.alpaca.markets/oauth/authorize?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope=account:write%20trading"
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url)
 
-@app.post("/api/auth/register")
-async def register(user_data: UserRegister, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.username == user_data.username).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Username already registered")
+@app.get("/api/auth/alpaca/callback")
+async def alpaca_callback(code: str, db: Session = Depends(get_db)):
+    client_id = os.environ.get("ALPACA_OAUTH_CLIENT_ID")
+    client_secret = os.environ.get("ALPACA_OAUTH_CLIENT_SECRET")
+    redirect_uri = os.environ.get("ALPACA_OAUTH_REDIRECT_URI", "http://localhost:8000/api/auth/alpaca/callback")
     
-    new_user = User(
-        username=user_data.username,
-        hashed_password=get_password_hash(user_data.password),
-        email=user_data.email,
-        balance=0.0  # Start with zero balance, needs recharge
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    # Initialize default settings for new user
-    defaults = {
-        "auto_trade_enabled": "false",
-        "auto_trade_min_confidence": "0.75",
-        "risk_per_trade_pct": "2.0",
-        "ai_provider": "ollama",
-        "watchlist": json.dumps(md.DEFAULT_WATCHLIST),
-        "refresh_interval_seconds": "30",
-        "initial_cash": "0.0",
-    }
-    for key, val in defaults.items():
-        set_setting(db, key, val, new_user.id)
+    import httpx
+    from fastapi.responses import RedirectResponse
+    async with httpx.AsyncClient() as client:
+        # Exchange code for token
+        token_res = await client.post("https://api.alpaca.markets/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri
+        }, headers={"Content-Type": "application/x-www-form-urlencoded"})
         
-    return {"message": "User registered successfully"}
-
-@app.post("/api/auth/login")
-async def login(user_data: UserLogin, db: Session = Depends(get_db)):
-    if user_data.username == "admin" and user_data.password == "admin":
-        user = db.query(User).filter(User.username == "admin").first()
+        if token_res.status_code != 200:
+            raise HTTPException(status_code=400, detail="OAuth token exchange failed")
+            
+        token_data = token_res.json()
+        access_token = token_data.get("access_token")
+        
+        # Fetch user account info
+        account_res = await client.get("https://api.alpaca.markets/v2/account", headers={
+            "Authorization": f"Bearer {access_token}"
+        })
+        if account_res.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to fetch Alpaca account")
+            
+        account_data = account_res.json()
+        account_number = account_data.get("account_number")
+        
+        # Find or create user
+        username = f"alpaca_{account_number}"
+        user = db.query(User).filter(User.username == username).first()
         if not user:
             user = User(
-                username="admin",
-                hashed_password=get_password_hash("admin"),
-                email="admin@example.com",
-                balance=100000.0
+                username=username,
+                hashed_password=get_password_hash(os.urandom(16).hex()),
+                balance=0.0
             )
             db.add(user)
             db.commit()
             db.refresh(user)
             
             defaults = {
-                "auto_trade_enabled": "true",
+                "auto_trade_enabled": "false",
                 "auto_trade_min_confidence": "0.75",
                 "risk_per_trade_pct": "2.0",
                 "ai_provider": "ollama",
                 "watchlist": json.dumps(md.DEFAULT_WATCHLIST),
-                "refresh_interval_seconds": "30",
-                "initial_cash": "100000.0",
             }
-            for key, val in defaults.items():
-                set_setting(db, key, val, user.id)
-        else:
-            set_setting(db, "auto_trade_enabled", "true", user.id)
-    else:
-        user = db.query(User).filter(User.username == user_data.username).first()
-        if not user or not verify_password(user_data.password, user.hashed_password):
-            raise HTTPException(status_code=401, detail="Invalid username or password")
-    
-    access_token = create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
-
+            for k, v in defaults.items():
+                set_setting(db, k, v, user.id)
+                
+        # Save OAuth token for this user
+        set_setting(db, "alpaca_oauth_token", access_token, user.id)
+        
+        # We also need to map this to an internal JWT so the frontend can stay mostly the same
+        internal_jwt = create_access_token(data={"sub": user.username})
+        
+        # Redirect back to frontend
+        return RedirectResponse(f"/?token={internal_jwt}")
 @app.get("/api/auth/auto-login")
-async def auto_login(db: Session = Depends(get_db)):
-    """Auto-login as default trader user without requiring credentials."""
-    user = db.query(User).filter(User.username == "trader").first()
-    if not user:
-        user = User(
-            username="trader",
-            hashed_password=get_password_hash("trader"),
-            email="trader@localhost",
-            balance=100000.0
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        defaults = {
-            "auto_trade_enabled": "false",
-            "auto_trade_min_confidence": "0.75",
-            "risk_per_trade_pct": "2.0",
-            "ai_provider": "ollama",
-            "watchlist": json.dumps(md.DEFAULT_WATCHLIST),
-            "refresh_interval_seconds": "30",
-            "initial_cash": "100000.0",
-        }
-        for key, val in defaults.items():
-            set_setting(db, key, val, user.id)
-    access_token = create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+async def dummy_auto_login():
+    raise HTTPException(status_code=401, detail="Legacy auto-login disabled")
+
 
 @app.get("/api/auth/me")
 async def get_me(current_user: User = Depends(get_current_user)):
@@ -1597,7 +1701,7 @@ async def serve_index():
 
 @app.get("/api/markets")
 async def get_markets():
-    """Get all global market indices."""
+    """Get all global market indices with market open/close status."""
     global market_cache, last_market_fetch
     now = datetime.utcnow()
     if not market_cache or last_market_fetch is None or (now - last_market_fetch).seconds > 300:
@@ -1609,12 +1713,137 @@ async def get_markets():
     return {"data": market_cache, "timestamp": now.isoformat()}
 
 
+@app.get("/api/global-context")
+async def get_global_context(current_user: User = Depends(get_current_user)):
+    """
+    Return the current global market context snapshot (VIX, risk env, sector rotation,
+    cross-market signals, confidence modifiers, northbound capital, etc.).
+    Cached for 5 minutes; forces a refresh if cache is stale.
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        ctx = await loop.run_in_executor(None, gc.build_global_context)
+        # Strip the large ai_narrative from the API response (it's for internal AI use)
+        resp = {k: v for k, v in ctx.items() if k != "ai_narrative"}
+        resp["summary"] = gc.get_global_context_summary(ctx)
+        return resp
+    except Exception as e:
+        logger.error(f"[GlobalContext] API error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/market-status")
+async def get_market_status():
+    """
+    Return real-time open/closed status for all global exchanges.
+    Includes local time, currency, and session hours.
+    """
+    from market_calendar import get_all_market_statuses, get_market_open_count
+    statuses = get_all_market_statuses()
+    counts = get_market_open_count()
+    return {"markets": statuses, "summary": counts, "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/api/markets/popular-stocks")
+async def get_popular_stocks(region: str = None):
+    """
+    Return popular international stock symbols by region.
+    region: US_TECH, US_FINANCE, HK, CN_ASHARE, JP, EU, AU, KR, IN, BR, SG
+    """
+    stocks = md.get_global_popular_stocks(region)
+    return {"region": region or "all", "symbols": stocks}
+
+
+@app.get("/api/markets/news")
+async def get_global_news():
+    """Fetch latest news bucketed by market region (CN, HK, JP, EU, US, EM, GLOBAL)."""
+    loop = asyncio.get_event_loop()
+    news_map = await loop.run_in_executor(None, lambda: ni.fetch_global_market_news(hours_back=8))
+    return {"data": news_map, "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/api/broker-status")
+async def get_broker_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Check connection status for all configured brokers."""
+    from futu_broker import create_futu_broker_from_settings
+    from ibkr_broker import create_ibkr_broker_from_settings
+
+    settings = {}
+    from database import Settings as SettingsModel
+    rows = db.query(SettingsModel).filter(SettingsModel.user_id == current_user.id).all()
+    for r in rows:
+        settings[r.key] = r.value
+
+    # Alpaca
+    alpaca_key = settings.get("alpaca_api_key", "")
+    oauth = settings.get("alpaca_oauth_token", "")
+    alpaca_ok = bool(alpaca_key or oauth)
+    alpaca_live = settings.get("alpaca_paper_mode", "true") != "true"
+
+    # Futu
+    futu_enabled = settings.get("futu_enabled", "false") == "true"
+    futu_connected = False
+    if futu_enabled:
+        try:
+            fb = create_futu_broker_from_settings(settings)
+            futu_connected = fb.is_connected()
+        except Exception:
+            pass
+
+    # IBKR
+    ibkr_enabled = settings.get("ibkr_enabled", "false") == "true"
+    ibkr_connected = False
+    if ibkr_enabled:
+        try:
+            ib = create_ibkr_broker_from_settings(settings)
+            ibkr_connected = ib.is_connected()
+        except Exception:
+            pass
+
+    return {
+        "alpaca": {
+            "configured": alpaca_ok,
+            "live_mode": alpaca_live,
+            "markets": ["US"],
+            "status": "active" if alpaca_ok else "not_configured",
+        },
+        "futu": {
+            "enabled": futu_enabled,
+            "connected": futu_connected,
+            "markets": ["CN", "HK", "US"],
+            "trade_env": settings.get("futu_trade_env", "SIMULATE"),
+            "status": "connected" if futu_connected else ("enabled_offline" if futu_enabled else "disabled"),
+        },
+        "ibkr": {
+            "enabled": ibkr_enabled,
+            "connected": ibkr_connected,
+            "markets": ["US", "HK", "JP", "GB", "DE", "FR", "AU", "KR", "SG", "IN", "BR", "CA"],
+            "status": "connected" if ibkr_connected else ("enabled_offline" if ibkr_enabled else "disabled"),
+        },
+        "paper": {
+            "active": not (alpaca_ok or futu_connected or ibkr_connected),
+            "markets": ["ALL"],
+            "status": "active",
+        },
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 import asyncio
 
 @app.get("/api/stock/{symbol}")
 async def get_stock(symbol: str, period: str = "3mo"):
-    """Get full data for a single stock."""
-    symbol = symbol.upper()
+    """Get full data for a single stock (all markets: US, CN, HK, JP, EU, ...)."""
+    # Preserve original case for A-shares (600519.SH) but uppercase US symbols
+    from market_calendar import detect_market
+    if "." not in symbol:
+        symbol = symbol.upper()
+    else:
+        parts = symbol.rsplit(".", 1)
+        symbol = parts[0] + "." + parts[1].upper()
     loop = asyncio.get_event_loop()
     
     quote, history, indicators, news = await asyncio.gather(
@@ -1718,7 +1947,7 @@ async def analyze_stock(request: AnalyzeRequest, current_user: User = Depends(ge
     summary = engine.get_portfolio_summary()
     portfolio_context = f"Portfolio equity: ${summary['total_equity']:,.2f}, Cash: ${summary['cash']:,.2f}"
 
-    signal = ai.analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context, rl_lessons=rl_lessons, sector=sector)
+    signal = ai.analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context, rl_lessons=rl_lessons, sector=sector, global_context=gc.build_global_context())
     signal["sector"] = sector
 
     # Record to RL training dataset
@@ -1883,7 +2112,8 @@ async def openclaw_webhook(request: OpenClawWebhook, db: Session = Depends(get_d
             portfolio_context = f"Portfolio equity: ${summary['total_equity']:,.2f}, Cash: ${summary['cash']:,.2f}"
             
             import deepseek_ai as ai
-            signal_data = ai.analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context, rl_lessons=rl_lessons)
+            import global_context as _gc
+            signal_data = ai.analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context, rl_lessons=rl_lessons, global_context=_gc.build_global_context())
             
             sig = signal_data.get("signal", "HOLD")
             conf = signal_data.get("confidence", 0) * 100
@@ -1912,16 +2142,20 @@ async def openclaw_webhook(request: OpenClawWebhook, db: Session = Depends(get_d
 
 @app.get("/api/settings")
 async def get_settings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Get all settings (API key is masked)."""
+    """Get all settings (sensitive keys are masked)."""
     keys = [
         "auto_trade_enabled", "auto_trade_min_confidence",
         "risk_per_trade_pct", "refresh_interval_seconds", "ai_provider",
-        "alpaca_paper_mode"
+        "alpaca_paper_mode", "allow_short_selling", "stop_loss_pct",
+        # Multi-market broker settings
+        "futu_enabled", "futu_host", "futu_port", "futu_trade_env",
+        "futu_cn_acc_id", "futu_hk_acc_id", "futu_us_acc_id",
+        "ibkr_enabled", "ibkr_host", "ibkr_port", "ibkr_client_id", "ibkr_account",
     ]
     result = {}
     for key in keys:
         result[key] = get_setting(db, key, current_user.id, "")
-    
+
     # Mask deepseek api key
     api_key = get_setting(db, "deepseek_api_key", current_user.id, "")
     result["deepseek_api_key_set"] = bool(api_key)
@@ -1933,7 +2167,7 @@ async def get_settings(current_user: User = Depends(get_current_user), db: Sessi
     result["alpaca_api_key_set"] = bool(alpaca_key)
     result["alpaca_secret_key_set"] = bool(alpaca_secret)
     result["alpaca_api_key_preview"] = f"{alpaca_key[:8]}..." if len(alpaca_key) > 8 else ("" if not alpaca_key else alpaca_key)
-    
+
     return result
 
 
@@ -1942,6 +2176,98 @@ async def update_setting(update: SettingsUpdate, current_user: User = Depends(ge
     """Update a setting."""
     set_setting(db, update.key, update.value, current_user.id)
     return {"key": update.key, "updated": True}
+
+
+class FutuConfig(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 11111
+    trade_env: str = "SIMULATE"   # "REAL" or "SIMULATE"
+    cn_acc_id: str = ""
+    hk_acc_id: str = ""
+    us_acc_id: str = ""
+    enabled: bool = True
+
+
+class IBKRConfig(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 7497
+    client_id: int = 10
+    account: str = ""
+    enabled: bool = True
+
+
+@app.post("/api/broker/futu/configure")
+async def configure_futu(
+    cfg: FutuConfig,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Configure Futu OpenD broker for China A-shares / HK stocks.
+    Requires Futu OpenD daemon running at the specified host:port.
+    Install SDK: pip install futu-api
+    """
+    set_setting(db, "futu_enabled",     str(cfg.enabled).lower(), current_user.id)
+    set_setting(db, "futu_host",        cfg.host,                  current_user.id)
+    set_setting(db, "futu_port",        str(cfg.port),             current_user.id)
+    set_setting(db, "futu_trade_env",   cfg.trade_env,             current_user.id)
+    set_setting(db, "futu_cn_acc_id",   cfg.cn_acc_id,             current_user.id)
+    set_setting(db, "futu_hk_acc_id",   cfg.hk_acc_id,             current_user.id)
+    set_setting(db, "futu_us_acc_id",   cfg.us_acc_id,             current_user.id)
+
+    # Test connectivity
+    connected = False
+    if cfg.enabled:
+        try:
+            from futu_broker import FutuBroker
+            fb = FutuBroker(host=cfg.host, port=cfg.port, trade_env=cfg.trade_env)
+            connected = fb.is_connected()
+        except Exception as e:
+            logger.warning(f"[Futu Config] Connection test failed: {e}")
+
+    return {
+        "configured": True,
+        "connected": connected,
+        "trade_env": cfg.trade_env,
+        "markets": ["CN (A股)", "HK (港股)", "US (美股)"],
+        "note": "SIMULATE mode safe for testing; set trade_env=REAL for live trading",
+    }
+
+
+@app.post("/api/broker/ibkr/configure")
+async def configure_ibkr(
+    cfg: IBKRConfig,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Configure Interactive Brokers for global markets.
+    Requires IBKR TWS or Gateway running at the specified host:port.
+    Install SDK: pip install ib_insync
+    TWS paper port: 7497 | TWS live port: 7496
+    Gateway paper port: 4002 | Gateway live port: 4001
+    """
+    set_setting(db, "ibkr_enabled",    str(cfg.enabled).lower(),  current_user.id)
+    set_setting(db, "ibkr_host",       cfg.host,                  current_user.id)
+    set_setting(db, "ibkr_port",       str(cfg.port),             current_user.id)
+    set_setting(db, "ibkr_client_id",  str(cfg.client_id),        current_user.id)
+    set_setting(db, "ibkr_account",    cfg.account,               current_user.id)
+
+    connected = False
+    if cfg.enabled:
+        try:
+            from ibkr_broker import IBKRBroker
+            ib = IBKRBroker(host=cfg.host, port=cfg.port, client_id=cfg.client_id, account=cfg.account)
+            connected = ib.is_connected()
+        except Exception as e:
+            logger.warning(f"[IBKR Config] Connection test failed: {e}")
+
+    return {
+        "configured": True,
+        "connected": connected,
+        "markets": ["US", "HK", "JP", "GB", "DE", "FR", "AU", "KR", "SG", "IN", "BR", "CA", "more..."],
+        "note": "Paper port 7497 for TWS; start TWS/Gateway before connecting",
+    }
 
 
 class EmailConfig(BaseModel):
@@ -1970,6 +2296,11 @@ async def test_email(current_user: User = Depends(get_current_user), db: Session
     recipient = settings.get("email_recipient", "")
     if not (sender and app_pw and recipient):
         raise HTTPException(status_code=400, detail="Email not configured. Call /api/email/configure first.")
+    _test_gc = {}
+    try:
+        _test_gc = gc.build_global_context()
+    except Exception:
+        pass
     html = er.generate_report_html(
         datetime.utcnow().strftime("%Y-%m-%d (Test)"),
         {"equity": 376.72, "cash": 326.63, "unrealized_pl": 2.34},
@@ -1977,6 +2308,9 @@ async def test_email(current_user: User = Depends(get_current_user), db: Session
         [{"symbol": "LMT", "signal": "BUY", "confidence": 0.90, "reasoning": "Significant undervaluation, defence demand surge.", "timestamp": datetime.utcnow().isoformat()}],
         [{"name": "中东战争 2026", "severity": "CRITICAL", "beneficiaries": ["GLD", "LMT", "RTX"]}],
         [{"symbol": "LMT", "action": "BUY", "confidence": 0.90, "reason": "AI BUY 90% — undervaluation -57%"}],
+        global_context=_test_gc,
+        scenario_healths=[{"name": "中东战争 2026", "status": "failing", "avg_pct": -12.5, "days_active": 22, "per_stock_summary": "GLD -14.5% | LMT -4.6% | RTX -2.2%"}],
+        global_scan_signals=[{"symbol": "EWJ", "region": "JP", "signal": "BUY", "confidence": 0.78, "reasoning": "Japan equities oversold, BOJ pivot tailwind, USD/JPY correction expected.", "timestamp": datetime.utcnow().isoformat()}],
     )
     sent = er.send_email(sender, app_pw, recipient, "AlphaTrader — Test Email", html)
     if sent:
@@ -2127,7 +2461,7 @@ async def background_email_reporter():
                     alpaca_account = {"equity": 0, "cash": 0, "unrealized_pl": 0}
                     try:
                         from trading_engine import TradingEngine
-                        engine = TradingEngine(settings)
+                        engine = TradingEngine(db, 1)
                         if engine.alpaca:
                             acct = engine.alpaca.get_account()
                             alpaca_account = {
@@ -2185,21 +2519,126 @@ async def background_email_reporter():
                         pass
 
                     # Planned trades = highest-confidence BUY/SELL signals
-                    planned_trades = [
+                    # Planned trades: highest-confidence BUY/SELL signals with target/stop
+                    planned_trades = []
+                    for s in signals:
+                        if s["signal"] in ("BUY", "SELL") and s["confidence"] >= 0.75:
+                            # Fetch target_price + stop_loss from DB signal record
+                            db_sig = db.query(AISignal).filter(
+                                AISignal.user_id == 1,
+                                AISignal.symbol == s["symbol"],
+                                AISignal.signal == s["signal"],
+                            ).order_by(AISignal.timestamp.desc()).first()
+                            planned_trades.append({
+                                "symbol": s["symbol"],
+                                "action": s["signal"],
+                                "confidence": s["confidence"],
+                                "reason": s["reasoning"][:120],
+                                "target_price": float(db_sig.target_price) if db_sig and db_sig.target_price else None,
+                                "stop_loss": float(db_sig.stop_loss) if db_sig and db_sig.stop_loss else None,
+                            })
+                            if len(planned_trades) >= 6:
+                                break
+
+                    # Yesterday's executed trades (last 24h from DB)
+                    yesterday_trades = [
                         {
-                            "symbol": s["symbol"],
-                            "action": s["signal"],
-                            "confidence": s["confidence"],
-                            "reason": s["reasoning"][:100],
+                            "symbol": t.symbol,
+                            "side": t.side,
+                            "quantity": t.quantity,
+                            "price": t.price,
+                            "total_value": t.total_value,
+                            "ai_confidence": t.ai_confidence,
+                            "reasoning": t.reasoning or "",
+                            "timestamp": t.timestamp.isoformat() if t.timestamp else "",
                         }
-                        for s in signals
-                        if s["signal"] in ("BUY", "SELL") and s["confidence"] >= 0.75
-                    ][:5]
+                        for t in db.query(Trade)
+                            .filter(Trade.user_id == 1, Trade.timestamp >= since, Trade.status == "filled")
+                            .order_by(Trade.timestamp.desc())
+                            .all()
+                    ]
+
+                    # Market regime for tomorrow's plan header
+                    try:
+                        spy_ind = await asyncio.get_event_loop().run_in_executor(None, md.get_technical_indicators, "SPY")
+                        spy_q   = price_cache.get("SPY") or {}
+                        spy_px  = spy_q.get("current", 0)
+                        spy_ma20 = (spy_ind or {}).get("ma20", 0)
+                        market_regime = "BEAR" if (spy_px and spy_ma20 and spy_px < spy_ma20) else "BULL"
+                    except Exception:
+                        market_regime = "NORMAL"
+
+                    # ── Global context for email ──────────────────────────────
+                    email_global_ctx = {}
+                    try:
+                        email_global_ctx = gc.build_global_context()
+                    except Exception as _gce:
+                        logger.warning(f"[EmailReport] Global context error: {_gce}")
+
+                    # ── Scenario health for each active macro ─────────────────
+                    email_scenario_healths = []
+                    try:
+                        for mac in macro_scenarios:
+                            health = st.get_scenario_health(
+                                mac.get("name", ""),
+                                mac.get("beneficiaries", []),
+                                db, 1, price_cache,
+                            )
+                            per_stock = health.get("context_str", "").split(
+                                "Per-stock since first trade: "
+                            )
+                            per_stock_summary = per_stock[1][:120] if len(per_stock) > 1 else ""
+                            email_scenario_healths.append({
+                                "name":             mac.get("name", ""),
+                                "status":           health["status"],
+                                "avg_pct":          health["avg_pct"],
+                                "days_active":      health["days_active"],
+                                "per_stock_summary": per_stock_summary,
+                            })
+                    except Exception as _she:
+                        logger.warning(f"[EmailReport] Scenario health error: {_she}")
+
+                    # ── Global scan signals (last 24h, BUY only) ──────────────
+                    email_global_signals = []
+                    try:
+                        global_sigs_raw = (
+                            db.query(AISignal)
+                            .filter(
+                                AISignal.user_id == 1,
+                                AISignal.timestamp >= since,
+                                AISignal.reasoning.like("%[GLOBAL SCAN%"),
+                            )
+                            .order_by(AISignal.confidence.desc())
+                            .limit(12)
+                            .all()
+                        )
+                        for gs in global_sigs_raw:
+                            # Extract region from reasoning tag e.g. "[GLOBAL SCAN/HK]"
+                            region = "US"
+                            import re as _re
+                            m = _re.search(r"\[GLOBAL SCAN/([^\]]+)\]", gs.reasoning or "")
+                            if m:
+                                region = m.group(1)
+                            email_global_signals.append({
+                                "symbol":    gs.symbol,
+                                "signal":    gs.signal,
+                                "confidence": gs.confidence,
+                                "reasoning": gs.reasoning or "",
+                                "timestamp": gs.timestamp.isoformat() if gs.timestamp else "",
+                                "region":    region,
+                            })
+                    except Exception as _gse:
+                        logger.warning(f"[EmailReport] Global scan signals error: {_gse}")
 
                     date_str = now.strftime("%Y-%m-%d %A")
                     html = er.generate_report_html(
                         date_str, alpaca_account, positions,
                         signals, macro_scenarios, planned_trades,
+                        yesterday_trades=yesterday_trades,
+                        market_regime=market_regime,
+                        global_context=email_global_ctx,
+                        scenario_healths=email_scenario_healths,
+                        global_scan_signals=email_global_signals,
                     )
                     subject = f"AlphaTrader Daily Report — {now.strftime('%Y-%m-%d')}"
                     sent = er.send_email(sender, app_pw, recipient, subject, html)
@@ -2302,6 +2741,324 @@ async def background_email_reply_checker():
             await asyncio.sleep(15)  # brief pause before reconnecting
 
 
+async def background_global_market_scan():
+    """
+    Task 12 — Global Market Scanner.
+    Runs every 20 minutes. Identifies which global markets are currently open,
+    scores each region using global context (risk score, currency flows, index momentum),
+    then runs AI analysis on the top candidate stocks from the best-performing regions.
+
+    Tradeable globally:
+    - Via Alpaca (always): US stocks + US-listed Global ETFs (EWJ, FXI, EWT, VGK, etc.)
+    - Via Futu (if configured): HK + CN A-shares
+    - Via IBKR (if configured): JP, EU, AU, KR, SG, IN, BR direct listings
+    """
+    await asyncio.sleep(360)  # 6-min startup delay — let price cache warm up first
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+            db = next(get_db())
+            users = db.query(User).all()
+
+            for user in users:
+                auto_trade_enabled = get_setting(db, "auto_trade_enabled", user.id, "false") == "true"
+                if not auto_trade_enabled:
+                    continue
+
+                api_key  = get_setting(db, "deepseek_api_key", user.id, "")
+                ai_provider = get_setting(db, "ai_provider", user.id, "ollama")
+                rl_lessons = get_rl_lessons()
+
+                # ── 1. Build global context ──────────────────────────────────────
+                global_ctx = await loop.run_in_executor(None, gc.build_global_context)
+                risk_env   = global_ctx.get("risk_environment", "NEUTRAL")
+                risk_score = global_ctx.get("risk_score", 0.0)
+                vix_val    = global_ctx.get("vix", {}).get("value", 18)
+                sector_rot = global_ctx.get("sector_rotation", {})
+
+                # ── 2. Score each region based on live index momentum + flows ────
+                def _chg(path):
+                    """Extract % change from nested global_ctx dict."""
+                    keys = path.split(".")
+                    obj = global_ctx
+                    for k in keys:
+                        obj = (obj or {}).get(k, {})
+                    return obj.get("change_pct", 0) or 0
+
+                region_scores = {
+                    "US":  0.4 + _chg("us_markets.sp500") * 0.05 + (0.1 if risk_score > 0 else -0.1),
+                    "HK":  0.4 + _chg("asia_markets.hangseng") * 0.06,
+                    "CN":  0.4 + _chg("china_markets.sse_composite") * 0.06
+                          + (global_ctx.get("china_markets", {}).get("northbound_flow", {}).get("total_net_bn_cny", 0) or 0) * 0.005,
+                    "JP":  0.4 + _chg("asia_markets.nikkei") * 0.05,
+                    "EU":  0.4 + _chg("europe_markets.dax") * 0.05,
+                    "AU":  0.4 + _chg("asia_markets.asx200") * 0.05,
+                    "KR":  0.4 + _chg("asia_markets.kospi") * 0.05,
+                    "IN":  0.4 + _chg("asia_markets.nifty50") * 0.05,
+                    "GLOBAL_ETF": 0.5,  # always include ETFs as they cover global exposure
+                }
+
+                # ── 3. Check which markets are open right now ────────────────────
+                from market_calendar import is_market_open
+                region_to_buckets = {
+                    "US":         ["US_TECH", "US_FINANCE", "US_ENERGY"],
+                    "GLOBAL_ETF": ["GLOBAL_ETF"],
+                    "HK":         ["HK"],
+                    "CN":         ["CN_ASHARE"],
+                    "JP":         ["JP"],
+                    "EU":         ["EU"],
+                    "AU":         ["AU"],
+                    "KR":         ["KR"],
+                    "IN":         ["IN"],
+                }
+                open_regions = []
+                for region in region_to_buckets:
+                    mkt = region if region != "GLOBAL_ETF" else "US"
+                    try:
+                        if is_market_open(mkt):
+                            open_regions.append(region)
+                    except Exception:
+                        if region in ("US", "GLOBAL_ETF"):
+                            open_regions.append(region)  # default-include US
+
+                if not open_regions:
+                    logger.info("[GlobalScan] No markets currently open — skipping cycle")
+                    await asyncio.sleep(1200)
+                    continue
+
+                # ── 4. Rank open regions by score, pick top 3 ───────────────────
+                ranked = sorted(
+                    [(r, region_scores.get(r, 0.4)) for r in open_regions],
+                    key=lambda x: x[1], reverse=True
+                )
+                top_regions = [r for r, s in ranked[:4]]  # top 4 regions
+                logger.info(
+                    f"[GlobalScan] Open markets: {open_regions} | "
+                    f"Top regions: {top_regions} | risk={risk_env}({risk_score:+.2f}) VIX={vix_val:.1f}"
+                )
+
+                # ── 5. Build candidate list (3–4 stocks per bucket, max 15 total) ─
+                candidates = []
+                seen_syms: set = set()
+                # In RISK_OFF, lead with defensive sectors and ETFs
+                if risk_env == "RISK_OFF":
+                    top_regions = ["GLOBAL_ETF"] + [r for r in top_regions if r != "GLOBAL_ETF"]
+
+                for region in top_regions:
+                    for bucket in region_to_buckets.get(region, []):
+                        stocks = md.GLOBAL_POPULAR_STOCKS.get(bucket, [])
+                        per_bucket = 4 if region in ("GLOBAL_ETF", "US") else 3
+                        for sym in stocks[:per_bucket]:
+                            if sym not in seen_syms:
+                                seen_syms.add(sym)
+                                candidates.append((sym, region))
+                    if len(candidates) >= 15:
+                        break
+
+                # ── 6. Analyze each candidate ────────────────────────────────────
+                engine = TradingEngine(db, user.id)
+                portfolio_ctx = build_rich_portfolio_context(db, user.id, engine)
+                active_macros = ni.detect_active_macro_scenarios(hours_back=3)
+                macro_ctx_str = ni.build_macro_scenario_context(active_macros)
+
+                for sym, region in candidates:
+                    try:
+                        await asyncio.sleep(1.5)  # rate-limit yfinance
+                        quote = price_cache.get(sym) or await loop.run_in_executor(None, md.get_stock_quote, sym)
+                        if not quote or not quote.get("current"):
+                            continue
+
+                        indicators = await loop.run_in_executor(None, md.get_technical_indicators, sym)
+                        if not indicators:
+                            continue
+
+                        # Quick pre-filter: skip stocks in clear downtrend with no bounce
+                        rsi = indicators.get("rsi", 50)
+                        above_ma20 = indicators.get("above_ma20", True)
+                        # In RISK_OFF allow oversold stocks (RSI<35) — potential bounce
+                        if not above_ma20 and rsi > 45:
+                            continue  # below MA20 and not even oversold — skip
+
+                        history  = await loop.run_in_executor(None, md.get_stock_history, sym, "1mo")
+                        news_items = await loop.run_in_executor(None, md.get_stock_news, sym)
+                        sector   = ni.get_symbol_sector(sym)
+
+                        # Compute ATR-based stop-loss for the AI context
+                        atr = indicators.get("atr14", 0)
+                        current_price = quote.get("current", 0)
+                        adaptive_stop = ps.atr_stop_loss(current_price, atr) if current_price else None
+
+                        # VIX-scaled risk for this cycle
+                        base_risk = float(get_setting(db, "risk_per_trade_pct", user.id, "2.0"))
+                        scaled_risk = ps.vix_position_scale(vix_val, base_risk)
+
+                        global_note = (
+                            f"\n### GLOBAL SCAN CONTEXT\n"
+                            f"Region: {region} | Risk: {risk_env}({risk_score:+.2f}) | VIX: {vix_val:.1f}\n"
+                            f"Position size auto-scaled to {scaled_risk:.2f}% of portfolio (VIX adjustment).\n"
+                            f"ATR-based stop-loss suggestion: ${adaptive_stop:.2f}" if adaptive_stop else
+                            f"\n### GLOBAL SCAN CONTEXT\n"
+                            f"Region: {region} | Risk: {risk_env}({risk_score:+.2f}) | VIX: {vix_val:.1f}\n"
+                            f"Position size auto-scaled to {scaled_risk:.2f}% of portfolio (VIX adjustment)."
+                        )
+                        full_macro_ctx = macro_ctx_str + global_note
+
+                        signal = await loop.run_in_executor(
+                            None,
+                            lambda: ai.analyze_stock(
+                                ai_provider, api_key, sym, quote,
+                                indicators, history, news_items,
+                                portfolio_ctx, full_macro_ctx,
+                                rl_lessons=rl_lessons,
+                                sector=sector,
+                                global_context=global_ctx,
+                            )
+                        )
+                        signal["sector"] = sector
+                        if adaptive_stop and not signal.get("stop_loss"):
+                            signal["stop_loss"] = adaptive_stop
+
+                        db_signal = AISignal(
+                            user_id=user.id,
+                            symbol=sym,
+                            signal=signal.get("signal", "HOLD"),
+                            confidence=signal.get("confidence", 0),
+                            target_price=signal.get("target_price"),
+                            stop_loss=signal.get("stop_loss"),
+                            reasoning=f"[GLOBAL SCAN/{region}] {signal.get('reasoning', '')}",
+                            model_used=signal.get("model", "unknown"),
+                        )
+                        db.add(db_signal)
+                        db.commit()
+
+                        if signal.get("signal") in ("BUY", "COVER"):
+                            # Apply VIX-scaled risk for this trade
+                            set_setting(db, "risk_per_trade_pct", str(scaled_risk), user.id)
+                            auto_result = engine.auto_trade(signal, quote["current"], indicators=indicators)
+                            set_setting(db, "risk_per_trade_pct", str(base_risk), user.id)
+
+                            if auto_result.get("success"):
+                                logger.info(
+                                    f"[GlobalScan] ✅ {sym} ({region}) → BUY "
+                                    f"risk={scaled_risk:.2f}% VIX={vix_val:.1f}"
+                                )
+                                await broadcast({
+                                    "type": "auto_trade",
+                                    "user": user.username,
+                                    "symbol": sym,
+                                    "result": auto_result,
+                                    "trigger": "global_market_scan",
+                                    "region": region,
+                                    "vix": vix_val,
+                                })
+                            else:
+                                logger.debug(f"[GlobalScan] {sym} BUY skipped: {auto_result.get('reason','')}")
+
+                    except Exception as sym_e:
+                        logger.error(f"[GlobalScan] Error on {sym}: {sym_e}")
+
+        except Exception as e:
+            logger.error(f"[GlobalScan] Cycle error: {e}")
+
+        await asyncio.sleep(1200)  # Run every 20 minutes
+
+
+async def background_stop_loss_monitor():
+    """
+    Task 11 — Stop-loss monitor.
+    Runs every 5 minutes. Checks all live Alpaca positions for unrealized loss
+    exceeding the stop_loss_pct threshold (default -5%). Sells the full position
+    immediately when triggered. Also syncs local DB after each check.
+    """
+    await asyncio.sleep(180)  # 3 min startup delay
+    while True:
+        try:
+            db = next(get_db())
+            try:
+                users = db.query(User).all()
+                for user in users:
+                    auto_trade_enabled = get_setting(db, "auto_trade_enabled", user.id, "false") == "true"
+                    if not auto_trade_enabled:
+                        continue
+
+                    engine = TradingEngine(db, user.id)
+                    if not engine.alpaca:
+                        continue
+
+                    stop_loss_pct = float(get_setting(db, "stop_loss_pct", user.id, "5.0"))
+
+                    # Always sync DB with Alpaca reality
+                    engine.sync_positions_from_alpaca()
+
+                    try:
+                        alpaca_positions = engine.alpaca.list_positions()
+                    except Exception as e:
+                        logger.error(f"[StopLoss] Cannot fetch Alpaca positions for {user.username}: {e}")
+                        continue
+
+                    # Build set of symbols already covered by an open sell order
+                    try:
+                        open_orders = engine.alpaca.list_orders(status="open")
+                        pending_sells = {o.symbol for o in open_orders if o.side == "sell"}
+                    except Exception:
+                        pending_sells = set()
+
+                    for ap in alpaca_positions:
+                        symbol = ap.symbol
+                        loss_pct = float(ap.unrealized_plpc) * 100
+                        curr_price = float(ap.current_price)
+                        total_qty = float(ap.qty)
+                        # qty_available = total - qty locked in open orders for this symbol
+                        locked_qty = sum(
+                            float(o.qty) for o in open_orders
+                            if o.symbol == symbol and o.side == "sell"
+                        )
+                        qty_available = max(0.0, total_qty - locked_qty)
+
+                        if loss_pct < -stop_loss_pct:
+                            # Skip if an open sell order already covers this position
+                            if symbol in pending_sells:
+                                logger.info(
+                                    f"[StopLoss] {symbol} loss {loss_pct:.2f}% triggered but "
+                                    f"a sell order is already pending — skipping duplicate"
+                                )
+                                continue
+
+                            if qty_available < 0.0001:
+                                logger.info(f"[StopLoss] {symbol} qty_available too small ({qty_available}), skipping")
+                                continue
+
+                            logger.warning(
+                                f"[StopLoss] {symbol} TRIGGERED: {loss_pct:.2f}% "
+                                f"(threshold -{stop_loss_pct}%) — selling {qty_available:.4f} available shares @ ${curr_price:.2f}"
+                            )
+                            result = engine.execute_sell(
+                                symbol, qty_available, curr_price,
+                                ai_triggered=True,
+                                confidence=1.0,
+                                reasoning=(
+                                    f"[STOP-LOSS] Unrealized loss {loss_pct:.2f}% exceeded "
+                                    f"-{stop_loss_pct}% threshold. Auto-liquidating to protect capital."
+                                ),
+                            )
+                            if result.get("success"):
+                                logger.info(f"[StopLoss] {symbol} sell order placed. Approx P&L: ${float(ap.unrealized_pl):.2f}")
+                                await broadcast({
+                                    "type": "stop_loss_triggered",
+                                    "symbol": symbol,
+                                    "loss_pct": round(loss_pct, 2),
+                                    "price": curr_price,
+                                    "qty": qty_available,
+                                })
+                            else:
+                                logger.error(f"[StopLoss] {symbol} sell failed: {result}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[StopLoss] Monitor error: {e}")
+        await asyncio.sleep(300)  # check every 5 minutes
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8888, reload=True)

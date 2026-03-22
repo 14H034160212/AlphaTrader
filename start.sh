@@ -13,7 +13,7 @@ while true; do
     cd "$BACKEND_DIR"
     "$PYTHON" -c "
 import uvicorn
-uvicorn.run('main:app', host='0.0.0.0', port=8000, reload=False)
+uvicorn.run('main:app', host='0.0.0.0', port=8888, reload=False)
 " >> "$LOG_FILE" 2>&1
 
     EXIT_CODE=$?

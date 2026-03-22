@@ -364,6 +364,62 @@ GEOPOLITICAL_RSS_SOURCES = [
         "name": "证券时报",
         "url": "http://www.stcn.com/rss.xml",
     },
+    {
+        "name": "财经网",
+        "url": "https://www.caijing.com.cn/rss/all.xml",
+    },
+    {
+        "name": "第一财经",
+        "url": "https://www.yicai.com/rss/news.xml",
+    },
+    # ── 亚洲财经新闻 ─────────────────────────────────────────────────────────
+    {
+        "name": "Nikkei Asia",
+        "url": "https://asia.nikkei.com/rss/feed/nar",
+    },
+    {
+        "name": "South China Morning Post",
+        "url": "https://www.scmp.com/rss/91/feed",
+    },
+    {
+        "name": "Economic Times India",
+        "url": "https://economictimes.indiatimes.com/rssfeedstopstories.cms",
+    },
+    {
+        "name": "Korea Times Business",
+        "url": "https://www.koreatimes.co.kr/www2/rss/biztech.xml",
+    },
+    # ── 欧洲财经新闻 ─────────────────────────────────────────────────────────
+    {
+        "name": "Reuters Europe",
+        "url": "https://feeds.reuters.com/reuters/europeanBusinessNews",
+    },
+    {
+        "name": "Handelsblatt English",
+        "url": "https://www.handelsblatt.com/contentexport/feed/english",
+    },
+    # ── 新兴市场 ─────────────────────────────────────────────────────────────
+    {
+        "name": "Bloomberg Asia Markets",
+        "url": "https://feeds.bloomberg.com/markets/news.rss",
+    },
+    {
+        "name": "Investing.com News",
+        "url": "https://www.investing.com/rss/news.rss",
+    },
+]
+
+# ── China-specific financial news (A-shares, macro policy) ───────────────────
+CN_FINANCE_RSS_SOURCES = [
+    {"name": "东方财富",   "url": "https://finance.eastmoney.com/rss/news.xml"},
+    {"name": "同花顺财经", "url": "https://news.10jqka.com.cn/rss/index.xml"},
+    {"name": "新浪财经",   "url": "https://finance.sina.com.cn/rss/finance.xml"},
+    {"name": "中证网",     "url": "http://www.cs.com.cn/rss/csrss_finance.xml"},
+    {"name": "上海证券报", "url": "https://www.cnstock.com/rss/news.xml"},
+    {"name": "证监会公告", "url": "http://www.csrc.gov.cn/csrc/c101831/index.shtml"},
+    {"name": "人民银行",   "url": "http://www.pbc.gov.cn/rss/index.rss"},
+    {"name": "中国证监会", "url": "https://www.csrc.gov.cn/csrc/c100028/index.shtml"},
+    {"name": "沪深交易所", "url": "https://www.sse.com.cn/news/"},
 ]
 
 # ── Tech / Semiconductor RSS Sources ─────────────────────────────────────────
@@ -674,6 +730,100 @@ def fetch_geopolitical_news(hours_back: int = 12) -> list:
     return all_items
 
 
+def fetch_cn_finance_news(hours_back: int = 6) -> list:
+    """
+    Fetch Chinese A-share market specific news from CN financial RSS sources.
+    Catches: CSRC policy announcements, PBOC decisions, exchange notices,
+             major A-share corporate actions, northbound/southbound capital flows.
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=hours_back)
+    all_items = []
+
+    for source in CN_FINANCE_RSS_SOURCES:
+        try:
+            resp = requests.get(
+                source["url"], timeout=8,
+                headers={"User-Agent": "AlphaTrader-CNFinance/1.0",
+                         "Accept-Language": "zh-CN,zh;q=0.9"}
+            )
+            if resp.status_code != 200:
+                continue
+            try:
+                root = ET.fromstring(resp.content)
+            except ET.ParseError:
+                continue
+            channel = root.find("channel")
+            items_iter = channel.findall("item") if channel is not None else root.findall(".//item")
+            for item in items_iter:
+                title_el = item.find("title")
+                if title_el is None:
+                    continue
+                title = (title_el.text or "").strip()
+                if not title:
+                    continue
+                all_items.append({
+                    "title": title,
+                    "publisher": source["name"],
+                    "time": datetime.utcnow().isoformat(),
+                    "region": "CN",
+                })
+        except Exception as e:
+            logger.debug(f"[CNFinNews] {source['name']} failed: {e}")
+
+    logger.info(f"[CNFinNews] Fetched {len(all_items)} items from {len(CN_FINANCE_RSS_SOURCES)} CN sources")
+    return all_items
+
+
+def fetch_global_market_news(hours_back: int = 6) -> dict:
+    """
+    Fetch news from all regions simultaneously.
+    Returns dict: {region: [news_items]}
+    Includes: geo news, CN finance news, tech news.
+    """
+    geo_news = fetch_geopolitical_news(hours_back=hours_back)
+    cn_news = fetch_cn_finance_news(hours_back=hours_back)
+
+    # Bucket by region keyword
+    region_map = {
+        "US": [], "CN": [], "HK": [], "JP": [], "EU": [],
+        "APAC": [], "EM": [], "GLOBAL": [],
+    }
+    cn_keywords = ["中国", "A股", "上证", "深圳", "沪深", "茅台", "平安", "宁德",
+                   "人民币", "央行", "证监会", "北向", "融资融券", "st股"]
+    hk_keywords = ["hong kong", "hkex", "港股", "恒生", "腾讯", "阿里"]
+    jp_keywords  = ["japan", "nikkei", "日本", "日经", "boj", "yen", "円"]
+    eu_keywords  = ["europe", "ecb", "euro", "欧洲", "德国", "dax", "bund"]
+    apac_keywords = ["korea", "australia", "singapore", "india", "asean",
+                     "韩国", "澳大利亚", "新加坡", "印度"]
+    em_keywords  = ["brazil", "turkey", "mexico", "indonesia", "vietnam", "russia",
+                    "巴西", "土耳其", "墨西哥", "印尼", "越南", "俄罗斯"]
+    us_keywords  = ["fed", "federal reserve", "nasdaq", "s&p", "dow", "wall street",
+                    "美联储", "美股", "美元"]
+
+    for item in geo_news + cn_news:
+        t = (item.get("title") or "").lower()
+        p = (item.get("publisher") or "")
+        # CN finance sources → CN bucket
+        if p in [s["name"] for s in CN_FINANCE_RSS_SOURCES] or any(k in t for k in cn_keywords):
+            region_map["CN"].append(item)
+        elif any(k in t for k in hk_keywords):
+            region_map["HK"].append(item)
+        elif any(k in t for k in jp_keywords):
+            region_map["JP"].append(item)
+        elif any(k in t for k in eu_keywords):
+            region_map["EU"].append(item)
+        elif any(k in t for k in apac_keywords):
+            region_map["APAC"].append(item)
+        elif any(k in t for k in em_keywords):
+            region_map["EM"].append(item)
+        elif any(k in t for k in us_keywords):
+            region_map["US"].append(item)
+        else:
+            region_map["GLOBAL"].append(item)
+
+    return region_map
+
+
 def fetch_news_with_fallback(symbol: str, hours_back: int = 24) -> list:
     """
     Primary: yfinance.  Fallback: Yahoo Finance RSS.
@@ -845,6 +995,24 @@ MACRO_SCENARIOS = {
         "potential_beneficiaries": ["GLD", "IAU", "SLV", "XOM", "LMT", "RTX", "NOC"],
         "severity": "CRITICAL",
     },
+    "hormuz_no_blockade_2026": {
+        "name": "霍尔木兹海峡未封锁 — 能源溢价消退",
+        "description": (
+            "官方及多方消息确认霍尔木兹海峡航行安全，目前并无实际封锁发生。"
+            "此前因担忧供应中断而推高的油价溢价（War Premium）正在迅速消退。"
+            "能源股和石油相关ETF面临短期超额收益回吐风险。"
+        ),
+        "trigger_keywords": [
+            "no blockade", "strait of hormuz open", "shipping safe",
+            "not blockaded", "hormuz navigation normal", "strait secure",
+            "oil flow unhindered", "no iran blockade", "hormuz tension eases",
+            "油气板块跳水", "海峡没有封锁", "霍尔木兹通畅"
+        ],
+        "sectors_at_risk": ["Energy", "Petroleum", "Aerospace & Defense"],
+        "stocks_to_avoid": ["XOM", "USO", "CVX", "OXY", "LMT", "RTX", "NOC", "UCO", "BNO"],
+        "potential_beneficiaries": ["AAPL", "MSFT", "AMZN", "TSLA", "QQQ"],  # Tech recovery as oil falls
+        "severity": "HIGH",
+    },
     "trump_global_tariffs_2026": {
         "name": "Trump 2026 全球关税冲击",
         "description": (
@@ -922,6 +1090,8 @@ NEWS_KEYWORD_AUTO_WATCHLIST: dict = {
     "semiconductor shortage": ["AMAT", "KLAC", "LRCX"],
     "bitcoin etf": ["IBIT", "MSTR", "COIN"],
     "debt ceiling": ["GLD", "SLV", "IBIT", "TLT"],
+    "no blockade": ["USO", "XOM", "CVX", "OXY"],
+    "strait secure": ["USO", "XOM"],
 }
 
 

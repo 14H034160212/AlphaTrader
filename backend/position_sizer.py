@@ -204,3 +204,64 @@ def _no_trade(reason: str) -> dict:
         "reason":         reason,
         "skip":           True,
     }
+
+
+# ── Adaptive Risk Helpers ─────────────────────────────────────────────────────
+
+def vix_position_scale(vix: float, base_risk_pct: float) -> float:
+    """
+    Proportionally reduce position size as VIX rises.
+    NOT a binary on/off switch — lets markets stay tradeable even in fear.
+
+    VIX < 15  → 1.00× (full size, calm market)
+    VIX 15-20 → 0.90×
+    VIX 20-25 → 0.75×
+    VIX 25-30 → 0.60×
+    VIX 30-35 → 0.45×
+    VIX > 35  → 0.30× (extreme fear — still trade, just tiny)
+    """
+    if vix <= 15:
+        scale = 1.00
+    elif vix <= 20:
+        scale = 0.90
+    elif vix <= 25:
+        scale = 0.75
+    elif vix <= 30:
+        scale = 0.60
+    elif vix <= 35:
+        scale = 0.45
+    else:
+        scale = 0.30
+    scaled = round(base_risk_pct * scale, 3)
+    logger.info(f"[VIX Scale] VIX={vix:.1f} → {scale:.0%} of base {base_risk_pct}% = {scaled}%")
+    return scaled
+
+
+def scenario_position_scale(base_risk_pct: float, scenario_mult: float) -> float:
+    """
+    Apply scenario health multiplier to base risk %.
+    scenario_mult: 1.0 (working) | 0.6 (mixed) | 0.3 (failing) | 1.0 (unknown)
+    """
+    scaled = round(base_risk_pct * max(0.2, min(1.0, scenario_mult)), 3)
+    if scenario_mult < 1.0:
+        logger.info(f"[ScenarioScale] Scenario mult={scenario_mult:.1f} → {scaled}% (from base {base_risk_pct}%)")
+    return scaled
+
+
+def atr_stop_loss(current_price: float, atr: float, multiplier: float = 2.5) -> float:
+    """
+    ATR-based adaptive stop-loss price.
+    More intelligent than fixed %: respects each stock's actual volatility.
+
+    Formula: stop = current_price - ATR × multiplier
+    Fallback if ATR unavailable: 7% below current price.
+
+    multiplier=2.5 is standard; in trending markets use 3.0.
+    """
+    if atr and atr > 0:
+        stop = current_price - atr * multiplier
+        # Hard floor: never more than 15% below entry (prevents over-wide stops)
+        stop = max(stop, current_price * 0.85)
+        logger.debug(f"[ATR Stop] price={current_price:.2f} ATR={atr:.2f} mult={multiplier} → stop={stop:.2f}")
+        return round(stop, 4)
+    return round(current_price * 0.93, 4)  # 7% fallback

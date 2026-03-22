@@ -51,7 +51,7 @@ def _call_ollama(messages, temperature=0.1):
         raise ConnectionError("Cannot connect to local Ollama. Is it running?")
 
 
-def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context="", upcoming_events="", rl_lessons="", sector="Other"):
+def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context="", upcoming_events="", rl_lessons="", sector="Other", global_context=None):
     """Use DeepSeek-R1 (Local or API) to analyze a stock and generate trading signal."""
     if ai_provider == "deepseek_api" and not api_key:
         return {
@@ -93,10 +93,20 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
 
         ind_summary = json.dumps(ind_data, indent=2) if ind_data else "Not available"
 
+        # Build global market context section
+        global_ctx_section = ""
+        if global_context and isinstance(global_context, dict):
+            narrative = global_context.get("ai_narrative", "")
+            if narrative:
+                global_ctx_section = "\n" + narrative
+
         prompt = """You are an expert quantitative stock analyst advising a LONG-ONLY small-account trader.
 CRITICAL CONSTRAINT: This account does NOT support short selling. Never output SHORT or COVER.
-Strategy: Find the best BUY opportunities. Only output SELL if we currently hold this stock and should exit.
-If a stock looks overvalued but we don't hold it, output HOLD — never SHORT.
+Strategy Rules:
+1. Find the best BUY opportunities with a strong emphasis on "Buy Low, Sell High" (mean-reversion combined with trend).
+2. DO NOT CHASE: Avoid buying stocks that are heavily overextended or have already experienced massive near-term rallies. Look for healthy pullbacks to support levels or moving averages within an uptrend.
+3. Only output SELL if we currently hold this stock and should take profits or cut losses.
+4. If a stock looks overvalued or overextended but we don't hold it, output HOLD — never SHORT.
 
 ## Stock: {symbol}
 
@@ -136,7 +146,7 @@ If a stock looks overvalued but we don't hold it, output HOLD — never SHORT.
 {events}
 
 {ctx}
-
+{global_ctx}
 Respond ONLY with valid JSON (no markdown):
 {{
   "signal": "BUY" | "SELL" | "HOLD",
@@ -175,7 +185,8 @@ Respond ONLY with valid JSON (no markdown):
             rl_feedback=rl_lessons if rl_lessons else "No prior reinforcement learning feedback available yet.",
             news=news_summary,
             events=upcoming_events if upcoming_events else "",
-            ctx="### Portfolio Context\n{}".format(portfolio_context) if portfolio_context else ""
+            ctx="### Portfolio Context\n{}".format(portfolio_context) if portfolio_context else "",
+            global_ctx=global_ctx_section
         )
 
         messages = [
