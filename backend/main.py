@@ -52,6 +52,23 @@ last_market_fetch = None
 _geo_traded_today: Dict = {}
 
 
+def _is_stop_loss_cooldown(symbol: str, user_id: int, db) -> bool:
+    """Return True if symbol had a [STOP-LOSS] sell within the last 3 days."""
+    cutoff = datetime.utcnow() - timedelta(days=3)
+    recent = (
+        db.query(Trade)
+        .filter(
+            Trade.user_id == user_id,
+            Trade.symbol == symbol,
+            Trade.side == "SELL",
+            Trade.timestamp >= cutoff,
+            Trade.reasoning.like("%[STOP-LOSS]%"),
+        )
+        .first()
+    )
+    return recent is not None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
@@ -1122,8 +1139,12 @@ async def background_news_scan():
                             db.commit()
 
                             if signal.get("signal") in ("BUY", "COVER"):
+                                # Stop-loss cooldown: 3-day ban after any [STOP-LOSS] sell
+                                if _is_stop_loss_cooldown(sym, user.id, db):
+                                    logger.warning(f"[GeoScan] {sym} skipped — stop-loss cooldown active (3-day ban)")
+                                    continue
+
                                 # Gap Filter only: don't buy stocks that already spiked >3% today
-                                # (all other risk management is now adaptive/proportional)
                                 gap_pct = quote.get("change_pct", 0)
                                 if gap_pct > 3.0:
                                     logger.warning(f"[GeoScan] {sym} skipped — already up {gap_pct:.1f}% today")
@@ -2837,22 +2858,66 @@ async def background_global_market_scan():
                     f"Top regions: {top_regions} | risk={risk_env}({risk_score:+.2f}) VIX={vix_val:.1f}"
                 )
 
-                # ── 5. Build candidate list (3–4 stocks per bucket, max 15 total) ─
+                # ── 5. Build candidate list: PRIORITY-BASED (pyramid into winners) ─
+                #
+                # P1  Portfolio winners (PnL > +3%)       → add to these first
+                # P2  Siblings in same sector/bucket       → ride the hot sector
+                # P3  Fill up to 8 from top open region    → max 2/bucket, not 4
+                #
+                # Total cap = 8 (not 15). Concentrate on what's working.
+
+                from database import Position as _Pos
+                _sym_to_bucket: dict = {}
+                for _bkt, _bkt_syms in md.GLOBAL_POPULAR_STOCKS.items():
+                    for _s in _bkt_syms:
+                        _sym_to_bucket[_s] = _bkt
+
+                live_positions = (
+                    db.query(_Pos)
+                    .filter(_Pos.user_id == user.id, _Pos.quantity > 0.001)
+                    .all()
+                )
+                portfolio_winners: list = []   # (sym, region, pnl_pct)
+                winning_buckets: set = set()
+                for _pos in live_positions:
+                    _cur = (price_cache.get(_pos.symbol) or {}).get("current", 0)
+                    if _cur and _pos.avg_cost:
+                        _pnl = (_cur / _pos.avg_cost - 1) * 100
+                        if _pnl >= 3.0:
+                            portfolio_winners.append((_pos.symbol, "US", _pnl))
+                            _bkt = _sym_to_bucket.get(_pos.symbol)
+                            if _bkt:
+                                winning_buckets.add(_bkt)
+                portfolio_winners.sort(key=lambda x: x[2], reverse=True)
+
                 candidates = []
                 seen_syms: set = set()
-                # In RISK_OFF, lead with defensive sectors and ETFs
+
+                # P1 — current winners (pyramid into them)
+                for sym, region, _pnl in portfolio_winners:
+                    seen_syms.add(sym)
+                    candidates.append((sym, region))
+
+                # P2 — sibling stocks from same hot sector bucket
+                for _bkt in winning_buckets:
+                    for sym in md.GLOBAL_POPULAR_STOCKS.get(_bkt, []):
+                        if sym not in seen_syms and len(candidates) < 6:
+                            seen_syms.add(sym)
+                            candidates.append((sym, "US"))
+
+                # P3 — fill remaining slots from top-ranked open regions (max 2/bucket)
                 if risk_env == "RISK_OFF":
                     top_regions = ["GLOBAL_ETF"] + [r for r in top_regions if r != "GLOBAL_ETF"]
-
                 for region in top_regions:
                     for bucket in region_to_buckets.get(region, []):
                         stocks = md.GLOBAL_POPULAR_STOCKS.get(bucket, [])
-                        per_bucket = 4 if region in ("GLOBAL_ETF", "US") else 3
-                        for sym in stocks[:per_bucket]:
-                            if sym not in seen_syms:
+                        added = 0
+                        for sym in stocks:
+                            if sym not in seen_syms and len(candidates) < 8 and added < 2:
                                 seen_syms.add(sym)
                                 candidates.append((sym, region))
-                    if len(candidates) >= 15:
+                                added += 1
+                    if len(candidates) >= 8:
                         break
 
                 # ── 6. Analyze each candidate ────────────────────────────────────
@@ -2860,6 +2925,24 @@ async def background_global_market_scan():
                 portfolio_ctx = build_rich_portfolio_context(db, user.id, engine)
                 active_macros = ni.detect_active_macro_scenarios(hours_back=3)
                 macro_ctx_str = ni.build_macro_scenario_context(active_macros)
+
+                # Inject momentum focus directive into AI context
+                if portfolio_winners:
+                    winner_summary = ", ".join(
+                        f"{s}(+{p:.1f}%)" for s, _, p in portfolio_winners
+                    )
+                    macro_ctx_str = (
+                        "### MOMENTUM FOCUS DIRECTIVE\n"
+                        f"Portfolio winners today: {winner_summary}\n"
+                        "STRATEGY: Add to stocks already moving up. "
+                        "Do NOT diversify into new unrelated positions — concentrate on strength.\n"
+                        "Only BUY a new (unrelated) stock if it shows clearly superior signals "
+                        "AND the existing winners are near resistance or overbought.\n\n"
+                    ) + macro_ctx_str
+                    logger.info(
+                        f"[GlobalScan] Pyramid mode: winners={[s for s,_,_ in portfolio_winners]}, "
+                        f"hot buckets={list(winning_buckets)}, candidates={[s for s,_ in candidates]}"
+                    )
 
                 for sym, region in candidates:
                     try:
@@ -2932,6 +3015,11 @@ async def background_global_market_scan():
                         db.commit()
 
                         if signal.get("signal") in ("BUY", "COVER"):
+                            # Stop-loss cooldown: 3-day ban after any [STOP-LOSS] sell
+                            if _is_stop_loss_cooldown(sym, user.id, db):
+                                logger.warning(f"[GlobalScan] {sym} skipped — stop-loss cooldown active (3-day ban)")
+                                continue
+
                             # Apply VIX-scaled risk for this trade
                             set_setting(db, "risk_per_trade_pct", str(scaled_risk), user.id)
                             auto_result = engine.auto_trade(signal, quote["current"], indicators=indicators)
