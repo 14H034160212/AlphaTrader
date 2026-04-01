@@ -84,6 +84,8 @@ GLOBAL_POPULAR_STOCKS = {
         "NVDA", "AAPL", "MSFT", "GOOGL", "META", "AMZN", "TSLA",
         "AMD", "AVGO", "TSM", "ASML", "QCOM", "MU", "INTC",
     ],
+    # Enterprise software / cloud — large caps that often move on restructuring news
+    "US_ENTERPRISE": ["ORCL", "CRM", "NOW", "SAP", "ADBE", "IBM", "INTU", "WDAY"],
     "US_FINANCE": ["JPM", "BAC", "GS", "MS", "BLK", "V", "MA", "AXP"],
     "US_ENERGY":  ["XOM", "CVX", "COP", "OXY", "SLB"],
     "US_ETF":     ["SPY", "QQQ", "TQQQ", "SOXL", "GLD", "SLV", "IAU", "IWM",

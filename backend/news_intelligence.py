@@ -1639,3 +1639,121 @@ def resolve_signal_priority(symbol: str, catalysts: list, active_macros: list) -
         )
 
     return "\n".join(lines)
+
+
+# ── Self-Restructuring Catalyst Detection ────────────────────────────────────
+# Key insight: when a company announces its OWN layoffs/restructuring, the market
+# typically reacts POSITIVELY (cost reduction → margin expansion → EPS beats).
+# This is the opposite of how we treat "company X lays off, bad for sector".
+# Oracle +6% on layoffs is the canonical example.
+
+_RESTRUCTURING_KEYWORDS = [
+    "layoff", "layoffs", "laid off", "job cuts", "cut jobs",
+    "workforce reduction", "headcount reduction", "restructuring",
+    "cost reduction plan", "right-sizing", "streamlining workforce",
+    "eliminat", "trimming staff", "reduce headcount",
+]
+
+# Ticker → company name fragments (for matching news headlines to the right company)
+_TICKER_NAME_MAP = {
+    "ORCL": ["oracle"],
+    "CRM":  ["salesforce"],
+    "MSFT": ["microsoft"],
+    "META": ["meta ", "facebook"],
+    "AMZN": ["amazon"],
+    "GOOGL":["google", "alphabet"],
+    "AAPL": ["apple"],
+    "INTC": ["intel"],
+    "IBM":  ["ibm"],
+    "ADBE": ["adobe"],
+    "NOW":  ["servicenow"],
+    "SAP":  ["sap "],
+    "WDAY": ["workday"],
+    "INTU": ["intuit"],
+    "SNAP": ["snap "],
+    "LYFT": ["lyft"],
+    "UBER": ["uber"],
+    "NFLX": ["netflix"],
+    "PYPL": ["paypal"],
+    "EBAY": ["ebay"],
+    "DELL": ["dell"],
+    "HPE":  ["hewlett", "hpe"],
+    "CSCO": ["cisco"],
+}
+
+
+def detect_restructuring_catalysts(symbols: list, hours_back: int = 48) -> list:
+    """
+    Scan recent news for symbols that announced their OWN layoffs/restructuring.
+    Returns a list of dicts: {symbol, headline, publisher, timestamp, strength}
+
+    'strength' is 1-3:
+      1 = minor restructuring mention
+      2 = explicit job cuts with percentage/headcount
+      3 = large-scale (>5% workforce or >5000 employees)
+
+    This generates a BULLISH signal for the announcing company because:
+    - Cost reduction → operating leverage improves
+    - Market typically rewards discipline over growth-at-all-costs
+    - Oracle +6% on layoffs is a real example of this pattern
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=hours_back)
+    results = []
+
+    for symbol in symbols:
+        name_frags = _TICKER_NAME_MAP.get(symbol.upper(), [symbol.lower()])
+        try:
+            news = yf.Ticker(symbol).news or []
+        except Exception:
+            continue
+
+        for item in news:
+            title = (item.get("title") or "").lower()
+            if not title:
+                continue
+
+            # Must mention the company itself (not just industry news)
+            if not any(frag in title for frag in name_frags) and symbol.lower() not in title:
+                continue
+
+            # Must contain restructuring keyword
+            matched_kws = [k for k in _RESTRUCTURING_KEYWORDS if k in title]
+            if not matched_kws:
+                continue
+
+            pub_ts = item.get("providerPublishTime", 0) or 0
+            try:
+                pub_dt = datetime.utcfromtimestamp(pub_ts)
+            except Exception:
+                continue
+            if pub_dt < cutoff:
+                continue
+
+            # Score strength
+            strength = 1
+            if any(k in title for k in ["job cuts", "workforce reduction", "headcount reduction", "laid off"]):
+                strength = 2
+            if any(k in title for k in ["%", "thousand", "workers", "employees"]):
+                strength = 3
+
+            results.append({
+                "symbol": symbol.upper(),
+                "headline": item.get("title", ""),
+                "publisher": item.get("publisher", ""),
+                "timestamp": pub_dt.isoformat(),
+                "matched_keywords": matched_kws,
+                "strength": strength,
+                "context": (
+                    f"### RESTRUCTURING CATALYST\n"
+                    f"{symbol.upper()} announced its own layoffs/restructuring. "
+                    f"Historically, self-imposed cost-cutting is BULLISH for the announcing company "
+                    f"(cost reduction → margin expansion → EPS upside). "
+                    f"Headline: \"{item.get('title', '')}\"\n"
+                    f"Signal strength: {strength}/3. "
+                    f"Consider a BUY if technicals confirm and the stock hasn't already spiked >5%."
+                ),
+            })
+            break  # one match per symbol is enough
+
+    logger.info(f"[Restructuring] Scanned {len(symbols)} symbols, found {len(results)} restructuring catalysts")
+    return results
