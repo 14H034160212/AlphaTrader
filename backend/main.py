@@ -1254,11 +1254,15 @@ async def background_news_scan():
 
                 # ── Self-Restructuring / Layoff Catalyst Scan ────────────────
                 # When a company announces its OWN layoffs, that is a BULLISH
-                # signal (cost reduction → margin expansion). Scan all enterprise
-                # and tech stocks every cycle for this pattern.
+                # signal (cost reduction → margin expansion). Scan all global
+                # tech companies: US, China ADR, Japan, Korea, India, SE Asia.
                 all_scan_syms = list({
                     s
-                    for bucket in ["US_TECH", "US_ENTERPRISE", "US_FINANCE", "US_ENERGY"]
+                    for bucket in [
+                        "US_TECH", "US_ENTERPRISE", "GLOBAL_TECH_ADR",
+                        "US_FINANCE", "US_ENERGY",
+                        "HK", "JP", "KR", "IN",
+                    ]
                     for s in md.GLOBAL_POPULAR_STOCKS.get(bucket, [])
                 })
                 restructuring_hits = ni.detect_restructuring_catalysts(all_scan_syms, hours_back=48)
@@ -2906,7 +2910,7 @@ async def background_global_market_scan():
                 # ── 3. Check which markets are open right now ────────────────────
                 from market_calendar import is_market_open
                 region_to_buckets = {
-                    "US":         ["US_TECH", "US_ENTERPRISE", "US_FINANCE", "US_ENERGY"],
+                    "US":         ["US_TECH", "US_ENTERPRISE", "GLOBAL_TECH_ADR", "US_FINANCE", "US_ENERGY"],
                     "GLOBAL_ETF": ["GLOBAL_ETF"],
                     "HK":         ["HK"],
                     "CN":         ["CN_ASHARE"],
