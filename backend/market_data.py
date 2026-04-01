@@ -85,7 +85,32 @@ GLOBAL_POPULAR_STOCKS = {
         "AMD", "AVGO", "TSM", "ASML", "QCOM", "MU", "INTC",
     ],
     # Enterprise software / cloud — large caps that often move on restructuring news
-    "US_ENTERPRISE": ["ORCL", "CRM", "NOW", "SAP", "ADBE", "IBM", "INTU", "WDAY"],
+    "US_ENTERPRISE": ["ORCL", "CRM", "NOW", "SAP", "ADBE", "IBM", "INTU", "WDAY",
+                      "CSCO", "ACN", "CTSH", "FISV", "CDNS", "SNPS"],
+    # US-listed ADRs / dual-listings of major global tech companies (Alpaca-tradeable)
+    # These are the global tech giants where layoff/restructuring news = buy signal
+    "GLOBAL_TECH_ADR": [
+        "BABA",   # 阿里巴巴 Alibaba (NYSE)
+        "BIDU",   # 百度 Baidu (NASDAQ)
+        "JD",     # 京东 JD.com (NASDAQ)
+        "PDD",    # 拼多多 Pinduoduo/Temu (NASDAQ)
+        "TCEHY",  # 腾讯 Tencent (OTC)
+        "NTES",   # 网易 NetEase (NASDAQ)
+        "BEKE",   # 贝壳 KE Holdings (NYSE)
+        "INFY",   # Infosys (NYSE ADR)
+        "WIT",    # Wipro (NYSE ADR)
+        "ERIC",   # Ericsson (NASDAQ)
+        "NOK",    # Nokia (NYSE)
+        "SONY",   # Sony (NYSE ADR)
+        "NTDOY",  # Nintendo (OTC ADR)
+        "SFTBY",  # SoftBank (OTC ADR)
+        "TSM",    # 台积电 TSMC (NYSE ADR) — also in US_TECH
+        "ASML",   # ASML (NASDAQ) — also in US_TECH
+        "SAP",    # SAP (NYSE ADR) — also in US_ENTERPRISE
+        "SHOP",   # Shopify (NYSE) — Canadian tech
+        "SE",     # Sea Limited (NYSE) — Southeast Asia tech
+        "GRAB",   # Grab (NASDAQ) — Southeast Asia
+    ],
     "US_FINANCE": ["JPM", "BAC", "GS", "MS", "BLK", "V", "MA", "AXP"],
     "US_ENERGY":  ["XOM", "CVX", "COP", "OXY", "SLB"],
     "US_ETF":     ["SPY", "QQQ", "TQQQ", "SOXL", "GLD", "SLV", "IAU", "IWM",
