@@ -1271,39 +1271,74 @@ async def background_news_scan():
 
                 for hit in new_restr:
                     sym = hit["symbol"]
+                    strength = hit["strength"]  # 1=minor, 2=explicit cuts, 3=large-scale
                     try:
                         logger.warning(
                             f"[Restructuring] 🔄 {sym} — layoff/restructuring detected "
-                            f"(strength={hit['strength']}/3): {hit['headline'][:80]}"
+                            f"(strength={strength}/3): {hit['headline'][:80]}"
                         )
                         quote = price_cache.get(sym) or md.get_stock_quote(sym)
                         if not quote:
                             continue
-                        # Skip if stock already spiked >5% today (news already priced in)
-                        if quote.get("change_pct", 0) > 5.0:
-                            logger.info(f"[Restructuring] {sym} already up {quote['change_pct']:.1f}% — skip")
+                        # Skip if stock already spiked >8% today (news fully priced in)
+                        gap = quote.get("change_pct", 0)
+                        if gap > 8.0:
+                            logger.info(f"[Restructuring] {sym} already up {gap:.1f}% — skip (fully priced in)")
                             continue
                         if _is_stop_loss_cooldown(sym, user.id, db):
                             logger.info(f"[Restructuring] {sym} in stop-loss cooldown — skip")
                             continue
 
-                        history = md.get_stock_history(sym, period="1mo")
-                        indicators = md.get_technical_indicators(sym)
-                        news_items = md.get_stock_news(sym)
+                        indicators = await loop.run_in_executor(None, md.get_technical_indicators, sym)
                         engine = TradingEngine(db, user.id)
-                        portfolio_ctx = build_rich_portfolio_context(db, user.id, engine)
-                        sector = ni.get_symbol_sector(sym)
+                        base_risk = float(get_setting(db, "risk_per_trade_pct", user.id, "2.0"))
+                        orig_min_conf = get_setting(db, "auto_trade_min_confidence", user.id, "0.75")
+                        vix_now = (await loop.run_in_executor(None, gc.build_global_context)).get("vix", {}).get("value", 20)
+                        scaled_risk = ps.vix_position_scale(vix_now, base_risk)
 
-                        signal = ai.analyze_stock(
-                            ai_provider, api_key, sym, quote,
-                            indicators, history, news_items,
-                            portfolio_ctx, hit["context"],
-                            rl_lessons=rl_lessons,
-                            sector=sector,
-                            global_context=gc.build_global_context(),
-                        )
-                        signal["sector"] = sector
+                        if strength >= 2:
+                            # Strength 2-3: restructuring pattern is well-established —
+                            # override AI hesitation with a direct BUY signal.
+                            # Confidence: 0.82 for strength=2, 0.90 for strength=3.
+                            forced_conf = 0.90 if strength == 3 else 0.82
+                            atr = (indicators or {}).get("atr14", 0)
+                            cur_price = quote.get("current", 0)
+                            signal = {
+                                "symbol": sym,
+                                "signal": "BUY",
+                                "confidence": forced_conf,
+                                "reasoning": (
+                                    f"[RESTRUCTURING AUTO-BUY strength={strength}/3] "
+                                    f"{hit['headline'][:100]} — "
+                                    f"Cost-cutting catalyst: layoffs historically bullish for announcing company. "
+                                    f"Gap today: {gap:+.1f}%. Direct execution, no AI wait."
+                                ),
+                                "stop_loss": ps.atr_stop_loss(cur_price, atr) if cur_price and atr else round(cur_price * 0.95, 2),
+                                "sector": ni.get_symbol_sector(sym),
+                            }
+                            logger.warning(
+                                f"[Restructuring] ⚡ DIRECT BUY {sym} — strength={strength}, conf={forced_conf}"
+                            )
+                        else:
+                            # Strength 1: run AI analysis with restructuring context
+                            history = await loop.run_in_executor(None, md.get_stock_history, sym, "1mo")
+                            news_items = await loop.run_in_executor(None, md.get_stock_news, sym)
+                            portfolio_ctx = build_rich_portfolio_context(db, user.id, engine)
+                            sector = ni.get_symbol_sector(sym)
+                            signal = await loop.run_in_executor(
+                                None,
+                                lambda: ai.analyze_stock(
+                                    ai_provider, api_key, sym, quote,
+                                    indicators, history, news_items,
+                                    portfolio_ctx, hit["context"],
+                                    rl_lessons=rl_lessons,
+                                    sector=sector,
+                                    global_context=gc.build_global_context(),
+                                )
+                            )
+                            signal["sector"] = ni.get_symbol_sector(sym)
 
+                        # Record signal to DB
                         db_signal = AISignal(
                             user_id=user.id,
                             symbol=sym,
@@ -1312,28 +1347,42 @@ async def background_news_scan():
                             target_price=signal.get("target_price"),
                             stop_loss=signal.get("stop_loss"),
                             reasoning=f"[RESTRUCTURING] {signal.get('reasoning', '')}",
-                            model_used=signal.get("model", "unknown"),
+                            model_used=signal.get("model", f"restructuring-s{strength}"),
                         )
                         db.add(db_signal)
                         db.commit()
 
                         if signal.get("signal") in ("BUY", "COVER"):
-                            base_risk = float(get_setting(db, "risk_per_trade_pct", user.id, "2.0"))
-                            vix_now = gc.build_global_context().get("vix", {}).get("value", 20)
-                            scaled_risk = ps.vix_position_scale(vix_now, base_risk)
+                            # For strength>=2 lower the confidence gate to match forced signal
+                            exec_min_conf = "0.65" if strength == 1 else str(signal["confidence"] - 0.01)
+                            set_setting(db, "auto_trade_min_confidence", exec_min_conf, user.id)
                             set_setting(db, "risk_per_trade_pct", str(scaled_risk), user.id)
+
                             auto_result = engine.auto_trade(signal, quote["current"], indicators=indicators)
+
                             set_setting(db, "risk_per_trade_pct", str(base_risk), user.id)
+                            set_setting(db, "auto_trade_min_confidence", orig_min_conf, user.id)
+
                             if auto_result.get("success"):
-                                logger.info(f"[Restructuring] ✅ {sym} → BUY (cost-cutting catalyst)")
+                                logger.info(
+                                    f"[Restructuring] ✅ {sym} → BUY executed "
+                                    f"strength={strength} risk={scaled_risk:.2f}% VIX={vix_now:.1f}"
+                                )
                                 await broadcast({
                                     "type": "auto_trade",
                                     "user": user.username,
                                     "symbol": sym,
                                     "result": auto_result,
                                     "trigger": "restructuring_catalyst",
+                                    "strength": strength,
                                     "headline": hit["headline"],
                                 })
+                            else:
+                                # Restore settings even on failure
+                                set_setting(db, "risk_per_trade_pct", str(base_risk), user.id)
+                                set_setting(db, "auto_trade_min_confidence", orig_min_conf, user.id)
+                                logger.info(f"[Restructuring] {sym} BUY skipped: {auto_result.get('reason','')}")
+
                     except Exception as re:
                         logger.error(f"[Restructuring] Error on {sym}: {re}")
                     _seen_restr.add(hit["headline"])
