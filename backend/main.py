@@ -1252,6 +1252,90 @@ async def background_news_scan():
                         seen_impact_titles.add(imp["title"])
                     background_news_scan._seen_tech_titles = seen_impact_titles
 
+                # ── Self-Restructuring / Layoff Catalyst Scan ────────────────
+                # When a company announces its OWN layoffs, that is a BULLISH
+                # signal (cost reduction → margin expansion). Scan all enterprise
+                # and tech stocks every cycle for this pattern.
+                all_scan_syms = list({
+                    s
+                    for bucket in ["US_TECH", "US_ENTERPRISE", "US_FINANCE", "US_ENERGY"]
+                    for s in md.GLOBAL_POPULAR_STOCKS.get(bucket, [])
+                })
+                restructuring_hits = ni.detect_restructuring_catalysts(all_scan_syms, hours_back=48)
+                _seen_restr = getattr(background_news_scan, "_seen_restr_headlines", set())
+                new_restr = [r for r in restructuring_hits if r["headline"] not in _seen_restr]
+
+                for hit in new_restr:
+                    sym = hit["symbol"]
+                    try:
+                        logger.warning(
+                            f"[Restructuring] 🔄 {sym} — layoff/restructuring detected "
+                            f"(strength={hit['strength']}/3): {hit['headline'][:80]}"
+                        )
+                        quote = price_cache.get(sym) or md.get_stock_quote(sym)
+                        if not quote:
+                            continue
+                        # Skip if stock already spiked >5% today (news already priced in)
+                        if quote.get("change_pct", 0) > 5.0:
+                            logger.info(f"[Restructuring] {sym} already up {quote['change_pct']:.1f}% — skip")
+                            continue
+                        if _is_stop_loss_cooldown(sym, user.id, db):
+                            logger.info(f"[Restructuring] {sym} in stop-loss cooldown — skip")
+                            continue
+
+                        history = md.get_stock_history(sym, period="1mo")
+                        indicators = md.get_technical_indicators(sym)
+                        news_items = md.get_stock_news(sym)
+                        engine = TradingEngine(db, user.id)
+                        portfolio_ctx = build_rich_portfolio_context(db, user.id, engine)
+                        sector = ni.get_symbol_sector(sym)
+
+                        signal = ai.analyze_stock(
+                            ai_provider, api_key, sym, quote,
+                            indicators, history, news_items,
+                            portfolio_ctx, hit["context"],
+                            rl_lessons=rl_lessons,
+                            sector=sector,
+                            global_context=gc.build_global_context(),
+                        )
+                        signal["sector"] = sector
+
+                        db_signal = AISignal(
+                            user_id=user.id,
+                            symbol=sym,
+                            signal=signal.get("signal", "HOLD"),
+                            confidence=signal.get("confidence", 0),
+                            target_price=signal.get("target_price"),
+                            stop_loss=signal.get("stop_loss"),
+                            reasoning=f"[RESTRUCTURING] {signal.get('reasoning', '')}",
+                            model_used=signal.get("model", "unknown"),
+                        )
+                        db.add(db_signal)
+                        db.commit()
+
+                        if signal.get("signal") in ("BUY", "COVER"):
+                            base_risk = float(get_setting(db, "risk_per_trade_pct", user.id, "2.0"))
+                            vix_now = gc.build_global_context().get("vix", {}).get("value", 20)
+                            scaled_risk = ps.vix_position_scale(vix_now, base_risk)
+                            set_setting(db, "risk_per_trade_pct", str(scaled_risk), user.id)
+                            auto_result = engine.auto_trade(signal, quote["current"], indicators=indicators)
+                            set_setting(db, "risk_per_trade_pct", str(base_risk), user.id)
+                            if auto_result.get("success"):
+                                logger.info(f"[Restructuring] ✅ {sym} → BUY (cost-cutting catalyst)")
+                                await broadcast({
+                                    "type": "auto_trade",
+                                    "user": user.username,
+                                    "symbol": sym,
+                                    "result": auto_result,
+                                    "trigger": "restructuring_catalyst",
+                                    "headline": hit["headline"],
+                                })
+                    except Exception as re:
+                        logger.error(f"[Restructuring] Error on {sym}: {re}")
+                    _seen_restr.add(hit["headline"])
+
+                background_news_scan._seen_restr_headlines = _seen_restr
+
                 # Also backfill RL outcomes once per day (run at ~midnight UTC)
                 if datetime.utcnow().hour == 0 and datetime.utcnow().minute < 10:
                     rl.update_trade_outcomes()
@@ -2822,7 +2906,7 @@ async def background_global_market_scan():
                 # ── 3. Check which markets are open right now ────────────────────
                 from market_calendar import is_market_open
                 region_to_buckets = {
-                    "US":         ["US_TECH", "US_FINANCE", "US_ENERGY"],
+                    "US":         ["US_TECH", "US_ENTERPRISE", "US_FINANCE", "US_ENERGY"],
                     "GLOBAL_ETF": ["GLOBAL_ETF"],
                     "HK":         ["HK"],
                     "CN":         ["CN_ASHARE"],
