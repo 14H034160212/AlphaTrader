@@ -1,15 +1,11 @@
 """
-Scenario Lifecycle Manager — 场景生命周期管理器
+Scenario Lifecycle Manager
 
-Replaces static hardcoded MACRO_SCENARIOS with a dynamic, DB-backed
-lifecycle system that can:
+Dynamic, DB-backed lifecycle system that can:
   1. Detect scenario resolution via deterministic keywords (Layer 1)
   2. Periodically review scenarios via AI (Layer 2)
   3. Store lifecycle state in DB (Layer 3)
   4. Auto-generate new scenarios from news (Layer 4)
-
-Lifecycle states: ACTIVE → DECLINING → RESOLVED / EXPIRED
-Severity levels:  CRITICAL > HIGH > MEDIUM > LOW > BULLISH
 """
 from __future__ import annotations
 
@@ -18,23 +14,76 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import requests
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-# Severity ordering for escalation / de-escalation
-SEVERITY_ORDER = ["BULLISH", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
 
-# ── Cooldowns & Thresholds ──────────────────────────────────────────────────
-RESOLUTION_DECLINING_THRESHOLD = 2   # resolution keyword hits before DECLINING
-RESOLUTION_RESOLVED_THRESHOLD = 4    # resolution keyword hits before RESOLVED
-DECAY_SEVERITY_DROP_MISSES = 18      # 18 × 10 min = 3 hours with no evidence
-DECAY_DECLINING_MISSES = 36          # 6 hours
-DECAY_EXPIRED_MISSES = 72            # 12 hours
-REACTIVATION_COOLDOWN_SECONDS = 1200  # 20 min cooldown before DECLINING→ACTIVE
+# ── Constants ────────────────────────────────────────────────────────────────
+
+class State:
+    ACTIVE = "ACTIVE"
+    DECLINING = "DECLINING"
+    RESOLVED = "RESOLVED"
+    EXPIRED = "EXPIRED"
+
+ACTIVE_STATES = [State.ACTIVE, State.DECLINING]
+
+class Severity:
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    BULLISH = "BULLISH"
+
+SEVERITY_ORDER = [Severity.BULLISH, Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
+
+# Thresholds
+RESOLUTION_DECLINING_THRESHOLD = 2
+RESOLUTION_RESOLVED_THRESHOLD = 4
+DECAY_SEVERITY_DROP_MISSES = 18   # ~3 hours
+DECAY_DECLINING_MISSES = 36       # ~6 hours
+DECAY_EXPIRED_MISSES = 72         # ~12 hours
+REACTIVATION_COOLDOWN_SECONDS = 1200  # 20 min
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _jload(val) -> list:
+    """Parse JSON list from a nullable DB column."""
+    return json.loads(val or "[]")
+
+
+def _extract_titles(news_items: list) -> List[str]:
+    """Extract lowercased titles from news items (various formats)."""
+    titles = []
+    for item in news_items:
+        if isinstance(item, dict):
+            t = item.get("title") or item.get("headline") or ""
+        elif isinstance(item, str):
+            t = item
+        else:
+            continue
+        if t:
+            titles.append(t.lower().strip())
+    return titles
+
+
+def _severity_index(sev: str) -> int:
+    return SEVERITY_ORDER.index(sev) if sev in SEVERITY_ORDER else 2
+
+
+def _drop_severity(current: str) -> str:
+    idx = _severity_index(current)
+    return SEVERITY_ORDER[max(0, idx - 1)]
+
+
+def _raise_severity(current: str) -> str:
+    idx = _severity_index(current)
+    return SEVERITY_ORDER[min(len(SEVERITY_ORDER) - 1, idx + 1)]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -44,7 +93,7 @@ REACTIVATION_COOLDOWN_SECONDS = 1200  # 20 min cooldown before DECLINING→ACTIV
 def seed_scenarios_from_hardcoded(db: Session):
     """
     Populate scenario_states table from MACRO_SCENARIOS on first boot.
-    Only inserts scenarios that don't already exist (preserves DB modifications).
+    Only inserts scenarios that don't already exist.
     """
     from database import ScenarioState
     from news_intelligence import MACRO_SCENARIOS
@@ -63,8 +112,8 @@ def seed_scenarios_from_hardcoded(db: Session):
             scenario_id=scenario_id,
             name=data.get("name", scenario_id),
             description=data.get("description", ""),
-            severity=data.get("severity", "MEDIUM"),
-            lifecycle_state="ACTIVE",
+            severity=data.get("severity", Severity.MEDIUM),
+            lifecycle_state=State.ACTIVE,
             origin="seed",
             trigger_keywords_json=json.dumps(data.get("trigger_keywords", [])),
             resolution_keywords_json=json.dumps(data.get("resolution_keywords", [])),
@@ -93,11 +142,11 @@ def _row_to_dict(row) -> dict:
         "severity": row.severity,
         "lifecycle_state": row.lifecycle_state,
         "origin": row.origin,
-        "trigger_keywords": json.loads(row.trigger_keywords_json or "[]"),
-        "resolution_keywords": json.loads(row.resolution_keywords_json or "[]"),
-        "stocks_to_avoid": json.loads(row.stocks_to_avoid_json or "[]"),
-        "potential_beneficiaries": json.loads(row.potential_beneficiaries_json or "[]"),
-        "sectors_at_risk": json.loads(row.sectors_at_risk_json or "[]"),
+        "trigger_keywords": _jload(row.trigger_keywords_json),
+        "resolution_keywords": _jload(row.resolution_keywords_json),
+        "stocks_to_avoid": _jload(row.stocks_to_avoid_json),
+        "potential_beneficiaries": _jload(row.potential_beneficiaries_json),
+        "sectors_at_risk": _jload(row.sectors_at_risk_json),
         "first_detected_at": row.first_detected_at,
         "last_evidence_at": row.last_evidence_at,
         "evidence_count": row.evidence_count,
@@ -109,11 +158,11 @@ def _row_to_dict(row) -> dict:
 
 
 def get_active_scenarios(db: Session) -> List[dict]:
-    """Return all ACTIVE or DECLINING scenarios from DB in standard dict format."""
+    """Return all ACTIVE or DECLINING scenarios from DB."""
     from database import ScenarioState
     rows = (
         db.query(ScenarioState)
-        .filter(ScenarioState.lifecycle_state.in_(["ACTIVE", "DECLINING"]))
+        .filter(ScenarioState.lifecycle_state.in_(ACTIVE_STATES))
         .all()
     )
     return [_row_to_dict(r) for r in rows]
@@ -133,63 +182,46 @@ def get_all_scenarios(db: Session) -> List[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Layer 1: Deterministic Keyword Scanning
+# Layer 1: Deterministic Keyword Scanning (single-pass)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _extract_titles(news_items: list) -> List[str]:
-    """Extract lowercased titles from news items (various formats)."""
-    titles = []
-    for item in news_items:
-        if isinstance(item, dict):
-            t = item.get("title") or item.get("headline") or ""
-        elif isinstance(item, str):
-            t = item
-        else:
-            continue
-        if t:
-            titles.append(t.lower().strip())
-    return titles
-
-
-def scan_trigger_keywords(db: Session, news_items: list) -> List[dict]:
+def _scan_keywords_single_pass(rows, titles: List[str], now: datetime):
     """
-    Layer 1a: Update trigger evidence for all active scenarios.
-    Returns list of active scenarios with matched evidence (same format as
-    detect_active_macro_scenarios).
+    Combined trigger + resolution keyword scan in ONE pass over rows.
+    Mutates rows in-place. Returns (active_with_evidence, resolution_events).
     """
-    from database import ScenarioState
-
-    titles = _extract_titles(news_items)
-    if not titles:
-        return []
-
-    rows = (
-        db.query(ScenarioState)
-        .filter(ScenarioState.lifecycle_state.in_(["ACTIVE", "DECLINING"]))
-        .all()
-    )
-
-    now = datetime.utcnow()
     active_with_evidence = []
+    resolution_events = []
 
     for row in rows:
-        keywords = json.loads(row.trigger_keywords_json or "[]")
-        evidence = []
-        for title in titles:
-            hits = [kw for kw in keywords if kw in title]
-            if hits:
-                evidence.append({"title": title, "keywords": hits})
+        trigger_kws = _jload(row.trigger_keywords_json)
+        res_kws = _jload(row.resolution_keywords_json)
 
-        if evidence:
+        # Scan trigger keywords
+        trigger_evidence = []
+        for title in titles:
+            hits = [kw for kw in trigger_kws if kw in title]
+            if hits:
+                trigger_evidence.append({"title": title, "keywords": hits})
+
+        # Scan resolution keywords
+        res_matched_titles = []
+        if res_kws:
+            for title in titles:
+                hits = [kw for kw in res_kws if kw in title]
+                if hits:
+                    res_matched_titles.append(title)
+
+        # --- Apply trigger evidence ---
+        if trigger_evidence:
             row.last_evidence_at = now
-            row.evidence_count = (row.evidence_count or 0) + len(evidence)
+            row.evidence_count = (row.evidence_count or 0) + len(trigger_evidence)
             row.consecutive_misses = 0
 
-            # Re-activate DECLINING scenario if cooldown passed
-            if row.lifecycle_state == "DECLINING":
+            if row.lifecycle_state == State.DECLINING:
                 state_changed = row.state_changed_at or now - timedelta(hours=1)
                 if (now - state_changed).total_seconds() >= REACTIVATION_COOLDOWN_SECONDS:
-                    row.lifecycle_state = "ACTIVE"
+                    row.lifecycle_state = State.ACTIVE
                     row.state_changed_at = now
                     logger.info(
                         f"[ScenarioLifecycle] Re-activated '{row.scenario_id}' "
@@ -201,152 +233,86 @@ def scan_trigger_keywords(db: Session, news_items: list) -> List[dict]:
                 "name": row.name,
                 "severity": row.severity,
                 "description": row.description,
-                "evidence": evidence[:3],
-                "stocks_to_avoid": json.loads(row.stocks_to_avoid_json or "[]"),
-                "potential_beneficiaries": json.loads(row.potential_beneficiaries_json or "[]"),
+                "evidence": trigger_evidence[:3],
+                "stocks_to_avoid": _jload(row.stocks_to_avoid_json),
+                "potential_beneficiaries": _jload(row.potential_beneficiaries_json),
             })
         else:
             row.consecutive_misses = (row.consecutive_misses or 0) + 1
 
-    db.commit()
-    return active_with_evidence
+        # --- Apply resolution evidence ---
+        if res_matched_titles:
+            row.resolution_evidence_count = (row.resolution_evidence_count or 0) + len(res_matched_titles)
+            evidence_summary = "; ".join(res_matched_titles[:3])
 
-
-def scan_resolution_keywords(db: Session, news_items: list) -> List[dict]:
-    """
-    Layer 1b: Detect scenario resolution via deterministic keywords.
-    Returns list of {scenario_id, action, evidence} for logging.
-    """
-    from database import ScenarioState
-
-    titles = _extract_titles(news_items)
-    if not titles:
-        return []
-
-    rows = (
-        db.query(ScenarioState)
-        .filter(ScenarioState.lifecycle_state.in_(["ACTIVE", "DECLINING"]))
-        .all()
-    )
-
-    now = datetime.utcnow()
-    resolution_events = []
-
-    for row in rows:
-        res_keywords = json.loads(row.resolution_keywords_json or "[]")
-        if not res_keywords:
-            continue
-
-        matched_titles = []
-        for title in titles:
-            hits = [kw for kw in res_keywords if kw in title]
-            if hits:
-                matched_titles.append(title)
-
-        if not matched_titles:
-            continue
-
-        row.resolution_evidence_count = (row.resolution_evidence_count or 0) + len(matched_titles)
-        evidence_summary = "; ".join(matched_titles[:3])
-
-        if row.resolution_evidence_count >= RESOLUTION_RESOLVED_THRESHOLD:
-            row.lifecycle_state = "RESOLVED"
-            row.resolved_at = now
-            row.state_changed_at = now
-            row.resolution_reason = f"Resolution keywords matched {row.resolution_evidence_count}x: {evidence_summary}"
-            action = "RESOLVED"
-            logger.warning(
-                f"[ScenarioLifecycle] RESOLVED '{row.scenario_id}': {evidence_summary}"
-            )
-        elif row.resolution_evidence_count >= RESOLUTION_DECLINING_THRESHOLD:
-            if row.lifecycle_state != "DECLINING":
-                row.lifecycle_state = "DECLINING"
+            if row.resolution_evidence_count >= RESOLUTION_RESOLVED_THRESHOLD:
+                row.lifecycle_state = State.RESOLVED
+                row.resolved_at = now
                 row.state_changed_at = now
-                # Drop severity by one level
-                old_sev = row.severity
-                idx = SEVERITY_ORDER.index(old_sev) if old_sev in SEVERITY_ORDER else 2
-                new_idx = max(0, idx - 1)
-                row.severity = SEVERITY_ORDER[new_idx]
-                row.severity_changed_at = now
-                action = "DECLINING"
-                logger.warning(
-                    f"[ScenarioLifecycle] DECLINING '{row.scenario_id}' "
-                    f"(severity {old_sev} → {row.severity}): {evidence_summary}"
-                )
+                row.resolution_reason = f"Resolution keywords matched {row.resolution_evidence_count}x: {evidence_summary}"
+                action = "RESOLVED"
+                logger.warning(f"[ScenarioLifecycle] RESOLVED '{row.scenario_id}': {evidence_summary}")
+            elif row.resolution_evidence_count >= RESOLUTION_DECLINING_THRESHOLD:
+                if row.lifecycle_state != State.DECLINING:
+                    row.lifecycle_state = State.DECLINING
+                    row.state_changed_at = now
+                    old_sev = row.severity
+                    row.severity = _drop_severity(old_sev)
+                    row.severity_changed_at = now
+                    action = "DECLINING"
+                    logger.warning(
+                        f"[ScenarioLifecycle] DECLINING '{row.scenario_id}' "
+                        f"(severity {old_sev} → {row.severity}): {evidence_summary}"
+                    )
+                else:
+                    action = "DECLINING_CONTINUED"
             else:
-                action = "DECLINING_CONTINUED"
-        else:
-            action = "RESOLUTION_EVIDENCE_ACCUMULATING"
+                action = "RESOLUTION_EVIDENCE_ACCUMULATING"
 
-        resolution_events.append({
-            "scenario_id": row.scenario_id,
-            "action": action,
-            "evidence": matched_titles[:3],
-            "resolution_evidence_count": row.resolution_evidence_count,
-        })
+            resolution_events.append({
+                "scenario_id": row.scenario_id,
+                "action": action,
+                "evidence": res_matched_titles[:3],
+                "resolution_evidence_count": row.resolution_evidence_count,
+            })
 
-    if resolution_events:
-        db.commit()
-
-    return resolution_events
+    return active_with_evidence, resolution_events
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Time-based Decay
+# Time-based Decay (operates on pre-fetched rows)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def decay_stale_scenarios(db: Session):
-    """
-    Auto-demote scenarios that have gone silent (no trigger keyword matches).
-    Seed scenarios are never deleted, only expired.
-    """
-    from database import ScenarioState
-
-    rows = (
-        db.query(ScenarioState)
-        .filter(ScenarioState.lifecycle_state.in_(["ACTIVE", "DECLINING"]))
-        .all()
-    )
-
-    now = datetime.utcnow()
+def _decay_stale_rows(rows, now: datetime) -> bool:
+    """Auto-demote scenarios with no evidence. Returns True if any changed."""
     changed = False
-
     for row in rows:
+        if row.lifecycle_state not in ACTIVE_STATES:
+            continue
         misses = row.consecutive_misses or 0
 
-        if row.lifecycle_state == "ACTIVE" and misses >= DECAY_DECLINING_MISSES:
-            row.lifecycle_state = "DECLINING"
+        if row.lifecycle_state == State.ACTIVE and misses >= DECAY_DECLINING_MISSES:
+            row.lifecycle_state = State.DECLINING
             row.state_changed_at = now
             changed = True
-            logger.info(
-                f"[ScenarioLifecycle] Decay: '{row.scenario_id}' → DECLINING "
-                f"({misses} consecutive misses)"
-            )
-        elif row.lifecycle_state == "ACTIVE" and misses >= DECAY_SEVERITY_DROP_MISSES:
+            logger.info(f"[ScenarioLifecycle] Decay: '{row.scenario_id}' → DECLINING ({misses} misses)")
+        elif row.lifecycle_state == State.ACTIVE and misses >= DECAY_SEVERITY_DROP_MISSES:
             old_sev = row.severity
-            idx = SEVERITY_ORDER.index(old_sev) if old_sev in SEVERITY_ORDER else 2
-            new_idx = max(0, idx - 1)
-            if SEVERITY_ORDER[new_idx] != old_sev:
-                row.severity = SEVERITY_ORDER[new_idx]
+            new_sev = _drop_severity(old_sev)
+            if new_sev != old_sev:
+                row.severity = new_sev
                 row.severity_changed_at = now
                 changed = True
-                logger.info(
-                    f"[ScenarioLifecycle] Decay: '{row.scenario_id}' severity "
-                    f"{old_sev} → {row.severity} ({misses} consecutive misses)"
-                )
-        elif row.lifecycle_state == "DECLINING" and misses >= DECAY_EXPIRED_MISSES:
-            row.lifecycle_state = "EXPIRED"
+                logger.info(f"[ScenarioLifecycle] Decay: '{row.scenario_id}' severity {old_sev} → {new_sev}")
+        elif row.lifecycle_state == State.DECLINING and misses >= DECAY_EXPIRED_MISSES:
+            row.lifecycle_state = State.EXPIRED
             row.resolved_at = now
             row.state_changed_at = now
             row.resolution_reason = f"Expired after {misses} scans with no evidence"
             changed = True
-            logger.info(
-                f"[ScenarioLifecycle] Decay: '{row.scenario_id}' → EXPIRED "
-                f"({misses} consecutive misses)"
-            )
+            logger.info(f"[ScenarioLifecycle] Decay: '{row.scenario_id}' → EXPIRED ({misses} misses)")
 
-    if changed:
-        db.commit()
+    return changed
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -400,7 +366,6 @@ Respond ONLY with valid JSON (no markdown, no explanation outside JSON):
 def _call_ai(ai_provider: str, api_key: str, prompt: str) -> str:
     """Call AI (Ollama or DeepSeek) with a single user message."""
     messages = [{"role": "user", "content": prompt}]
-
     if ai_provider == "ollama":
         from deepseek_ai import _call_ollama
         return _call_ollama(messages, temperature=0.1)
@@ -411,16 +376,12 @@ def _call_ai(ai_provider: str, api_key: str, prompt: str) -> str:
 
 def _parse_ai_json(content: str) -> Optional[dict]:
     """Parse JSON from AI response with fallback regex extraction."""
-    # Strip think tags from reasoning models
     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-    # Strip markdown code fences
     content = re.sub(r"```(?:json)?\s*", "", content).strip()
     content = re.sub(r"```\s*$", "", content).strip()
-
     try:
         return json.loads(content)
     except json.JSONDecodeError:
-        # Try regex extraction
         match = re.search(r'(\{.*\})', content, re.DOTALL)
         if match:
             try:
@@ -444,7 +405,6 @@ def _get_known_tickers() -> set:
             known.update(stocks)
     except Exception:
         pass
-    # Add common ETFs / tickers that might not be in the maps
     known.update([
         "SPY", "QQQ", "TQQQ", "SOXL", "GLD", "IAU", "SLV", "GDX",
         "USO", "UCO", "BNO", "XOM", "CVX", "OXY", "VIX", "TLT",
@@ -461,20 +421,16 @@ def ai_lifecycle_review(
     api_key: str,
     recent_news: list,
 ) -> Optional[dict]:
-    """
-    Layer 2: AI-powered periodic review of all scenarios.
-    Returns validated review dict or None on failure.
-    """
+    """Layer 2: AI-powered periodic review of all scenarios."""
     from database import ScenarioState
 
-    # Gather all non-expired scenarios (or recently expired)
     cutoff = datetime.utcnow() - timedelta(days=7)
     rows = (
         db.query(ScenarioState)
         .filter(
-            (ScenarioState.lifecycle_state.in_(["ACTIVE", "DECLINING"]))
+            (ScenarioState.lifecycle_state.in_(ACTIVE_STATES))
             | (
-                (ScenarioState.lifecycle_state.in_(["RESOLVED", "EXPIRED"]))
+                (ScenarioState.lifecycle_state.in_([State.RESOLVED, State.EXPIRED]))
                 & (ScenarioState.resolved_at > cutoff)
             )
         )
@@ -486,7 +442,6 @@ def ai_lifecycle_review(
 
     now = datetime.utcnow()
 
-    # Build scenarios block
     scenario_lines = []
     for r in rows:
         days_active = (now - r.first_detected_at).days if r.first_detected_at else 0
@@ -502,7 +457,6 @@ def ai_lifecycle_review(
         )
     scenarios_block = "\n".join(scenario_lines)
 
-    # Build news block (last 50 headlines)
     titles = _extract_titles(recent_news)[:50]
     news_block = "\n".join(f"{i+1}. {t}" for i, t in enumerate(titles))
     if not news_block:
@@ -523,7 +477,7 @@ def ai_lifecycle_review(
         logger.error(f"[ScenarioLifecycle] AI review call failed: {e}")
         return None
 
-    # ── Validate assessments ──
+    # Validate assessments
     valid_assessments = []
     existing_ids = {r.scenario_id for r in rows}
     for a in review.get("assessments", []):
@@ -544,51 +498,39 @@ def ai_lifecycle_review(
         })
     review["assessments"] = valid_assessments
 
-    # ── Validate new scenarios ──
+    # Validate new scenarios
     valid_new = []
     known_tickers = _get_known_tickers()
-    title_set = set(titles)  # for evidence verification
+    title_set = set(titles)
 
     for ns in review.get("new_scenarios", []):
         name = ns.get("name", "")
         if not name:
             continue
         triggers = ns.get("trigger_keywords", [])
-        if len(triggers) < 3:  # relaxed from 5 to 3 for practical use
+        if len(triggers) < 3:
             continue
-        # Verify evidence headlines exist in actual news
         evidence = ns.get("evidence_headlines", [])
         verified = [e for e in evidence if e.lower().strip() in title_set]
         if len(verified) < 1:
-            logger.info(
-                f"[ScenarioLifecycle] Rejected AI scenario '{name}': "
-                f"evidence headlines not found in actual news"
-            )
+            logger.info(f"[ScenarioLifecycle] Rejected AI scenario '{name}': evidence not in actual news")
             continue
-        # Filter tickers to known set
         beneficiaries = [t for t in ns.get("potential_beneficiaries", []) if t in known_tickers]
         avoid = [t for t in ns.get("stocks_to_avoid", []) if t in known_tickers]
         if not beneficiaries and not avoid:
-            logger.info(
-                f"[ScenarioLifecycle] Rejected AI scenario '{name}': "
-                f"no valid tickers after filtering"
-            )
+            logger.info(f"[ScenarioLifecycle] Rejected AI scenario '{name}': no valid tickers")
             continue
-        # Check for duplicate (keyword overlap with existing)
         existing_keywords = set()
         for r in rows:
-            existing_keywords.update(json.loads(r.trigger_keywords_json or "[]"))
+            existing_keywords.update(_jload(r.trigger_keywords_json))
         overlap = len(set(triggers) & existing_keywords)
         if overlap > len(triggers) * 0.5:
-            logger.info(
-                f"[ScenarioLifecycle] Rejected AI scenario '{name}': "
-                f"too much keyword overlap with existing scenarios"
-            )
+            logger.info(f"[ScenarioLifecycle] Rejected AI scenario '{name}': keyword overlap")
             continue
 
-        severity = ns.get("severity", "MEDIUM")
+        severity = ns.get("severity", Severity.MEDIUM)
         if severity not in SEVERITY_ORDER:
-            severity = "MEDIUM"
+            severity = Severity.MEDIUM
 
         valid_new.append({
             "name": name,
@@ -611,7 +553,6 @@ def apply_ai_review(db: Session, review: dict):
 
     now = datetime.utcnow()
 
-    # ── Apply assessments ──
     for a in review.get("assessments", []):
         row = db.query(ScenarioState).filter(
             ScenarioState.scenario_id == a["scenario_id"]
@@ -623,59 +564,40 @@ def apply_ai_review(db: Session, review: dict):
         reasoning = a.get("reasoning", "")
 
         if rec == "RESOLVE":
-            row.lifecycle_state = "RESOLVED"
+            row.lifecycle_state = State.RESOLVED
             row.resolved_at = now
             row.state_changed_at = now
             row.resolution_reason = f"AI review: {reasoning}"
-            logger.warning(
-                f"[ScenarioLifecycle] AI RESOLVED '{row.scenario_id}': {reasoning}"
-            )
+            logger.warning(f"[ScenarioLifecycle] AI RESOLVED '{row.scenario_id}': {reasoning}")
 
         elif rec == "ESCALATE":
             old_sev = row.severity
             new_sev = a.get("new_severity")
-            if new_sev and new_sev in SEVERITY_ORDER:
-                row.severity = new_sev
-            else:
-                idx = SEVERITY_ORDER.index(old_sev) if old_sev in SEVERITY_ORDER else 2
-                row.severity = SEVERITY_ORDER[min(len(SEVERITY_ORDER) - 1, idx + 1)]
-            if row.lifecycle_state == "DECLINING":
-                row.lifecycle_state = "ACTIVE"
+            row.severity = new_sev if (new_sev and new_sev in SEVERITY_ORDER) else _raise_severity(old_sev)
+            if row.lifecycle_state == State.DECLINING:
+                row.lifecycle_state = State.ACTIVE
             row.severity_changed_at = now
             row.state_changed_at = now
-            logger.info(
-                f"[ScenarioLifecycle] AI ESCALATED '{row.scenario_id}': "
-                f"{old_sev} → {row.severity}. {reasoning}"
-            )
+            logger.info(f"[ScenarioLifecycle] AI ESCALATED '{row.scenario_id}': {old_sev} → {row.severity}")
 
         elif rec == "DE_ESCALATE":
             old_sev = row.severity
             new_sev = a.get("new_severity")
-            if new_sev and new_sev in SEVERITY_ORDER:
-                row.severity = new_sev
-            else:
-                idx = SEVERITY_ORDER.index(old_sev) if old_sev in SEVERITY_ORDER else 2
-                row.severity = SEVERITY_ORDER[max(0, idx - 1)]
+            row.severity = new_sev if (new_sev and new_sev in SEVERITY_ORDER) else _drop_severity(old_sev)
             row.severity_changed_at = now
-            if row.lifecycle_state == "ACTIVE":
-                row.lifecycle_state = "DECLINING"
+            if row.lifecycle_state == State.ACTIVE:
+                row.lifecycle_state = State.DECLINING
                 row.state_changed_at = now
-            logger.info(
-                f"[ScenarioLifecycle] AI DE_ESCALATED '{row.scenario_id}': "
-                f"{old_sev} → {row.severity}. {reasoning}"
-            )
-
-        # MAINTAIN — no changes needed
+            logger.info(f"[ScenarioLifecycle] AI DE_ESCALATED '{row.scenario_id}': {old_sev} → {row.severity}")
 
         row.last_ai_review_at = now
         row.ai_review_summary = reasoning
 
-    # ── Create new AI-generated scenarios ──
+    # Create new AI-generated scenarios
     for ns in review.get("new_scenarios", []):
         slug = re.sub(r'[^a-z0-9]+', '_', ns["name"].lower())[:30].strip('_')
         scenario_id = f"ai_gen_{now.strftime('%Y%m%d')}_{slug}"
 
-        # Check if already exists
         existing = db.query(ScenarioState).filter(
             ScenarioState.scenario_id == scenario_id
         ).first()
@@ -686,8 +608,8 @@ def apply_ai_review(db: Session, review: dict):
             scenario_id=scenario_id,
             name=ns["name"],
             description=ns.get("description", ""),
-            severity=ns.get("severity", "MEDIUM"),
-            lifecycle_state="ACTIVE",
+            severity=ns.get("severity", Severity.MEDIUM),
+            lifecycle_state=State.ACTIVE,
             origin="ai_generated",
             trigger_keywords_json=json.dumps(ns.get("trigger_keywords", [])),
             resolution_keywords_json=json.dumps(ns.get("resolution_keywords", [])),
@@ -703,17 +625,16 @@ def apply_ai_review(db: Session, review: dict):
         db.add(row)
         logger.warning(
             f"[ScenarioLifecycle] AI created new scenario '{scenario_id}': "
-            f"{ns['name']} (severity={ns.get('severity', 'MEDIUM')})"
+            f"{ns['name']} (severity={ns.get('severity', Severity.MEDIUM)})"
         )
 
     db.commit()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Convenience: Combined lifecycle scan (called from main.py)
+# Combined lifecycle scan (called from main.py)
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Track last AI review time at module level
 _last_ai_review_ts: float = 0.0
 AI_REVIEW_INTERVAL = 1800  # 30 minutes
 
@@ -725,37 +646,46 @@ def run_lifecycle_scan(
     api_key: str = "",
 ) -> Tuple[List[dict], List[dict]]:
     """
-    Run the full lifecycle scan (called every 10 min from background_news_scan).
+    Run the full lifecycle scan (called every ~15 min from background_news_scan).
+    Single DB query, single title extraction, single pass over rows.
 
-    Returns:
-        (active_scenarios, resolution_events)
+    Returns: (active_scenarios, resolution_events)
     """
     global _last_ai_review_ts
+    from database import ScenarioState
 
-    # Layer 1a: Update trigger evidence, get active scenarios
-    active_scenarios = scan_trigger_keywords(db, news_items)
+    # Single DB query for all active/declining scenarios
+    rows = (
+        db.query(ScenarioState)
+        .filter(ScenarioState.lifecycle_state.in_(ACTIVE_STATES))
+        .all()
+    )
 
-    # Layer 1b: Check for resolutions
-    resolution_events = scan_resolution_keywords(db, news_items)
+    # Single title extraction
+    titles = _extract_titles(news_items)
 
-    # Time-based decay
-    decay_stale_scenarios(db)
+    now = datetime.utcnow()
+
+    # Layer 1: Combined trigger + resolution scan in one pass
+    active_scenarios, resolution_events = _scan_keywords_single_pass(rows, titles, now)
+
+    # Time-based decay (operates on same pre-fetched rows)
+    _decay_stale_rows(rows, now)
+
+    db.commit()
 
     # Layer 2: AI review (every 30 minutes)
-    now = time.time()
-    if ai_provider and (now - _last_ai_review_ts) > AI_REVIEW_INTERVAL:
+    ts_now = time.time()
+    if ai_provider and (ts_now - _last_ai_review_ts) > AI_REVIEW_INTERVAL:
         try:
             review = ai_lifecycle_review(db, ai_provider, api_key, news_items)
             if review:
                 apply_ai_review(db, review)
                 n_assess = len(review.get("assessments", []))
                 n_new = len(review.get("new_scenarios", []))
-                logger.info(
-                    f"[ScenarioLifecycle] AI review complete: "
-                    f"{n_assess} assessments, {n_new} new scenarios"
-                )
+                logger.info(f"[ScenarioLifecycle] AI review: {n_assess} assessments, {n_new} new scenarios")
         except Exception as e:
             logger.error(f"[ScenarioLifecycle] AI review failed: {e}")
-        _last_ai_review_ts = now
+        _last_ai_review_ts = ts_now
 
     return active_scenarios, resolution_events

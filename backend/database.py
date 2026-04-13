@@ -203,15 +203,6 @@ class Settings(Base):
 def create_tables():
     Base.metadata.create_all(bind=engine)
     _migrate_add_columns()
-    # Seed scenario lifecycle table from hardcoded MACRO_SCENARIOS on first boot
-    try:
-        from scenario_lifecycle import seed_scenarios_from_hardcoded
-        db = SessionLocal()
-        seed_scenarios_from_hardcoded(db)
-        db.close()
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"[ScenarioLifecycle] Seed failed: {e}")
 
 
 def _migrate_add_columns():

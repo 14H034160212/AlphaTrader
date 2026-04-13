@@ -601,6 +601,106 @@ class TradingEngine:
 
         return {"success": False, "skipped": True, "reason": "Signal is HOLD"}
 
+    # ── Cash Reserve & Auto-Rebalance ─────────────────────────────────────────
+
+    CASH_RESERVE_PCT = 0.15  # Always keep 15% cash for breaking-news opportunities
+
+    def get_cash_reserve_status(self) -> dict:
+        """Check if we have enough cash reserve. Returns status + how much to free."""
+        cash = self.get_cash_balance()
+        total_equity = cash
+        if self.use_alpaca:
+            try:
+                total_equity = float(self.alpaca.get_account().equity)
+            except Exception:
+                pass
+        else:
+            for p in self.get_all_positions():
+                total_equity += p.quantity * p.current_price
+
+        target_cash = total_equity * self.CASH_RESERVE_PCT
+        shortfall = max(0, target_cash - cash)
+        return {
+            "cash": cash,
+            "total_equity": total_equity,
+            "target_cash": round(target_cash, 2),
+            "shortfall": round(shortfall, 2),
+            "healthy": shortfall <= 0,
+            "cash_pct": round(cash / total_equity * 100, 1) if total_equity > 0 else 0,
+        }
+
+    def rank_positions_for_rebalance(self) -> list:
+        """
+        Rank all open positions by priority (worst first = sell candidates).
+        Scoring: losing positions with no recent positive catalyst get lowest scores.
+        """
+        positions = [p for p in self.get_all_positions() if p.quantity > 0.001]
+        if not positions:
+            return []
+
+        scored = []
+        for pos in positions:
+            pnl_pct = ((pos.current_price - pos.avg_cost) / pos.avg_cost * 100) if pos.avg_cost > 0 else 0
+            market_val = pos.quantity * pos.current_price
+
+            # Score: higher = better (keep), lower = worse (sell first)
+            score = pnl_pct  # Base score is P&L %
+
+            # Penalty for tiny positions (< $20 market value) — not worth holding
+            if market_val < 20:
+                score -= 50
+
+            # Penalty for deep losses (accelerating penalty below -5%)
+            if pnl_pct < -5:
+                score -= abs(pnl_pct) * 0.5
+
+            scored.append({
+                "symbol": pos.symbol,
+                "quantity": pos.quantity,
+                "avg_cost": pos.avg_cost,
+                "current_price": pos.current_price,
+                "market_value": round(market_val, 2),
+                "pnl_pct": round(pnl_pct, 1),
+                "score": round(score, 1),
+            })
+
+        scored.sort(key=lambda x: x["score"])  # worst first
+        return scored
+
+    def free_cash_for_opportunity(self, amount_needed: float) -> list:
+        """
+        Sell weakest positions to free up cash for a high-priority opportunity.
+        Returns list of executed sell results.
+        """
+        ranked = self.rank_positions_for_rebalance()
+        sell_results = []
+        freed = 0.0
+
+        for pos in ranked:
+            if freed >= amount_needed:
+                break
+            # Only auto-sell positions that are losing or tiny
+            if pos["score"] > 5:
+                # Skip healthy winners — only sacrifice losers/tiny positions
+                continue
+
+            symbol = pos["symbol"]
+            qty = pos["quantity"]
+            price = pos["current_price"]
+
+            reason = (
+                f"[AUTO-REBALANCE] Selling {symbol} (P&L: {pos['pnl_pct']:+.1f}%, "
+                f"score: {pos['score']:.1f}) to free cash for higher-priority opportunity"
+            )
+            logger.warning(f"[CashReserve] {reason}")
+
+            result = self.execute_sell(symbol, qty, price, True, 0.9, reason)
+            if result.get("success"):
+                freed += pos["market_value"]
+                sell_results.append({"symbol": symbol, "freed": pos["market_value"], "pnl_pct": pos["pnl_pct"]})
+
+        return sell_results
+
     # ── Price / P&L helpers ───────────────────────────────────────────────────
 
     def update_position_prices(self, prices: dict):

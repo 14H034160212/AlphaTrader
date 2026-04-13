@@ -73,6 +73,15 @@ def _is_stop_loss_cooldown(symbol: str, user_id: int, db) -> bool:
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     create_tables()
+    # Seed scenario lifecycle table (after tables exist, before background loops)
+    try:
+        from scenario_lifecycle import seed_scenarios_from_hardcoded
+        from database import SessionLocal
+        _seed_db = SessionLocal()
+        seed_scenarios_from_hardcoded(_seed_db)
+        _seed_db.close()
+    except Exception as e:
+        logger.warning(f"[ScenarioLifecycle] Seed failed: {e}")
     # Pre-load Kronos model onto A100 GPU at startup (avoid cold-start delay in trade loop)
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, ka.preload_model)
@@ -258,9 +267,19 @@ def build_rich_portfolio_context(db, user_id: int, engine) -> str:
     lines.append(f"- Trades today: {len(today_trades)}")
     lines.append(f"- Total trades on record: {len(recent_trades)}")
 
+    # ── Cash Reserve Status ────────────────────────────────────────────────────
+    cash_status = engine.get_cash_reserve_status()
+    lines.append(f"\n### Cash Reserve")
+    lines.append(f"- Cash: ${cash_status['cash']:,.2f} ({cash_status['cash_pct']:.0f}% of portfolio)")
+    lines.append(f"- Target reserve: ${cash_status['target_cash']:,.2f} (15% minimum)")
+    if not cash_status["healthy"]:
+        lines.append(f"- ⚠️ CASH LOW: ${cash_status['shortfall']:,.2f} below target — prefer SELL over BUY to rebuild reserve")
+
     lines.append(
         "\nINSTRUCTION: Use this history to avoid re-buying a stock just sold at a loss, "
-        "avoid over-concentrating in one sector, and factor in existing P&L when sizing positions."
+        "avoid over-concentrating in one sector, and factor in existing P&L when sizing positions. "
+        "When cash is below the 15% reserve target, be MORE aggressive about SELL signals on losing positions "
+        "and MORE selective about BUY signals — only buy for truly compelling opportunities."
     )
     return "\n".join(lines)
 
@@ -631,6 +650,27 @@ async def background_auto_trade_loop():
                             if skip_reason:
                                 logger.warning(f"[AutoTrade] {symbol} {action} skipped — {skip_reason}")
                             else:
+                                # Cash reserve check: if BUY and cash is low, auto-rebalance first
+                                if action == "BUY":
+                                    cash_status = engine.get_cash_reserve_status()
+                                    if not cash_status["healthy"]:
+                                        logger.warning(
+                                            f"[CashReserve] Cash {cash_status['cash_pct']:.0f}% "
+                                            f"< target {engine.CASH_RESERVE_PCT*100:.0f}%, "
+                                            f"shortfall ${cash_status['shortfall']:.0f} — auto-rebalancing"
+                                        )
+                                        freed = engine.free_cash_for_opportunity(cash_status["shortfall"])
+                                        if freed:
+                                            for f in freed:
+                                                logger.info(f"[CashReserve] Freed ${f['freed']:.0f} from {f['symbol']} ({f['pnl_pct']:+.1f}%)")
+                                                await broadcast({
+                                                    "type": "auto_rebalance",
+                                                    "sold": f["symbol"],
+                                                    "freed": f["freed"],
+                                                    "pnl_pct": f["pnl_pct"],
+                                                    "reason": "Cash reserve replenishment for opportunity",
+                                                })
+
                                 auto_result = engine.auto_trade(signal, quote["current"], indicators=indicators)
                                 if auto_result.get("success"):
                                     logger.info(f"Auto-trade for {user.username} - {symbol}: {auto_result}")
@@ -1020,18 +1060,21 @@ async def background_news_scan():
                                 "threat": new_threats[0]["news_title"]
                             })
 
-                # ── Geopolitical Macro Scan + Auto-Watchlist Expansion ───────────
-                # Scan Reuters/BBC/Al Jazeera/White House RSS for breaking global events
-                active_macros = ni.detect_active_macro_scenarios(hours_back=3, db=db)
+                # ── Geopolitical Macro Scan + Scenario Lifecycle ───────────
+                # Fetch geo news ONCE, reuse for all consumers below
+                geo_news = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: ni.fetch_geopolitical_news(hours_back=6)
+                )
 
-                # ── Scenario Lifecycle: resolution detection, decay, AI review ──
+                # Run full lifecycle scan (trigger detection + resolution + decay + AI review)
                 try:
                     import scenario_lifecycle as sl
-                    geo_news_lifecycle = ni.fetch_geopolitical_news(hours_back=6)
-                    _lc_active, resolution_events = sl.run_lifecycle_scan(
-                        db, geo_news_lifecycle,
+                    active_macros_raw, resolution_events = sl.run_lifecycle_scan(
+                        db, geo_news,
                         ai_provider=ai_provider, api_key=api_key,
                     )
+                    # Use lifecycle results as active macros (already filtered to ACTIVE/DECLINING)
+                    active_macros = active_macros_raw if active_macros_raw else sl.get_active_scenarios(db)
                     if resolution_events:
                         for rev in resolution_events:
                             logger.warning(
@@ -1044,21 +1087,14 @@ async def background_news_scan():
                                 "scenario_id": rev["scenario_id"],
                                 "evidence": rev.get("evidence", []),
                             })
-                        # Re-fetch active macros after lifecycle updates
-                        active_macros = sl.get_active_scenarios(db)
-                        # Convert to standard format with evidence from trigger scan
-                        active_macros = [
-                            m for m in active_macros
-                            if m["severity"] in ("CRITICAL", "HIGH", "MEDIUM", "BULLISH")
-                        ]
                 except Exception as _lce:
                     logger.error(f"[ScenarioLifecycle] Error in lifecycle scan: {_lce}")
+                    active_macros = ni.detect_active_macro_scenarios(hours_back=3)
 
                 # Auto-expand watchlist based on active scenarios and news keywords
                 try:
-                    geo_news_raw = ni.fetch_geopolitical_news(hours_back=6)
                     new_tickers, reason = ni.get_watchlist_additions(
-                        active_macros, geo_news_raw, watchlist,
+                        active_macros, geo_news, watchlist,
                     )
                     if new_tickers:
                         updated_wl = list(set(watchlist) | set(new_tickers))
@@ -1188,11 +1224,15 @@ async def background_news_scan():
                                     logger.warning(f"[GeoScan] {sym} skipped — already up {gap_pct:.1f}% today")
                                     continue
 
+                                # Cash reserve check: free up cash if needed
+                                cash_status = engine.get_cash_reserve_status()
+                                if not cash_status["healthy"]:
+                                    engine.free_cash_for_opportunity(cash_status["shortfall"])
+
                                 # Apply VIX + scenario health scaling to position size
                                 base_risk = float(get_setting(db, "risk_per_trade_pct", user.id, "2.0"))
                                 scaled_risk = ps.vix_position_scale(geo_vix, base_risk)
                                 scaled_risk = ps.scenario_position_scale(scaled_risk, scenario_mult)
-                                # Temporarily write scaled risk to DB so auto_trade picks it up
                                 set_setting(db, "risk_per_trade_pct", str(scaled_risk), user.id)
 
                                 auto_result = engine.auto_trade(signal, quote["current"], indicators=indicators)
@@ -2717,13 +2757,13 @@ async def background_email_reporter():
                     try:
                         import news_intelligence as ni_local
                         scenarios = await asyncio.get_event_loop().run_in_executor(
-                            None, ni_local.detect_active_macro_scenarios, None
+                            None, lambda: ni_local.detect_active_macro_scenarios(hours_back=4)
                         )
-                        for name, info in (scenarios or {}).items():
+                        for s in (scenarios or []):
                             macro_scenarios.append({
-                                "name": name,
-                                "severity": info.get("severity", "LOW"),
-                                "beneficiaries": info.get("beneficiaries", []),
+                                "name": s.get("name", ""),
+                                "severity": s.get("severity", "LOW"),
+                                "beneficiaries": s.get("potential_beneficiaries", []),
                             })
                     except Exception:
                         pass

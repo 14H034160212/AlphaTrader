@@ -2,7 +2,8 @@
 import json
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,41 @@ def _call_ollama(messages, temperature=0.1):
         raise ConnectionError("Cannot connect to local Ollama. Is it running?")
 
 
+def _score_news_freshness(news_items: list) -> list:
+    """
+    Score and sort news by freshness. Newer = higher priority.
+    Returns list of (title, publisher, age_label, priority_tag) sorted by recency.
+    """
+    now = time.time()
+    scored = []
+    for n in (news_items or []):
+        title = n.get("title", "")
+        publisher = n.get("publisher", "")
+        pub_time = n.get("published", 0) or n.get("providerPublishTime", 0)
+        if not title:
+            continue
+        if pub_time > 0:
+            hours_ago = (now - pub_time) / 3600
+        else:
+            hours_ago = 24  # unknown age → treat as old
+        if hours_ago < 2:
+            tag = "BREAKING"
+            age = f"{hours_ago * 60:.0f}min ago"
+        elif hours_ago < 6:
+            tag = "RECENT"
+            age = f"{hours_ago:.0f}h ago"
+        elif hours_ago < 24:
+            tag = "TODAY"
+            age = f"{hours_ago:.0f}h ago"
+        else:
+            tag = "OLD"
+            age = f"{hours_ago / 24:.0f}d ago"
+        scored.append((hours_ago, title, publisher, age, tag))
+
+    scored.sort(key=lambda x: x[0])  # newest first
+    return scored
+
+
 def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context="", upcoming_events="", rl_lessons="", sector="Other", global_context=None):
     """Use DeepSeek-R1 (Local or API) to analyze a stock and generate trading signal."""
     if ai_provider == "deepseek_api" and not api_key:
@@ -76,8 +112,12 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
                 )
         price_summary = "\n".join(recent_prices) if recent_prices else "No historical data"
 
-        news_items = ["  - {} ({})".format(n.get("title",""), n.get("publisher","")) for n in news[:5]]
-        news_summary = "\n".join(news_items) if news_items else "No recent news"
+        scored_news = _score_news_freshness(news)
+        news_lines = []
+        for _, title, pub, age, tag in scored_news[:8]:
+            prefix = f"**[{tag}]**" if tag in ("BREAKING", "RECENT") else f"[{tag}]"
+            news_lines.append(f"  - {prefix} {title} ({pub}, {age})")
+        news_summary = "\n".join(news_lines) if news_lines else "No recent news"
         
         # Enhanced Indicators with Over-extension logic
         ind_data = indicators.copy() if indicators else {}
@@ -102,6 +142,14 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
 
         prompt = """You are an expert quantitative stock analyst advising a LONG-ONLY small-account trader.
 CRITICAL CONSTRAINT: This account does NOT support short selling. Never output SHORT or COVER.
+
+## NEWS PRIORITY RULES (MOST IMPORTANT)
+- **[BREAKING] and [RECENT] news ALWAYS override ongoing geopolitical narratives.**
+- A major layoff, new AI model release, earnings surprise, or M&A announcement happening NOW is worth 10x more than a weeks-old geopolitical scenario.
+- Old ongoing events (wars, tariffs, sanctions) should be treated as BACKGROUND CONTEXT only — they lower confidence slightly but should NOT dominate your decision.
+- If breaking news directly affects this stock, act on it aggressively (higher confidence).
+- If no breaking news affects this stock, evaluate purely on fundamentals + technicals.
+
 Strategy Rules:
 1. Find the best BUY opportunities with a strong emphasis on "Buy Low, Sell High" (mean-reversion combined with trend).
 2. DO NOT CHASE: Avoid buying stocks that are heavily overextended or have already experienced massive near-term rallies. Look for healthy pullbacks to support levels or moving averages within an uptrend.

@@ -1284,25 +1284,62 @@ def detect_technical_overextension(watchlist: list, db_session) -> list:
 
 
 def build_macro_scenario_context(active_scenarios: list) -> str:
-    """Build AI context string for active macro scenarios."""
+    """
+    Build AI context string for active macro scenarios.
+    Adds age-based priority labels so AI knows which scenarios are fresh vs. stale.
+    """
     if not active_scenarios:
         return ""
-    lines = ["### 🌐 MACRO SCENARIO ALERTS"]
+
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+
+    lines = [
+        "### MACRO SCENARIO ALERTS",
+        "**PRIORITY RULE**: Scenarios with recent evidence (< 6h) are HIGH PRIORITY. "
+        "Older scenarios (> 24h since last evidence) are BACKGROUND ONLY — "
+        "they should NOT dominate your trading decision. "
+        "Breaking stock-specific news ALWAYS overrides stale macro scenarios."
+    ]
+
     for s in active_scenarios:
+        # Calculate freshness
+        last_ev = s.get("last_evidence_at")
+        if isinstance(last_ev, datetime):
+            hours_since = (now - last_ev).total_seconds() / 3600
+        elif isinstance(last_ev, str):
+            try:
+                hours_since = (now - datetime.fromisoformat(last_ev)).total_seconds() / 3600
+            except Exception:
+                hours_since = 999
+        else:
+            hours_since = 999
+
+        if hours_since < 2:
+            freshness = "BREAKING"
+        elif hours_since < 6:
+            freshness = "FRESH"
+        elif hours_since < 24:
+            freshness = "AGING"
+        else:
+            freshness = "STALE"
+
         severity_emoji = "🚨" if s["severity"] in ("CRITICAL", "HIGH") else "📈"
-        lines.append(f"\n{severity_emoji} [{s['severity']}] {s['name']}")
-        lines.append(f"  {s['description']}")
-        lines.append(f"  Evidence ({len(s['evidence'])} articles):")
-        for ev in s["evidence"][:2]:
-            lines.append(f'    • "{ev["title"]}" → keywords: {ev["keywords"]}')
-        if s["stocks_to_avoid"]:
+        lines.append(f"\n{severity_emoji} [{s['severity']}] [{freshness}] {s['name']}")
+        if freshness == "STALE":
+            lines.append(f"  ⚠️ Last evidence was {hours_since:.0f}h ago — treat as BACKGROUND ONLY, do NOT let this dominate decisions")
+        lines.append(f"  {s.get('description', '')}")
+        evidence = s.get("evidence", [])
+        if evidence:
+            lines.append(f"  Evidence ({len(evidence)} articles):")
+            for ev in evidence[:2]:
+                if isinstance(ev, dict):
+                    lines.append(f'    • "{ev.get("title", "")}" → keywords: {ev.get("keywords", [])}')
+        if s.get("stocks_to_avoid"):
             lines.append(f"  → AVOID / SELL: {', '.join(s['stocks_to_avoid'])}")
-        if s["potential_beneficiaries"]:
+        if s.get("potential_beneficiaries"):
             lines.append(f"  → CONSIDER: {', '.join(s['potential_beneficiaries'])}")
-    lines.append(
-        "\n  ⚠️ INSTRUCTION: Adjust portfolio risk exposure based on above macro scenarios. "
-        "Reduce positions in 'avoid' stocks, consider rotating into beneficiaries."
-    )
+
     return "\n".join(lines)
 
 

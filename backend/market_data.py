@@ -13,11 +13,6 @@ from market_calendar import detect_market, get_currency
 logger = logging.getLogger(__name__)
 
 
-# ── TTL Cache for yfinance data ──────────────────────────────────────────────
-# Prevents redundant API calls when multiple background loops request
-# the same symbol's data within a short time window.
-# Thread-safe via lock; entries auto-expire after TTL seconds.
-
 class _TTLCache:
     """Simple thread-safe TTL cache keyed by (function_name, symbol, *args)."""
 
@@ -30,9 +25,11 @@ class _TTLCache:
     def get(self, key):
         with self._lock:
             entry = self._store.get(key)
-            if entry and entry[1] > time.time():
-                self._hits += 1
-                return entry[0]
+            if entry:
+                if entry[1] > time.time():
+                    self._hits += 1
+                    return entry[0]
+                del self._store[key]  # evict expired on access
             self._misses += 1
             return None
 
