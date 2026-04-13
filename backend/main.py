@@ -397,7 +397,7 @@ async def background_price_refresh():
                         price_cache[sym] = q
                 except Exception as e:
                     logger.error(f"Error fetching {sym}: {e}")
-                await asyncio.sleep(1.5)  # Stagger requests to avoid Yahoo Finance rate limit
+                await asyncio.sleep(2)  # Stagger requests to avoid Yahoo Finance rate limit
 
             # Update position prices for each user
             if new_prices:
@@ -424,7 +424,15 @@ async def background_price_refresh():
         except Exception as e:
             logger.error(f"Background refresh error: {e}")
 
-        await asyncio.sleep(120)  # Refresh every 2 min to avoid Yahoo Finance rate limits
+        # Periodic cache maintenance and stats logging
+        try:
+            md.evict_cache()
+            cache_stats = md.get_cache_stats()
+            logger.info(f"[MarketDataCache] {cache_stats}")
+        except Exception:
+            pass
+
+        await asyncio.sleep(300)  # Refresh every 5 min (cache handles inter-loop dedup)
 
 
 async def background_auto_trade_loop():
@@ -477,7 +485,7 @@ async def background_auto_trade_loop():
                 # Run all slow blocking I/O in executor so event loop stays free for HTTP requests
                 event_context = await loop.run_in_executor(None, lambda: em.build_event_context(watchlist, days_ahead=7))
                 threat_map = await loop.run_in_executor(None, lambda: ni.scan_all_threats(watchlist, hours_back=24))
-                active_macros = await loop.run_in_executor(None, lambda: ni.detect_active_macro_scenarios(hours_back=6))
+                active_macros = await loop.run_in_executor(None, lambda: ni.detect_active_macro_scenarios(hours_back=6, db=db))
                 macro_context = ni.build_macro_scenario_context(active_macros)
                 blog_alerts = await loop.run_in_executor(None, lambda: bm.scan_all_blogs(hours_back=12))
 
@@ -821,7 +829,7 @@ async def background_blog_scan():
         except Exception as e:
             logger.error(f"[BlogMonitor] Loop error: {e}")
 
-        await asyncio.sleep(900)  # Run every 15 minutes
+        await asyncio.sleep(1200)  # Run every 20 minutes (reduced from 15 min)
 
 
 async def background_event_scan():
@@ -1014,7 +1022,37 @@ async def background_news_scan():
 
                 # ── Geopolitical Macro Scan + Auto-Watchlist Expansion ───────────
                 # Scan Reuters/BBC/Al Jazeera/White House RSS for breaking global events
-                active_macros = ni.detect_active_macro_scenarios(hours_back=3)
+                active_macros = ni.detect_active_macro_scenarios(hours_back=3, db=db)
+
+                # ── Scenario Lifecycle: resolution detection, decay, AI review ──
+                try:
+                    import scenario_lifecycle as sl
+                    geo_news_lifecycle = ni.fetch_geopolitical_news(hours_back=6)
+                    _lc_active, resolution_events = sl.run_lifecycle_scan(
+                        db, geo_news_lifecycle,
+                        ai_provider=ai_provider, api_key=api_key,
+                    )
+                    if resolution_events:
+                        for rev in resolution_events:
+                            logger.warning(
+                                f"[ScenarioLifecycle] {rev['action']}: {rev['scenario_id']} "
+                                f"(evidence: {rev.get('resolution_evidence_count', 0)}x)"
+                            )
+                            await broadcast({
+                                "type": "scenario_lifecycle",
+                                "action": rev["action"],
+                                "scenario_id": rev["scenario_id"],
+                                "evidence": rev.get("evidence", []),
+                            })
+                        # Re-fetch active macros after lifecycle updates
+                        active_macros = sl.get_active_scenarios(db)
+                        # Convert to standard format with evidence from trigger scan
+                        active_macros = [
+                            m for m in active_macros
+                            if m["severity"] in ("CRITICAL", "HIGH", "MEDIUM", "BULLISH")
+                        ]
+                except Exception as _lce:
+                    logger.error(f"[ScenarioLifecycle] Error in lifecycle scan: {_lce}")
 
                 # Auto-expand watchlist based on active scenarios and news keywords
                 try:
@@ -1397,7 +1435,7 @@ async def background_news_scan():
         except Exception as e:
             logger.error(f"[NewsScan] Loop error: {e}")
 
-        await asyncio.sleep(600)  # Every 10 minutes
+        await asyncio.sleep(900)  # Every 15 minutes (reduced from 10 min to lower CPU)
 
 
 async def background_daily_summary():
@@ -1887,6 +1925,20 @@ async def get_global_context(current_user: User = Depends(get_current_user)):
         return resp
     except Exception as e:
         logger.error(f"[GlobalContext] API error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/scenarios")
+async def get_scenarios(db: Session = Depends(get_db)):
+    """
+    Return all macro scenario lifecycle states (ACTIVE, DECLINING, RESOLVED, EXPIRED).
+    Includes AI-generated scenarios, resolution evidence, and health metadata.
+    """
+    try:
+        import scenario_lifecycle as sl
+        return sl.get_all_scenarios(db)
+    except Exception as e:
+        logger.error(f"[Scenarios API] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -950,6 +950,11 @@ MACRO_SCENARIOS = {
             "2028 global", "Citrini", "AI unemployment", "intelligence displacement",
             "agentic AI job loss", "seat-based SaaS extinction"
         ],
+        "resolution_keywords": [
+            "ai unemployment overstated", "white collar recovery", "ai creates jobs",
+            "ghost gdp debunked", "intelligence crisis dismissed", "ai job growth",
+            "labor market resilient", "employment rebound", "ai augments workers",
+        ],
         "sectors_at_risk": ["SaaS", "Payments", "Gig Economy", "Private Credit", "Housing"],
         "stocks_to_avoid": ["V", "MA", "UBER", "DASH", "NOW", "CRM", "MDB", "COF", "KKR", "BX"],
         "potential_beneficiaries": ["NVDA", "GLD", "IAU", "SLV", "IBIT"],  # Compute owners + safe havens
@@ -959,6 +964,11 @@ MACRO_SCENARIOS = {
         "name": "Fed Rate Pause / Pivot",
         "description": "Federal Reserve pauses or cuts rates, reducing discount rate for growth stocks.",
         "trigger_keywords": ["Fed pivot", "rate cut", "pause rate hike", "dovish Fed", "FOMC cut"],
+        "resolution_keywords": [
+            "rate hike", "fed raises", "hawkish fed", "higher for longer",
+            "rate increase", "fed tightens", "fed hawkish surprise",
+            "unexpected rate hike", "fed reverses cut",
+        ],
         "sectors_at_risk": [],
         "stocks_to_avoid": [],
         "potential_beneficiaries": ["QQQ", "TQQQ", "NVDA", "MSFT", "AMZN", "TSLA"],
@@ -968,6 +978,11 @@ MACRO_SCENARIOS = {
         "name": "US-China Tech Decoupling",
         "description": "Export bans, tariffs, or sanctions affecting semiconductor supply chains.",
         "trigger_keywords": ["export ban", "chip restriction", "TSMC sanction", "China decoupling", "tariff semiconductor"],
+        "resolution_keywords": [
+            "export ban lifted", "chip restriction eased", "tech cooperation",
+            "chip deal", "semiconductor agreement", "decoupling reversal",
+            "chip export license", "technology truce", "us china tech deal",
+        ],
         "sectors_at_risk": ["Semiconductors", "AI Hardware"],
         "stocks_to_avoid": ["NVDA", "AMD", "ASML", "AVGO", "TSM", "SOXL"],
         "potential_beneficiaries": ["INTC"],
@@ -990,6 +1005,15 @@ MACRO_SCENARIOS = {
             "oil supply disruption", "hormuz blockade", "persian gulf",
             "iran war", "israel iran", "netanyahu iran", "trump iran",
         ],
+        "resolution_keywords": [
+            "ceasefire iran", "iran ceasefire", "iran peace deal", "iran peace",
+            "iran truce", "iran talks", "iran negotiations", "iran agreement",
+            "de-escalation iran", "iran stand down", "iran diplomatic",
+            "hostilities end iran", "war over iran", "iran deal",
+            "iran us deal", "middle east ceasefire", "middle east peace",
+            "iran treaty", "iran armistice", "停战", "停火",
+            "iran cooperation", "iran normalization",
+        ],
         "sectors_at_risk": ["Technology", "Airlines", "Consumer Discretionary", "Automotive"],
         "stocks_to_avoid": ["TSLA", "AMZN", "AAPL", "QQQ", "TQQQ", "SOXL"],
         "potential_beneficiaries": ["GLD", "IAU", "SLV", "XOM", "LMT", "RTX", "NOC"],
@@ -1007,6 +1031,11 @@ MACRO_SCENARIOS = {
             "not blockaded", "hormuz navigation normal", "strait secure",
             "oil flow unhindered", "no iran blockade", "hormuz tension eases",
             "油气板块跳水", "海峡没有封锁", "霍尔木兹通畅"
+        ],
+        "resolution_keywords": [
+            "hormuz blockade confirmed", "strait closed", "shipping halted hormuz",
+            "iran blocks strait", "hormuz sealed", "oil supply cut",
+            "hormuz attack", "tanker seized hormuz",
         ],
         "sectors_at_risk": ["Energy", "Petroleum", "Aerospace & Defense"],
         "stocks_to_avoid": ["XOM", "USO", "CVX", "OXY", "LMT", "RTX", "NOC", "UCO", "BNO"],
@@ -1027,6 +1056,12 @@ MACRO_SCENARIOS = {
             "Trump tariff", "White House tariff", "tariff increase",
             "retaliatory tariff", "trade deficit", "protectionism",
         ],
+        "resolution_keywords": [
+            "tariff removed", "tariff lifted", "trade deal", "tariff rollback",
+            "tariff exemption", "tariff pause", "tariff suspended",
+            "trade agreement", "tariff reduction", "trade truce",
+            "tariff dropped", "tariff cancelled", "trade normalization",
+        ],
         "sectors_at_risk": ["Consumer Discretionary", "Tech Hardware", "Retail", "Auto", "Industrials"],
         "stocks_to_avoid": ["AAPL", "TSLA", "AMZN", "META", "AVGO", "TSM", "ASML", "SOXL", "QQQ", "TQQQ"],
         "potential_beneficiaries": ["GLD", "IAU", "SLV", "IBIT", "XOM"],  # Gold / Silver / Oil safe havens
@@ -1043,6 +1078,11 @@ MACRO_SCENARIOS = {
             "gold record", "oil peak", "defense stock high", "overextended",
             "overbought", "exhaustion gap", "52-week high", "all-time high",
             "parabolic move", "mean reversion risk"
+        ],
+        "resolution_keywords": [
+            "correction complete", "pullback over", "healthy correction",
+            "mean reversion complete", "oversold", "buying opportunity",
+            "sector rotation out", "exhaustion relief",
         ],
         "sectors_at_risk": ["Precious Metals", "Energy", "Aerospace & Defense"],
         "stocks_to_avoid": ["GLD", "IAU", "XOM", "CVX", "LMT", "RTX", "NOC", "GD"],
@@ -1131,12 +1171,15 @@ def get_watchlist_additions(
     return list(to_add), reason_str
 
 
-def detect_active_macro_scenarios(hours_back: int = 6) -> list:
+def detect_active_macro_scenarios(hours_back: int = 6, db=None) -> list:
     """
     Scan recent financial news AND geopolitical RSS feeds for macro scenario keywords.
     Returns list of active scenario names with evidence.
+
+    If `db` (SQLAlchemy Session) is provided, uses the dynamic scenario lifecycle
+    system (DB-backed with resolution detection). Otherwise falls back to the
+    static MACRO_SCENARIOS dict for backward compatibility.
     """
-    active = []
     # Use broad market ETFs as proxy for macro/financial news
     proxy_tickers = ["SPY", "QQQ", "VIX", "GLD", "XOM"]
     all_news = []
@@ -1148,6 +1191,23 @@ def detect_active_macro_scenarios(hours_back: int = 6) -> list:
     all_news.extend(geo_news)
     logger.info(f"[MacroScan] Scanning {len(all_news)} total news items ({len(geo_news)} geopolitical)")
 
+    # ── DB-aware path: use dynamic scenario lifecycle ──
+    if db is not None:
+        try:
+            from scenario_lifecycle import scan_trigger_keywords
+            active = scan_trigger_keywords(db, all_news)
+            if active:
+                for s in active:
+                    logger.warning(
+                        f"[MacroScenario] ACTIVE (lifecycle): '{s['name']}' — "
+                        f"{len(s.get('evidence', []))} evidence item(s)"
+                    )
+            return active
+        except Exception as e:
+            logger.warning(f"[MacroScan] Lifecycle scan failed, falling back to static: {e}")
+
+    # ── Fallback: static MACRO_SCENARIOS dict ──
+    active = []
     for scenario_id, scenario in MACRO_SCENARIOS.items():
         keywords = [k.lower() for k in scenario["trigger_keywords"]]
         matched_items = []
