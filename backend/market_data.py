@@ -1,6 +1,8 @@
 """Market data service using yfinance + Sina Finance for global stock market data."""
 import yfinance as yf
 import pandas as pd
+import time
+import threading
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
@@ -9,6 +11,66 @@ import ashare_data
 from market_calendar import detect_market, get_currency
 
 logger = logging.getLogger(__name__)
+
+
+# ── TTL Cache for yfinance data ──────────────────────────────────────────────
+# Prevents redundant API calls when multiple background loops request
+# the same symbol's data within a short time window.
+# Thread-safe via lock; entries auto-expire after TTL seconds.
+
+class _TTLCache:
+    """Simple thread-safe TTL cache keyed by (function_name, symbol, *args)."""
+
+    def __init__(self):
+        self._store: dict = {}  # key → (value, expire_ts)
+        self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
+
+    def get(self, key):
+        with self._lock:
+            entry = self._store.get(key)
+            if entry and entry[1] > time.time():
+                self._hits += 1
+                return entry[0]
+            self._misses += 1
+            return None
+
+    def set(self, key, value, ttl: int):
+        with self._lock:
+            self._store[key] = (value, time.time() + ttl)
+
+    def stats(self) -> dict:
+        total = self._hits + self._misses
+        rate = (self._hits / total * 100) if total > 0 else 0
+        return {"hits": self._hits, "misses": self._misses, "hit_rate": f"{rate:.0f}%", "entries": len(self._store)}
+
+    def evict_expired(self):
+        """Remove expired entries to free memory. Call periodically."""
+        now = time.time()
+        with self._lock:
+            expired = [k for k, (_, exp) in self._store.items() if exp <= now]
+            for k in expired:
+                del self._store[k]
+
+
+_cache = _TTLCache()
+
+# TTL values (seconds) — tuned for trading data freshness
+QUOTE_TTL = 300       # 5 min — quotes change frequently but 5 min is fine for analysis
+HISTORY_TTL = 600     # 10 min — historical OHLCV doesn't change within minutes
+INDICATORS_TTL = 600  # 10 min — derived from history, same TTL
+NEWS_TTL = 600        # 10 min — news updates are not second-critical
+
+
+def get_cache_stats() -> dict:
+    """Return cache hit/miss statistics. Useful for monitoring."""
+    return _cache.stats()
+
+
+def evict_cache():
+    """Remove expired entries to free memory."""
+    _cache.evict_expired()
 
 # ── Global market indices ─────────────────────────────────────────────────────
 GLOBAL_INDICES = {
@@ -316,9 +378,16 @@ def get_global_popular_stocks(region: str = None) -> list:
 
 
 def get_stock_quote(symbol: str) -> dict:
-    """Fetch current quote for a stock (all markets)."""
+    """Fetch current quote for a stock (all markets). Cached for 5 min."""
+    cache_key = ("quote", symbol)
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
     if ashare_data.is_ashare_symbol(symbol):
-        return ashare_data.get_ashare_quote(symbol)
+        result = ashare_data.get_ashare_quote(symbol)
+        if result:
+            _cache.set(cache_key, result, QUOTE_TTL)
+        return result
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
@@ -358,7 +427,7 @@ def get_stock_quote(symbol: str) -> dict:
             })
         vpa_metrics = QuantitativeModels.analyze_volume_price_action(hist_records)
 
-        return {
+        result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
             "current": round(current, 2),
@@ -386,15 +455,24 @@ def get_stock_quote(symbol: str) -> dict:
             "liquidity": vpa_metrics["liquidity"],
             "vpa_volume_ratio": vpa_metrics["volume_ratio"],
         }
+        _cache.set(cache_key, result, QUOTE_TTL)
+        return result
     except Exception as e:
         logger.error(f"Error fetching stock {symbol}: {e}")
         return None
 
 
 def get_stock_history(symbol: str, period: str = "3mo", interval: str = "1d") -> list:
-    """Fetch OHLCV historical data for charting."""
+    """Fetch OHLCV historical data for charting. Cached for 10 min."""
+    cache_key = ("history", symbol, period, interval)
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
     if ashare_data.is_ashare_symbol(symbol):
-        return ashare_data.get_ashare_history(symbol, period, interval)
+        result = ashare_data.get_ashare_history(symbol, period, interval)
+        if result:
+            _cache.set(cache_key, result, HISTORY_TTL)
+        return result
     try:
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period=period, interval=interval)
@@ -410,6 +488,7 @@ def get_stock_history(symbol: str, period: str = "3mo", interval: str = "1d") ->
                 "close": round(float(row["Close"]), 4),
                 "volume": int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
             })
+        _cache.set(cache_key, result, HISTORY_TTL)
         return result
     except Exception as e:
         logger.error(f"Error fetching history for {symbol}: {e}")
@@ -417,9 +496,16 @@ def get_stock_history(symbol: str, period: str = "3mo", interval: str = "1d") ->
 
 
 def get_technical_indicators(symbol: str) -> dict:
-    """Calculate basic technical indicators."""
+    """Calculate basic technical indicators. Cached for 10 min."""
+    cache_key = ("indicators", symbol)
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
     if ashare_data.is_ashare_symbol(symbol):
-        return ashare_data.get_ashare_indicators(symbol)
+        result = ashare_data.get_ashare_indicators(symbol)
+        if result:
+            _cache.set(cache_key, result, INDICATORS_TTL)
+        return result
     try:
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period="6mo")
@@ -476,7 +562,7 @@ def get_technical_indicators(symbol: str) -> dict:
         # MA200 Distance
         dist_ma200 = ((current - ma200) / ma200) if ma200 else 0
 
-        return {
+        result = {
             "ma20": round(ma20, 2),
             "ma50": round(ma50, 2) if ma50 else None,
             "ma200": round(ma200, 2) if ma200 else None,
@@ -495,15 +581,24 @@ def get_technical_indicators(symbol: str) -> dict:
             "atr14": round(atr14, 4),
             "atr14_pct": round(atr14 / current * 100, 2) if current > 0 else 0,
         }
+        _cache.set(cache_key, result, INDICATORS_TTL)
+        return result
     except Exception as e:
         logger.error(f"Error calculating indicators for {symbol}: {e}")
         return {}
 
 
 def get_stock_news(symbol: str, limit: int = 5) -> list:
-    """Fetch recent news for a stock."""
+    """Fetch recent news for a stock. Cached for 10 min."""
+    cache_key = ("news", symbol, limit)
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
     if ashare_data.is_ashare_symbol(symbol):
-        return ashare_data.get_ashare_news(symbol, limit)
+        result = ashare_data.get_ashare_news(symbol, limit)
+        if result:
+            _cache.set(cache_key, result, NEWS_TTL)
+        return result
     try:
         ticker = yf.Ticker(symbol)
         news = ticker.news or []
@@ -515,6 +610,7 @@ def get_stock_news(symbol: str, limit: int = 5) -> list:
                 "link": item.get("link", ""),
                 "published": item.get("providerPublishTime", 0),
             })
+        _cache.set(cache_key, result, NEWS_TTL)
         return result
     except Exception as e:
         logger.error(f"Error fetching news for {symbol}: {e}")

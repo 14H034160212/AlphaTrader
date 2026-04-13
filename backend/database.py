@@ -149,6 +149,46 @@ class SignalArchive(Base):
     __table_args__ = (UniqueConstraint('user_id', 'symbol', 'week_start', name='_archive_user_sym_week_uc'),)
 
 
+class ScenarioState(Base):
+    """
+    Dynamic macro scenario lifecycle tracking.
+    Replaces hardcoded MACRO_SCENARIOS as source of truth.
+    Seeds from MACRO_SCENARIOS on first boot; AI can create new scenarios.
+    """
+    __tablename__ = "scenario_states"
+    id = Column(Integer, primary_key=True)
+    scenario_id = Column(String, unique=True, index=True)   # e.g. "middle_east_war_2026"
+    name = Column(String)
+    description = Column(Text)
+    severity = Column(String, default="MEDIUM")              # CRITICAL / HIGH / MEDIUM / LOW / BULLISH
+    lifecycle_state = Column(String, default="ACTIVE")       # ACTIVE / DECLINING / RESOLVED / EXPIRED
+    origin = Column(String, default="seed")                  # seed / ai_generated
+
+    # JSON-encoded lists (SQLite has no native array type)
+    trigger_keywords_json = Column(Text, default="[]")
+    resolution_keywords_json = Column(Text, default="[]")
+    stocks_to_avoid_json = Column(Text, default="[]")
+    potential_beneficiaries_json = Column(Text, default="[]")
+    sectors_at_risk_json = Column(Text, default="[]")
+
+    # Lifecycle timestamps
+    first_detected_at = Column(DateTime, default=datetime.utcnow)
+    last_evidence_at = Column(DateTime, nullable=True)
+    severity_changed_at = Column(DateTime, nullable=True)
+    state_changed_at = Column(DateTime, nullable=True)       # cooldown tracking
+    resolved_at = Column(DateTime, nullable=True)
+    resolution_reason = Column(Text, nullable=True)
+
+    # Evidence counters
+    evidence_count = Column(Integer, default=0)
+    resolution_evidence_count = Column(Integer, default=0)
+    consecutive_misses = Column(Integer, default=0)
+
+    # AI review metadata
+    last_ai_review_at = Column(DateTime, nullable=True)
+    ai_review_summary = Column(Text, nullable=True)
+
+
 class Settings(Base):
     __tablename__ = "settings"
     id = Column(Integer, primary_key=True)
@@ -163,6 +203,15 @@ class Settings(Base):
 def create_tables():
     Base.metadata.create_all(bind=engine)
     _migrate_add_columns()
+    # Seed scenario lifecycle table from hardcoded MACRO_SCENARIOS on first boot
+    try:
+        from scenario_lifecycle import seed_scenarios_from_hardcoded
+        db = SessionLocal()
+        seed_scenarios_from_hardcoded(db)
+        db.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[ScenarioLifecycle] Seed failed: {e}")
 
 
 def _migrate_add_columns():

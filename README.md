@@ -52,33 +52,178 @@ AlphaTrader Pro utilizes multi-modal data inputs, continuously fetched in the ba
 
 ## System Architecture
 
-```text
-┌─────────────────────────────────────────────────────┐
-│                  Information Layer (Daemon)         │
-│  yfinance → Prices/News/Technical Indicators        │
-│  StockTwits/Reddit → Social Sentiment               │
-│  RSS(Bloomberg/CNBC/AI Blogs) → Macro+Catalysts     │
-│  Geopolitical RSS(White House/Reuters/BBC, etc.)    │
-│    → War/Sanction Events                            │
-└──────────────────────┬──────────────────────────────┘
-                       ↓
-┌─────────────────────────────────────────────────────┐
-│                  Analysis Layer                     │
-│  Kronos-base (GPU-7, A100 80GB)                     │
-│    400 Candles → Predict next 5 candles             │
-│  DeepSeek-R1 70B (Ollama, DRL70B:latest)            │
-│    Synthesize Data → BUY/SELL/HOLD + Confidence     │
-│  Macro Scenario Engine                              │
-│    Geopolitics + Economic Data → Beneficiary/Risk   │
-│    Stock Lists                                      │
-└──────────────────────┬──────────────────────────────┘
-                       ↓
-┌─────────────────────────────────────────────────────┐
-│                  Execution Layer                    │
-│  Alpaca Live API → Notional orders (High Reliability│
-│  Paper Mode → Simulated trading                     │
-│  SQLite → Positions/Trades/Signals/Archives         │
-└─────────────────────────────────────────────────────┘
+### Overview
+
+```mermaid
+graph TB
+    subgraph DATA["📡 Information Layer"]
+        YF["Yahoo Finance<br/>Quotes / K-lines / News"]
+        RSS["15 RSS Feeds<br/>Reuters / BBC / White House"]
+        SS["StockTwits / Reddit<br/>Retail Sentiment"]
+        KRONOS["Kronos GPU Model<br/>K-line Prediction (next 5)"]
+        QUANT["DCF / DDM Valuation<br/>Intrinsic Value"]
+        GC["Global Context<br/>VIX / Indices / FX"]
+        COT["CFTC COT<br/>Futures Positioning"]
+    end
+
+    subgraph SCENARIO["🌍 Macro Scenario Engine"]
+        SCAN["Keyword Scanner<br/>Every 10 min"]
+        AIREV["AI Review<br/>Every 6 hours"]
+        DB_S[("scenario_states<br/>SQLite")]
+        LIFE["ACTIVE → DECLINING → RESOLVED"]
+    end
+
+    subgraph AI["🧠 AI Brain Layer"]
+        PROMPT["Super-Prompt Builder<br/>Quote + Technicals + Valuation + News<br/>+ Scenarios + Sentiment + Predictions + Lessons"]
+        LLM["Ollama DRL70B<br/>/ DeepSeek-R1 API"]
+        SIGNAL["JSON Signal Output<br/>BUY / SELL / HOLD<br/>confidence + target + stop_loss"]
+    end
+
+    subgraph FILTER["🛡️ Risk Control Layer"]
+        F1["Gap Filter<br/>Skip BUY if +3% today"]
+        F2["Bear Filter<br/>Skip BUY if SPY < MA20"]
+        F3["Cooldown Filter<br/>No re-buy within 3d of stop-loss"]
+        F4["Market Hours<br/>Skip if market closed"]
+        F5["Kelly Sizing<br/>Half-Kelly × VIX scaling"]
+    end
+
+    subgraph EXEC["⚡ Execution Layer"]
+        ENGINE["TradingEngine<br/>Auto broker routing"]
+        ALP["Alpaca<br/>US Stocks"]
+        FUTU["Futu<br/>CN / HK"]
+        IBKR["IBKR<br/>Global"]
+        PAPER["Paper<br/>Simulated"]
+    end
+
+    subgraph FB["🔄 Feedback Loop"]
+        RL["RL Training Data<br/>232MB+ JSONL"]
+        EMAIL["Daily Email Report<br/>P&L / Win Rate"]
+        ARCHIVE["Signal Archive<br/>90-day compression"]
+    end
+
+    YF --> PROMPT
+    RSS --> PROMPT
+    RSS --> SCAN
+    SS --> PROMPT
+    KRONOS --> PROMPT
+    QUANT --> PROMPT
+    GC --> PROMPT
+    COT --> PROMPT
+
+    SCAN --> DB_S
+    AIREV --> DB_S
+    DB_S --> LIFE
+    DB_S --> PROMPT
+
+    PROMPT --> LLM
+    LLM --> SIGNAL
+
+    SIGNAL --> F1 --> F2 --> F3 --> F4 --> F5
+
+    F5 --> ENGINE
+    ENGINE --> ALP
+    ENGINE --> FUTU
+    ENGINE --> IBKR
+    ENGINE --> PAPER
+
+    ENGINE --> RL
+    ENGINE --> EMAIL
+    ENGINE --> ARCHIVE
+    RL -.->|"Historical lessons<br/>fed back into prompt"| PROMPT
+```
+
+### Trading Loop (Sequence)
+
+```mermaid
+sequenceDiagram
+    participant Loop as ⏱️ auto_trade_loop (1h)
+    participant MD as market_data.py
+    participant NI as news_intelligence.py
+    participant KR as Kronos (A100 GPU)
+    participant AI as LLM (70B)
+    participant FLT as Risk Filters
+    participant ENG as TradingEngine
+    participant DB as SQLite
+
+    Loop->>Loop: Triggered every 1 hour
+    loop For each symbol in watchlist
+        par Gather data in parallel
+            Loop->>MD: get_stock_quote + history + indicators + news
+            Loop->>NI: scan_all_threats + detect_catalysts
+            Loop->>KR: predict_next_candles (5 candles)
+        end
+        Loop->>Loop: Build super-prompt (all data merged)
+        Loop->>AI: analyze_stock(prompt)
+        AI-->>Loop: {signal, confidence, target, stop}
+        Loop->>DB: Store AI signal
+        Loop->>FLT: Apply 5 filters
+        alt All filters passed & confidence ≥ 70%
+            FLT->>ENG: Execute trade
+            ENG->>DB: Record trade + update position
+            ENG-->>Loop: Broadcast via WebSocket
+        else Filtered out
+            FLT-->>Loop: Skip (log reason)
+        end
+    end
+```
+
+### Macro Scenario Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE: Trigger keywords matched / AI creates new scenario
+    ACTIVE --> ACTIVE: Evidence found (evidence_count + 1)
+    ACTIVE --> DECLINING: 3h with no evidence OR resolution keywords ≥ 2
+    DECLINING --> ACTIVE: New evidence appears (after 20 min cooldown)
+    DECLINING --> RESOLVED: Resolution keywords ≥ 4 OR AI review confirms resolved
+    DECLINING --> EXPIRED: 12h with zero evidence
+    ACTIVE --> RESOLVED: Resolution keywords ≥ 4 OR AI review (every 6h)
+    RESOLVED --> [*]
+    EXPIRED --> [*]
+```
+
+### Background Daemon Loops
+
+```mermaid
+graph LR
+    subgraph LOOPS["9 Background Loops (started on boot)"]
+        L1["🔴 auto_trade_loop<br/>⏱ 1 hour<br/>Core: AI analysis → trade"]
+        L2["📰 news_scan<br/>⏱ 10 min<br/>Breaking news + scenarios"]
+        L3["🔴 stop_loss_monitor<br/>⏱ 15 sec<br/>Protect positions"]
+        L4["🌍 global_market_scan<br/>⏱ 5 min<br/>VIX / indices → WebSocket"]
+        L5["💬 social_sentiment<br/>⏱ 30 min<br/>StockTwits / Reddit"]
+        L6["📝 blog_scan<br/>⏱ 30 min<br/>AI company blogs"]
+        L7["📅 event_scan<br/>⏱ 10 min<br/>Earnings / M&A"]
+        L8["⏳ pending_executor<br/>⏱ 5 min<br/>Deferred orders"]
+        L9["📧 email_reporter<br/>⏱ Daily close<br/>P&L summary"]
+    end
+```
+
+### Tech Stack
+
+```mermaid
+graph LR
+    subgraph Backend
+        FastAPI --> SQLAlchemy --> SQLite
+    end
+    subgraph AI_Models["AI Models"]
+        Ollama["Ollama (DRL70B 70B)"]
+        DeepSeek["DeepSeek-R1 API"]
+        Kronos["Kronos (A100 GPU)"]
+    end
+    subgraph Brokers
+        Alpaca
+        Futu
+        IBKR
+    end
+    subgraph Frontend
+        direction TB
+        SPA["HTML / JS / CSS"] --> WS["WebSocket"]
+        WS --> TV["TradingView Charts"]
+    end
+    subgraph Infra["Infrastructure"]
+        systemd --> HPC["University HPC Server"]
+    end
 ```
 
 ---
