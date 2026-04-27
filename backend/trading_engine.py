@@ -703,6 +703,36 @@ class TradingEngine:
 
     # ── Price / P&L helpers ───────────────────────────────────────────────────
 
+    # In-memory cache for net-deposit lookup (changes only on deposit/withdrawal,
+    # so a 1-hour TTL is plenty and avoids hitting the activities API each tick).
+    _net_deposits_cache: Dict[int, tuple] = {}  # user_id -> (value, fetched_at_ts)
+    _NET_DEPOSITS_TTL_SECONDS = 3600
+
+    def get_alpaca_net_deposits(self) -> Optional[float]:
+        """Return cumulative net deposits (CSD+JNLC+JNLS−CSW) on the Alpaca
+        account, i.e. the true cost basis for return-rate calculation. Returns
+        None if Alpaca is unavailable or the API call fails."""
+        if not self.use_alpaca or not self.alpaca:
+            return None
+
+        cached = TradingEngine._net_deposits_cache.get(self.user_id)
+        if cached:
+            value, fetched_at = cached
+            if (datetime.utcnow() - fetched_at).total_seconds() < self._NET_DEPOSITS_TTL_SECONDS:
+                return value
+
+        try:
+            total = 0.0
+            # SDK only accepts one activity_type per call.
+            for at in ("CSD", "CSW", "JNLC", "JNLS"):
+                acts = self.alpaca.get_activities(activity_types=at)
+                total += sum(float(a.net_amount) for a in acts)
+            TradingEngine._net_deposits_cache[self.user_id] = (total, datetime.utcnow())
+            return total
+        except Exception as e:
+            logger.error(f"Alpaca get_alpaca_net_deposits error: {e}")
+            return None
+
     def update_position_prices(self, prices: dict):
         positions = self.get_all_positions()
         for pos in positions:
@@ -726,7 +756,13 @@ class TradingEngine:
                 cash = float(account.cash)
                 total_equity = float(account.equity)
                 total_market_value = total_equity - cash
-                initial_cash = float(get_setting(self.db, "initial_cash", self.user_id, "100000.0"))
+                # Use real net deposits as cost basis. Falls back to the
+                # initial_cash DB setting only if the activities API errors.
+                net_deposits = self.get_alpaca_net_deposits()
+                if net_deposits is None or net_deposits <= 0:
+                    initial_cash = float(get_setting(self.db, "initial_cash", self.user_id, "100000.0"))
+                else:
+                    initial_cash = net_deposits
                 total_return = total_equity - initial_cash
                 total_return_pct = (total_return / initial_cash * 100) if initial_cash > 0 else 0
 
