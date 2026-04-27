@@ -114,6 +114,21 @@ def generate_report_html(
     inception_pct = float(alpaca_account.get("inception_pct", 0) or 0)
     inception_color = _color(inception_pnl)
 
+    # Core / satellite / cash allocation (long-term policy: 50/45/5).
+    core_etfs = {"SPY", "VOO", "IVV", "VTI", "QQQ"}
+    core_mv = sum(
+        float(p.get("qty", p.get("quantity", 0))) * float(p.get("current_price", 0))
+        for p in positions if p.get("symbol", "").upper() in core_etfs
+    )
+    satellite_mv = sum(
+        float(p.get("qty", p.get("quantity", 0))) * float(p.get("current_price", 0))
+        for p in positions if p.get("symbol", "").upper() not in core_etfs
+    )
+    core_pct = (core_mv / equity * 100) if equity > 0 else 0
+    satellite_pct = (satellite_mv / equity * 100) if equity > 0 else 0
+    cash_pct = (cash / equity * 100) if equity > 0 else 0
+    core_target = float(alpaca_account.get("core_target_pct", 50.0))
+
     # ── Positions table rows ─────────────────────────────────────────────────
     pos_rows = ""
     if positions:
@@ -369,6 +384,19 @@ def generate_report_html(
       <div><div style="font-size:12px;color:#999;">累计收益 (自首次入金)</div>
         <div style="font-size:18px;font-weight:600;color:{inception_color};">{'+' if inception_pnl >= 0 else ''}${inception_pnl:.2f} ({'+' if inception_pct >= 0 else ''}{inception_pct:.2f}%)</div>
         <div style="font-size:11px;color:#999;margin-top:2px;">本金 ${initial_cash:.2f}</div>
+      </div>
+    </div>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px dashed #ddd;">
+      <div style="font-size:12px;color:#7f8c8d;margin-bottom:6px;">组合配置 (目标 {core_target:.0f}/45/5 · 核心/卫星/现金)</div>
+      <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;background:#ecf0f1;">
+        <div style="width:{core_pct:.1f}%;background:#3498db;" title="核心 SPY"></div>
+        <div style="width:{satellite_pct:.1f}%;background:#9b59b6;" title="卫星"></div>
+        <div style="width:{cash_pct:.1f}%;background:#95a5a6;" title="现金"></div>
+      </div>
+      <div style="display:flex;gap:18px;font-size:12px;margin-top:6px;color:#555;">
+        <span>🔵 核心 (SPY): <strong>{core_pct:.1f}%</strong> (${core_mv:.2f})</span>
+        <span>🟣 卫星: <strong>{satellite_pct:.1f}%</strong> (${satellite_mv:.2f})</span>
+        <span>⚪ 现金: <strong>{cash_pct:.1f}%</strong> (${cash:.2f})</span>
       </div>
     </div>
   </div>

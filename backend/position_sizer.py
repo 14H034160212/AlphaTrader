@@ -29,6 +29,127 @@ KELLY_FRACTION   = 0.5    # half-Kelly (industry standard for imperfect signals)
 MAX_POSITION_PCT = 0.20   # max 20% of portfolio in any single name
 MIN_RR_RATIO     = 1.5    # minimum reward:risk to consider a trade
 
+# ── Long-term core / satellite framework ──────────────────────────────────────
+# Core ETFs are protected from auto stop-loss and sector exposure caps. They
+# represent the long-term passive backbone of the portfolio (S&P 500 etc.).
+CORE_ETF_WHITELIST = {"SPY", "VOO", "IVV", "VTI", "QQQ"}
+
+MAX_SECTOR_EXPOSURE_PCT = 0.20  # max 20% of equity in any single non-core sector
+
+# Symbol → sector classification. Used to enforce sector-level exposure caps,
+# preventing the LMT/NOC/RTX-style cluster failure where multiple stocks in a
+# single narrative drop together. Unmapped symbols fall through to "Other".
+SYMBOL_SECTOR = {
+    # Core ETFs — exempt from sector cap (handled separately)
+    "SPY": "Core_ETF", "VOO": "Core_ETF", "IVV": "Core_ETF",
+    "VTI": "Core_ETF", "QQQ": "Core_ETF",
+    # Mega-cap tech
+    "AAPL": "Tech", "MSFT": "Tech", "GOOGL": "Tech", "GOOG": "Tech",
+    "AMZN": "Tech", "META": "Tech", "CRM": "Tech",
+    # Semiconductors
+    "NVDA": "Semi", "AMD": "Semi", "TSM": "Semi", "AVGO": "Semi",
+    "ASML": "Semi", "INTC": "Semi", "AMAT": "Semi", "LRCX": "Semi",
+    "MRVL": "Semi", "KLAC": "Semi", "ON": "Semi", "SOXL": "Semi",
+    # Auto / EV
+    "TSLA": "Auto",
+    # Financials
+    "JPM": "Financial", "V": "Financial", "BRK.B": "Financial",
+    # Consumer
+    "COST": "Consumer", "WMT": "Consumer", "HD": "Consumer",
+    # Healthcare
+    "UNH": "Healthcare", "LLY": "Healthcare", "JNJ": "Healthcare",
+    # Energy
+    "XOM": "Energy", "OXY": "Energy", "CVX": "Energy", "BNO": "Energy",
+    "USO": "Energy", "UCO": "Energy", "MRO": "Energy", "STNG": "Energy",
+    "DHT": "Energy", "FRO": "Energy", "NAT": "Energy",
+    # Precious metals / mining
+    "GLD": "Metals", "SLV": "Metals", "IAU": "Metals", "GDX": "Metals",
+    "GOLD": "Metals", "NEM": "Metals",
+    # Uranium
+    "CCJ": "Uranium", "NLR": "Uranium", "URA": "Uranium",
+    # China / EM
+    "BIDU": "China",
+    # Crypto proxies
+    "COIN": "Crypto", "MSTR": "Crypto", "IBIT": "Crypto",
+    # Defense
+    "NOC": "Defense", "LMT": "Defense", "RTX": "Defense", "GD": "Defense",
+    "PLTR": "Defense",
+    # Cybersecurity
+    "FTNT": "Cybersecurity", "PANW": "Cybersecurity",
+    "CRWD": "Cybersecurity", "ZS": "Cybersecurity",
+    # Leverage ETFs (avoid in long-term, but cap them strictly if used)
+    "TQQQ": "Leverage_ETF",
+    # Bonds / currency
+    "TLT": "Bonds", "UUP": "Currency", "DXY": "Currency",
+}
+
+
+def get_sector(symbol: str) -> str:
+    """Return the sector label for a symbol, or 'Other' if unknown."""
+    return SYMBOL_SECTOR.get(symbol.upper(), "Other")
+
+
+def is_core_etf(symbol: str) -> bool:
+    """Return True if symbol is a long-term core ETF (protected from auto-stops)."""
+    return symbol.upper() in CORE_ETF_WHITELIST
+
+
+def sector_exposure_pct(positions: list, total_equity: float) -> dict:
+    """
+    Compute current dollar exposure per sector as % of total equity.
+    `positions` = list of dicts/objects with .symbol and .market_value (or
+    quantity*current_price).
+    Returns: {sector_name: pct_of_equity}
+    """
+    if total_equity <= 0:
+        return {}
+    by_sector: dict = {}
+    for p in positions:
+        sym = getattr(p, "symbol", None) or p.get("symbol")
+        if not sym:
+            continue
+        mv = getattr(p, "market_value", None)
+        if mv is None:
+            qty = getattr(p, "quantity", None) or p.get("quantity", 0)
+            cur = getattr(p, "current_price", None) or p.get("current_price", 0)
+            mv = float(qty) * float(cur)
+        sector = get_sector(sym)
+        by_sector[sector] = by_sector.get(sector, 0.0) + float(mv)
+    return {k: round(v / total_equity * 100, 2) for k, v in by_sector.items()}
+
+
+def would_breach_sector_cap(
+    symbol: str,
+    new_dollars: float,
+    positions: list,
+    total_equity: float,
+    cap_pct: float = MAX_SECTOR_EXPOSURE_PCT,
+) -> tuple:
+    """
+    Check if adding `new_dollars` of `symbol` would push its sector over the cap.
+    Returns (would_breach: bool, current_pct: float, projected_pct: float, sector: str).
+    Core ETFs are exempt — always returns (False, ..., 'Core_ETF').
+    """
+    sector = get_sector(symbol)
+    if sector == "Core_ETF":
+        return False, 0.0, 0.0, sector
+    if total_equity <= 0:
+        return False, 0.0, 0.0, sector
+    current_dollars = 0.0
+    for p in positions:
+        sym = getattr(p, "symbol", None) or p.get("symbol")
+        if not sym or get_sector(sym) != sector:
+            continue
+        mv = getattr(p, "market_value", None)
+        if mv is None:
+            qty = getattr(p, "quantity", None) or p.get("quantity", 0)
+            cur = getattr(p, "current_price", None) or p.get("current_price", 0)
+            mv = float(qty) * float(cur)
+        current_dollars += float(mv)
+    current_pct = current_dollars / total_equity
+    projected_pct = (current_dollars + new_dollars) / total_equity
+    return projected_pct > cap_pct, current_pct, projected_pct, sector
+
 
 def kelly_fraction(confidence: float, reward: float, risk: float) -> float:
     """
