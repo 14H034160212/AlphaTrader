@@ -2714,10 +2714,19 @@ async def background_email_reporter():
                         engine = TradingEngine(db, 1)
                         if engine.alpaca:
                             acct = engine.alpaca.get_account()
+                            equity_v = float(acct.equity)
+                            net_deposits = engine.get_alpaca_net_deposits()
+                            if net_deposits is None or net_deposits <= 0:
+                                net_deposits = float(get_setting(db, "initial_cash", 1, "100000.0"))
+                            inception_pnl = equity_v - net_deposits
+                            inception_pct = (inception_pnl / net_deposits * 100) if net_deposits > 0 else 0
                             alpaca_account = {
-                                "equity": float(acct.equity),
+                                "equity": equity_v,
                                 "cash": float(acct.cash),
-                                "unrealized_pl": float(acct.equity) - float(acct.last_equity),
+                                "unrealized_pl": equity_v - float(acct.last_equity),
+                                "initial_cash": net_deposits,
+                                "inception_pnl": inception_pnl,
+                                "inception_pct": inception_pct,
                             }
                             raw_positions = engine.alpaca.list_positions()
                             positions = [

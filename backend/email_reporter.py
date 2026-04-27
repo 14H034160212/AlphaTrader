@@ -108,6 +108,12 @@ def generate_report_html(
     total_unrealized_pct = (total_unrealized / total_cost_basis * 100) if total_cost_basis > 0 else 0
     unrealized_color = _color(total_unrealized)
 
+    # Lifetime return since first funding (equity − net deposits).
+    initial_cash = float(alpaca_account.get("initial_cash", 0) or 0)
+    inception_pnl = float(alpaca_account.get("inception_pnl", 0) or 0)
+    inception_pct = float(alpaca_account.get("inception_pct", 0) or 0)
+    inception_color = _color(inception_pnl)
+
     # ── Positions table rows ─────────────────────────────────────────────────
     pos_rows = ""
     if positions:
@@ -359,6 +365,10 @@ def generate_report_html(
       </div>
       <div><div style="font-size:12px;color:#999;">总浮动盈亏</div>
         <div style="font-size:18px;font-weight:600;color:{unrealized_color};">{'+' if total_unrealized >= 0 else ''}${total_unrealized:.2f} ({'+' if total_unrealized_pct >= 0 else ''}{total_unrealized_pct:.2f}%)</div>
+      </div>
+      <div><div style="font-size:12px;color:#999;">累计收益 (自首次入金)</div>
+        <div style="font-size:18px;font-weight:600;color:{inception_color};">{'+' if inception_pnl >= 0 else ''}${inception_pnl:.2f} ({'+' if inception_pct >= 0 else ''}{inception_pct:.2f}%)</div>
+        <div style="font-size:11px;color:#999;margin-top:2px;">本金 ${initial_cash:.2f}</div>
       </div>
     </div>
   </div>
