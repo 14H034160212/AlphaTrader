@@ -97,7 +97,8 @@ async def lifespan(app: FastAPI):
     task10 = asyncio.create_task(background_email_reply_checker())
     task11 = asyncio.create_task(background_stop_loss_monitor())
     task12 = asyncio.create_task(background_global_market_scan())
-    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan")
+    task13 = asyncio.create_task(background_dca_core_etf())
+    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf")
     yield
     task1.cancel()
     task2.cancel()
@@ -111,6 +112,7 @@ async def lifespan(app: FastAPI):
     task10.cancel()
     task11.cancel()
     task12.cancel()
+    task13.cancel()
     logger.info("Shutting down trading platform")
 
 
@@ -2727,6 +2729,7 @@ async def background_email_reporter():
                                 "initial_cash": net_deposits,
                                 "inception_pnl": inception_pnl,
                                 "inception_pct": inception_pct,
+                                "core_target_pct": float(get_setting(db, "core_target_pct", 1, "50.0")),
                             }
                             raw_positions = engine.alpaca.list_positions()
                             positions = [
@@ -3341,7 +3344,28 @@ async def background_stop_loss_monitor():
                         )
                         qty_available = max(0.0, total_qty - locked_qty)
 
-                        if loss_pct < -stop_loss_pct:
+                        # Long-term core ETFs (SPY/VOO/QQQ) are protected — never
+                        # auto-stopped. User decides exit manually.
+                        if ps.is_core_etf(symbol):
+                            continue
+
+                        # Compute ATR-adaptive threshold per symbol. Wider stops
+                        # for volatile stocks, tighter for low-vol ones. Falls
+                        # back to fixed stop_loss_pct setting if ATR unavailable.
+                        adaptive_threshold = stop_loss_pct
+                        try:
+                            indicators = md.get_technical_indicators(symbol)
+                            atr = (indicators or {}).get("atr14", 0) or 0
+                            avg_entry = float(ap.avg_entry_price)
+                            if atr > 0 and avg_entry > 0:
+                                # 2.5×ATR translated into a % of entry, clamped
+                                # to [stop_loss_pct, 15%] so we never give up >15%.
+                                atr_pct = (2.5 * atr / avg_entry) * 100
+                                adaptive_threshold = max(stop_loss_pct, min(atr_pct, 15.0))
+                        except Exception as _atr_err:
+                            logger.debug(f"[StopLoss] {symbol} ATR fetch error: {_atr_err}")
+
+                        if loss_pct < -adaptive_threshold:
                             # Skip if an open sell order already covers this position
                             if symbol in pending_sells:
                                 logger.info(
@@ -3356,7 +3380,8 @@ async def background_stop_loss_monitor():
 
                             logger.warning(
                                 f"[StopLoss] {symbol} TRIGGERED: {loss_pct:.2f}% "
-                                f"(threshold -{stop_loss_pct}%) — selling {qty_available:.4f} available shares @ ${curr_price:.2f}"
+                                f"(threshold -{adaptive_threshold:.2f}% [ATR-adaptive]) — "
+                                f"selling {qty_available:.4f} available shares @ ${curr_price:.2f}"
                             )
                             result = engine.execute_sell(
                                 symbol, qty_available, curr_price,
@@ -3364,7 +3389,8 @@ async def background_stop_loss_monitor():
                                 confidence=1.0,
                                 reasoning=(
                                     f"[STOP-LOSS] Unrealized loss {loss_pct:.2f}% exceeded "
-                                    f"-{stop_loss_pct}% threshold. Auto-liquidating to protect capital."
+                                    f"-{adaptive_threshold:.2f}% ATR-adaptive threshold. "
+                                    f"Auto-liquidating to protect capital."
                                 ),
                             )
                             if result.get("success"):
@@ -3383,6 +3409,109 @@ async def background_stop_loss_monitor():
         except Exception as e:
             logger.error(f"[StopLoss] Monitor error: {e}")
         await asyncio.sleep(300)  # check every 5 minutes
+
+
+async def background_dca_core_etf():
+    """
+    Task 13 — Monthly Dollar-Cost-Averaging into the long-term core ETF (SPY).
+
+    On the configured day-of-month (default: 1st trading day of the month),
+    spends `dca_pct_of_cash` (default 50%) of available cash on the configured
+    `core_etf_symbol` (default SPY). Skips automatically if:
+      - DCA disabled
+      - Already DCA'd this month
+      - Market closed
+      - Available cash below $10 (avoids dust trades)
+
+    The point is to gradually rebuild the 50/45/5 core/satellite/cash mix
+    without forcing a panic-sell of profitable satellite positions.
+    """
+    await asyncio.sleep(300)  # let server settle before first DCA check
+    while True:
+        try:
+            now = datetime.utcnow()
+            db = next(get_db())
+            try:
+                users = db.query(User).all()
+                for user in users:
+                    dca_enabled = get_setting(db, "dca_enabled", user.id, "false") == "true"
+                    if not dca_enabled:
+                        continue
+
+                    target_day = int(get_setting(db, "dca_day_of_month", user.id, "1"))
+                    pct_of_cash = float(get_setting(db, "dca_pct_of_cash", user.id, "50.0")) / 100
+                    core_symbol = get_setting(db, "core_etf_symbol", user.id, "SPY")
+                    last_run_str = get_setting(db, "dca_last_run", user.id, "")
+
+                    # Already ran in current month?
+                    if last_run_str:
+                        try:
+                            last_run = datetime.fromisoformat(last_run_str)
+                            if last_run.year == now.year and last_run.month == now.month:
+                                continue
+                        except Exception:
+                            pass
+
+                    # Run on or after target day-of-month, weekday only
+                    if now.day < target_day or now.weekday() >= 5:
+                        continue
+                    # US market hours only (14:30 — 21:00 UTC ≈ 9:30am — 4pm ET)
+                    if not (14 <= now.hour < 21):
+                        continue
+
+                    engine = TradingEngine(db, user.id)
+                    if not engine.alpaca:
+                        continue
+                    try:
+                        acct = engine.alpaca.get_account()
+                        cash = float(acct.cash)
+                    except Exception as e:
+                        logger.error(f"[DCA] {user.username} cash fetch error: {e}")
+                        continue
+
+                    spend = round(cash * pct_of_cash, 2)
+                    if spend < 10.0:
+                        logger.info(
+                            f"[DCA] {user.username} skipped — only ${spend:.2f} available "
+                            f"({pct_of_cash*100:.0f}% of ${cash:.2f}), below $10 minimum"
+                        )
+                        set_setting(db, "dca_last_run", now.isoformat(), user.id)
+                        continue
+
+                    quote = md.get_stock_quote(core_symbol)
+                    if not quote or not quote.get("current"):
+                        logger.warning(f"[DCA] {core_symbol} quote unavailable, skipping today")
+                        continue
+                    price = float(quote["current"])
+                    qty = round(spend / price, 4)
+                    if qty < 0.001:
+                        continue
+
+                    logger.info(
+                        f"[DCA] {user.username} buying {qty} {core_symbol} @ ${price:.2f} "
+                        f"(${spend:.2f} = {pct_of_cash*100:.0f}% of ${cash:.2f} cash)"
+                    )
+                    result = engine.execute_buy(
+                        core_symbol, qty, price,
+                        ai_triggered=True,
+                        confidence=1.0,
+                        reasoning=f"[DCA] Monthly core-ETF buy ({pct_of_cash*100:.0f}% of available cash)",
+                    )
+                    if result.get("success"):
+                        set_setting(db, "dca_last_run", now.isoformat(), user.id)
+                        await broadcast({
+                            "type": "dca_executed",
+                            "symbol": core_symbol,
+                            "qty": qty, "price": price, "spent": spend,
+                        })
+                        logger.info(f"[DCA] {core_symbol} buy filled: {result}")
+                    else:
+                        logger.error(f"[DCA] {core_symbol} buy failed: {result}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[DCA] Loop error: {e}")
+        await asyncio.sleep(3600)  # check hourly; only acts once per month per user
 
 
 if __name__ == "__main__":

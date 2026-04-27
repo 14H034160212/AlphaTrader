@@ -580,6 +580,39 @@ class TradingEngine:
                     quantity = min(quantity, abs(pos.quantity))
                 else:
                     return {"success": False, "skipped": True, "reason": "No short position to cover"}
+
+            # Sector exposure cap (BUY only). Core ETFs exempt. Prevents
+            # cluster failure where multiple stocks in one narrative drop
+            # together (e.g. defense LMT/NOC/RTX March 2026).
+            if action == "BUY" and not ps.is_core_etf(symbol):
+                cap_pct = float(get_setting(self.db, "max_sector_exposure_pct", self.user_id, "20.0")) / 100
+                positions_for_check: list = []
+                if self.use_alpaca:
+                    try:
+                        for ap in self.alpaca.list_positions():
+                            positions_for_check.append({
+                                "symbol": ap.symbol,
+                                "market_value": float(ap.market_value),
+                            })
+                    except Exception:
+                        pass
+                else:
+                    positions_for_check = [
+                        {"symbol": p.symbol, "market_value": p.quantity * p.current_price}
+                        for p in self.get_all_positions()
+                    ]
+                breach, cur_pct, proj_pct, sector = ps.would_breach_sector_cap(
+                    symbol, risk_amount, positions_for_check, total_equity, cap_pct,
+                )
+                if breach:
+                    return {
+                        "success": False, "skipped": True,
+                        "reason": (
+                            f"Sector cap: {sector} would go from {cur_pct*100:.1f}% "
+                            f"to {proj_pct*100:.1f}% (cap {cap_pct*100:.0f}%)"
+                        ),
+                    }
+
             return self.execute_buy(symbol, quantity, current_price, True, confidence, reasoning)
 
         elif action in ("SELL", "SHORT"):
@@ -603,7 +636,7 @@ class TradingEngine:
 
     # ── Cash Reserve & Auto-Rebalance ─────────────────────────────────────────
 
-    CASH_RESERVE_PCT = 0.15  # Always keep 15% cash for breaking-news opportunities
+    CASH_RESERVE_PCT = 0.05  # default 5% cash floor; user can override via DB setting
 
     def get_cash_reserve_status(self) -> dict:
         """Check if we have enough cash reserve. Returns status + how much to free."""
@@ -618,7 +651,10 @@ class TradingEngine:
             for p in self.get_all_positions():
                 total_equity += p.quantity * p.current_price
 
-        target_cash = total_equity * self.CASH_RESERVE_PCT
+        cash_reserve_pct = float(get_setting(
+            self.db, "cash_reserve_pct", self.user_id, str(self.CASH_RESERVE_PCT * 100)
+        )) / 100
+        target_cash = total_equity * cash_reserve_pct
         shortfall = max(0, target_cash - cash)
         return {
             "cash": cash,
