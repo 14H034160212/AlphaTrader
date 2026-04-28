@@ -669,8 +669,13 @@ class TradingEngine:
         """
         Rank all open positions by priority (worst first = sell candidates).
         Scoring: losing positions with no recent positive catalyst get lowest scores.
+        Core ETFs (SPY/VOO/QQQ) are excluded — they are long-term holdings
+        protected from auto-liquidation, only sold by user decision.
         """
-        positions = [p for p in self.get_all_positions() if p.quantity > 0.001]
+        positions = [
+            p for p in self.get_all_positions()
+            if p.quantity > 0.001 and not ps.is_core_etf(p.symbol)
+        ]
         if not positions:
             return []
 
