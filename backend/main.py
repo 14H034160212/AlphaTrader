@@ -98,7 +98,8 @@ async def lifespan(app: FastAPI):
     task11 = asyncio.create_task(background_stop_loss_monitor())
     task12 = asyncio.create_task(background_global_market_scan())
     task13 = asyncio.create_task(background_dca_core_etf())
-    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf")
+    task14 = asyncio.create_task(background_one_shot_rebalance())
+    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance")
     yield
     task1.cancel()
     task2.cancel()
@@ -113,6 +114,7 @@ async def lifespan(app: FastAPI):
     task11.cancel()
     task12.cancel()
     task13.cancel()
+    task14.cancel()
     logger.info("Shutting down trading platform")
 
 
@@ -3409,6 +3411,178 @@ async def background_stop_loss_monitor():
         except Exception as e:
             logger.error(f"[StopLoss] Monitor error: {e}")
         await asyncio.sleep(300)  # check every 5 minutes
+
+
+async def background_one_shot_rebalance():
+    """
+    Task 14 — One-shot policy rebalance executor.
+
+    When DB setting `pending_policy_rebalance == 'true'`, on the next
+    market-open tick this task:
+      1. Sells every position whose sector is NOT in the satellite-tech
+         whitelist (Tech/Semi/Auto/China/Crypto/Cybersecurity), keeping
+         core ETFs and tech-flavored satellites untouched.
+      2. Refreshes account state and buys the configured core ETF (SPY)
+         until it reaches `core_target_pct`.
+      3. Clears the flag and records `policy_rebalance_completed_at`.
+
+    Idempotent on retry — sell list and SPY buy size are recomputed each
+    tick from current state, so a partial run resumes safely.
+    """
+    SATELLITE_KEEP_SECTORS = {
+        "Tech", "Semi", "Auto", "China", "Crypto", "Cybersecurity"
+    }
+
+    await asyncio.sleep(60)
+    while True:
+        try:
+            db = next(get_db())
+            try:
+                users = db.query(User).all()
+                for user in users:
+                    pending = get_setting(db, "pending_policy_rebalance", user.id, "false")
+                    if pending != "true":
+                        continue
+
+                    engine = TradingEngine(db, user.id)
+                    if not engine.alpaca:
+                        continue
+
+                    try:
+                        clock = engine.alpaca.get_clock()
+                        if not clock.is_open:
+                            continue
+                    except Exception as e:
+                        logger.error(f"[Rebalance] clock fetch failed: {e}")
+                        continue
+
+                    target_core_pct = float(
+                        get_setting(db, "core_target_pct", user.id, "50.0")
+                    ) / 100
+                    core_symbol = get_setting(db, "core_etf_symbol", user.id, "SPY").upper()
+
+                    try:
+                        positions = engine.alpaca.list_positions()
+                    except Exception as e:
+                        logger.error(f"[Rebalance] positions fetch failed: {e}")
+                        continue
+
+                    # ── Step 1: sell non-tech satellites ─────────────────────
+                    sells_done = []
+                    for p in positions:
+                        sym = p.symbol.upper()
+                        qty = float(p.qty)
+                        mv = abs(float(p.market_value))
+                        sector = ps.get_sector(sym)
+
+                        if ps.is_core_etf(sym):
+                            continue
+                        if mv < 1.0:
+                            continue
+                        if sector in SATELLITE_KEEP_SECTORS:
+                            logger.info(
+                                f"[Rebalance] keep {sym} (sector={sector}, mv=${mv:.2f})"
+                            )
+                            continue
+
+                        cur_price = float(p.current_price)
+                        result = engine.execute_sell(
+                            sym, qty, cur_price,
+                            ai_triggered=True, confidence=1.0,
+                            reasoning=(
+                                f"[POLICY-REBALANCE] Selling non-tech sector "
+                                f"({sector}) to fund core {core_symbol} allocation"
+                            ),
+                        )
+                        if result.get("success"):
+                            sells_done.append({"symbol": sym, "mv": mv, "sector": sector})
+                            logger.warning(
+                                f"[Rebalance] SOLD {sym} qty={qty} (~${mv:.2f}, {sector})"
+                            )
+                            await broadcast({
+                                "type": "policy_rebalance_sell",
+                                "symbol": sym, "qty": qty, "mv": mv, "sector": sector,
+                            })
+                        else:
+                            logger.error(f"[Rebalance] {sym} sell failed: {result}")
+
+                    if sells_done:
+                        await asyncio.sleep(20)  # let market orders fill
+
+                    # ── Step 2: buy core ETF up to target ───────────────────
+                    try:
+                        acct = engine.alpaca.get_account()
+                        positions_now = engine.alpaca.list_positions()
+                    except Exception as e:
+                        logger.error(f"[Rebalance] post-sell fetch failed: {e}")
+                        continue
+
+                    total_equity = float(acct.equity)
+                    cash_avail = float(acct.cash)
+                    existing_core_mv = sum(
+                        float(p.market_value) for p in positions_now
+                        if p.symbol.upper() == core_symbol
+                    )
+                    target_core_dollars = total_equity * target_core_pct
+                    core_dollars_to_buy = max(0, target_core_dollars - existing_core_mv)
+                    # Leave a tiny buffer to avoid insufficient funds rejection
+                    core_dollars_to_buy = min(core_dollars_to_buy, cash_avail - 0.50)
+
+                    if core_dollars_to_buy < 1.0:
+                        logger.info(
+                            f"[Rebalance] no {core_symbol} buy needed "
+                            f"(existing=${existing_core_mv:.2f}, cash=${cash_avail:.2f})"
+                        )
+                    else:
+                        quote = md.get_stock_quote(core_symbol)
+                        if not quote or not quote.get("current"):
+                            logger.error(f"[Rebalance] {core_symbol} quote unavailable, retry next tick")
+                            continue
+                        core_price = float(quote["current"])
+                        core_qty = round(core_dollars_to_buy / core_price, 4)
+                        if core_qty < 0.001:
+                            logger.info(f"[Rebalance] {core_symbol} qty too small, skip")
+                        else:
+                            result = engine.execute_buy(
+                                core_symbol, core_qty, core_price,
+                                ai_triggered=True, confidence=1.0,
+                                reasoning=(
+                                    f"[POLICY-REBALANCE] Buying core ETF to "
+                                    f"{target_core_pct*100:.0f}% target allocation"
+                                ),
+                            )
+                            if result.get("success"):
+                                logger.warning(
+                                    f"[Rebalance] BOUGHT {core_qty} {core_symbol} "
+                                    f"@ ${core_price:.2f} (~${core_dollars_to_buy:.2f})"
+                                )
+                                await broadcast({
+                                    "type": "policy_rebalance_buy",
+                                    "symbol": core_symbol, "qty": core_qty,
+                                    "price": core_price, "spent": core_dollars_to_buy,
+                                })
+                            else:
+                                logger.error(f"[Rebalance] {core_symbol} buy failed: {result}")
+                                continue  # leave flag set, retry next tick
+
+                    # ── Step 3: clear flag, log completion ──────────────────
+                    set_setting(db, "pending_policy_rebalance", "false", user.id)
+                    set_setting(db, "policy_rebalance_completed_at",
+                                datetime.utcnow().isoformat(), user.id)
+                    sells_summary = ", ".join(s["symbol"] for s in sells_done) or "none"
+                    logger.warning(
+                        f"[Rebalance] COMPLETE for {user.username} — sold: {sells_summary}; "
+                        f"core={core_symbol} target={target_core_pct*100:.0f}%"
+                    )
+                    await broadcast({
+                        "type": "policy_rebalance_complete",
+                        "user": user.username, "sells": sells_done,
+                    })
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[Rebalance] loop error: {e}")
+        await asyncio.sleep(60)
 
 
 async def background_dca_core_etf():
