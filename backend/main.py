@@ -34,6 +34,7 @@ import cot_data as cot
 import position_sizer as ps
 import global_context as gc
 import scenario_tracker as st
+import hk_ipo_scanner as hk_ipo
 from trading_engine import TradingEngine
 from database import create_tables, get_db, get_setting, set_setting, Trade, AISignal, WatchedStock, Settings, User, PendingTrade, SignalArchive
 from auth import get_current_user, create_access_token, get_password_hash, verify_password
@@ -99,7 +100,8 @@ async def lifespan(app: FastAPI):
     task12 = asyncio.create_task(background_global_market_scan())
     task13 = asyncio.create_task(background_dca_core_etf())
     task14 = asyncio.create_task(background_one_shot_rebalance())
-    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance")
+    task15 = asyncio.create_task(background_hk_ipo_scan())
+    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan")
     yield
     task1.cancel()
     task2.cancel()
@@ -115,6 +117,7 @@ async def lifespan(app: FastAPI):
     task12.cancel()
     task13.cancel()
     task14.cancel()
+    task15.cancel()
     logger.info("Shutting down trading platform")
 
 
@@ -477,6 +480,26 @@ async def background_auto_trade_loop():
                 ai_provider = get_setting(db, "ai_provider", user.id, "ollama")
                 watchlist_json = get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST))
                 watchlist = json.loads(watchlist_json)
+
+                # ⚠️ HK IPO priority injection (per user 2026-05-03):
+                # Newly-listed HK tech tickers go to the FRONT of the scan queue
+                # so the AI evaluates them first. Sector cap (5%) is enforced
+                # downstream in trading_engine.auto_trade.
+                hk_ipo_enabled = get_setting(db, "hk_ipo_priority_enabled", user.id, "true") == "true"
+                if hk_ipo_enabled:
+                    try:
+                        ipo_json = get_setting(db, "hk_ipo_watchlist", 1, "[]")
+                        ipo_list = json.loads(ipo_json)
+                        ipo_syms = [r["symbol"] for r in ipo_list if r.get("symbol")]
+                        if ipo_syms:
+                            non_ipo = [s for s in watchlist if s not in ipo_syms]
+                            watchlist = ipo_syms + non_ipo
+                            logger.warning(
+                                f"[AutoTrade] ⚠️  HK_IPO_PRIORITY: front-loaded "
+                                f"{len(ipo_syms)} new HK tech IPOs into scan queue"
+                            )
+                    except Exception as _ipo_e:
+                        logger.warning(f"[AutoTrade] HK IPO priority injection failed: {_ipo_e}")
 
                 engine = TradingEngine(db, user.id)
 
@@ -3411,6 +3434,64 @@ async def background_stop_loss_monitor():
         except Exception as e:
             logger.error(f"[StopLoss] Monitor error: {e}")
         await asyncio.sleep(300)  # check every 5 minutes
+
+
+async def background_hk_ipo_scan():
+    """
+    Task 15 — Recent HK tech IPO discovery (per user request, 2026-05-03).
+
+    ⚠️  HIGH-RISK STRATEGY by user direction:
+        Newly-listed HK tech stocks get top trading priority.
+        Hard caps applied upstream:
+          • Per-name: 3% of equity (HK_IPO_MAX_NAME_PCT)
+          • Sector total: 5% of equity (HK_IPO_NEW in SECTOR_CAP_OVERRIDES)
+        Disable by setting `hk_ipo_priority_enabled=false`.
+
+    Refreshes the IPO watchlist once per hour. The list is consumed
+    upstream by:
+      - position_sizer.get_sector() — tags these as HK_IPO_NEW
+      - background_auto_trade_loop — prioritizes these symbols first
+    """
+    await asyncio.sleep(180)
+    last_refresh: datetime = datetime.min
+    while True:
+        try:
+            db = next(get_db())
+            try:
+                enabled = get_setting(db, "hk_ipo_priority_enabled", 1, "true") == "true"
+                if not enabled:
+                    ps.register_hk_ipos([])
+                    set_setting(db, "hk_ipo_watchlist", "[]", 1)
+                    await asyncio.sleep(3600)
+                    continue
+
+                # Throttle: refresh hourly to avoid hammering AAStocks
+                if (datetime.utcnow() - last_refresh).total_seconds() < 3600:
+                    await asyncio.sleep(300)
+                    continue
+
+                ipos = await asyncio.get_event_loop().run_in_executor(
+                    None, hk_ipo.get_recent_hk_tech_ipos
+                )
+                last_refresh = datetime.utcnow()
+
+                symbols = [r["symbol"] for r in ipos]
+                ps.register_hk_ipos(symbols)
+                set_setting(db, "hk_ipo_watchlist", json.dumps(ipos), 1)
+
+                if symbols:
+                    logger.warning(
+                        f"[HK_IPO] ⚠️  {len(symbols)} new HK tech IPOs registered "
+                        f"with HIGH PRIORITY (5% sector cap, 3% per name): "
+                        f"{', '.join(symbols[:8])}{'...' if len(symbols) > 8 else ''}"
+                    )
+                else:
+                    logger.info("[HK_IPO] No recent HK tech IPOs found this scan")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[HK_IPO] scan error: {e}")
+        await asyncio.sleep(600)  # re-check every 10 min; refresh gated to hourly
 
 
 async def background_one_shot_rebalance():
