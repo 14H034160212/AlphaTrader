@@ -36,6 +36,12 @@ CORE_ETF_WHITELIST = {"SPY", "VOO", "IVV", "VTI", "QQQ"}
 
 MAX_SECTOR_EXPOSURE_PCT = 0.20  # max 20% of equity in any single non-core sector
 
+# Per-sector overrides for special-risk categories. These hard-cap exposure
+# tighter than the general 20% rule. Used by would_breach_sector_cap().
+SECTOR_CAP_OVERRIDES_PCT = {
+    "HK_IPO_NEW": 0.05,    # newly-listed HK IPOs — 5% total exposure cap
+}
+
 # Symbol → sector classification. Used to enforce sector-level exposure caps,
 # preventing the LMT/NOC/RTX-style cluster failure where multiple stocks in a
 # single narrative drop together. Unmapped symbols fall through to "Other".
@@ -84,9 +90,27 @@ SYMBOL_SECTOR = {
 }
 
 
+# Runtime-registered HK IPO tickers — populated by hk_ipo_scanner. These get
+# the synthetic 'HK_IPO_NEW' sector tag so they hit the 5% cap regardless of
+# what (if anything) is in SYMBOL_SECTOR.
+_RUNTIME_HK_IPO_SET: set = set()
+
+
+def register_hk_ipos(symbols: list) -> int:
+    """Replace the runtime HK-IPO set. Returns the new count."""
+    global _RUNTIME_HK_IPO_SET
+    _RUNTIME_HK_IPO_SET = {s.upper().strip() for s in symbols if s}
+    return len(_RUNTIME_HK_IPO_SET)
+
+
 def get_sector(symbol: str) -> str:
-    """Return the sector label for a symbol, or 'Other' if unknown."""
-    return SYMBOL_SECTOR.get(symbol.upper(), "Other")
+    """Return the sector label for a symbol, or 'Other' if unknown.
+    HK IPO tickers registered via register_hk_ipos() take precedence over
+    the static SYMBOL_SECTOR map so their 5% cap is applied."""
+    sym = symbol.upper()
+    if sym in _RUNTIME_HK_IPO_SET:
+        return "HK_IPO_NEW"
+    return SYMBOL_SECTOR.get(sym, "Other")
 
 
 def is_core_etf(symbol: str) -> bool:
@@ -129,10 +153,14 @@ def would_breach_sector_cap(
     Check if adding `new_dollars` of `symbol` would push its sector over the cap.
     Returns (would_breach: bool, current_pct: float, projected_pct: float, sector: str).
     Core ETFs are exempt — always returns (False, ..., 'Core_ETF').
+    Sectors with explicit overrides in SECTOR_CAP_OVERRIDES_PCT use the
+    tighter limit (e.g. HK_IPO_NEW capped at 5% regardless of caller arg).
     """
     sector = get_sector(symbol)
     if sector == "Core_ETF":
         return False, 0.0, 0.0, sector
+    # Apply tighter override cap if defined for this sector
+    cap_pct = min(cap_pct, SECTOR_CAP_OVERRIDES_PCT.get(sector, cap_pct))
     if total_equity <= 0:
         return False, 0.0, 0.0, sector
     current_dollars = 0.0
