@@ -56,6 +56,7 @@ SYMBOL_SECTOR = {
     "NVDA": "Semi", "AMD": "Semi", "TSM": "Semi", "AVGO": "Semi",
     "ASML": "Semi", "INTC": "Semi", "AMAT": "Semi", "LRCX": "Semi",
     "MRVL": "Semi", "KLAC": "Semi", "ON": "Semi", "SOXL": "Semi",
+    "MU": "Semi", "QCOM": "Semi", "ARM": "Semi",
     # Auto / EV
     "TSLA": "Auto",
     # Financials
