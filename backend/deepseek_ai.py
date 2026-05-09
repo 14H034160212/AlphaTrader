@@ -58,9 +58,24 @@ def _call_deepseek_api(api_key, messages, max_tokens=2000, temperature=0.1):
     return data["choices"][0]["message"]["content"]
 
 
+def _get_ollama_host() -> str:
+    """Resolve Ollama host URL from DB setting (default: localhost:11434).
+    Set to 'http://localhost:11435' to point at the user-level Ollama
+    instance with newer models like qwen3.5:35b."""
+    try:
+        from database import SessionLocal, get_setting
+        db = SessionLocal()
+        try:
+            return get_setting(db, "ollama_host", 1, "http://localhost:11434").rstrip("/")
+        finally:
+            db.close()
+    except Exception:
+        return "http://localhost:11434"
+
+
 def _call_ollama(messages, temperature=0.1):
     """Make a raw HTTP call to local Ollama API."""
-    url = "http://localhost:11434/api/chat"
+    url = f"{_get_ollama_host()}/api/chat"
     payload = {
         "model": _get_model_name("ollama"),
         "messages": messages,
