@@ -1,15 +1,41 @@
 """DeepSeek-R1 AI integration using raw HTTP requests (no openai SDK required)."""
 import json
 import logging
+import os
 import requests
 from datetime import datetime, timedelta
 import time
 
 logger = logging.getLogger(__name__)
 
-DEEPSEEK_MODEL = "deepseek-reasoner"  # DeepSeek API Model
-OLLAMA_MODEL = "DRL70B:latest"        # Local DeepSeek-R1 70B via Ollama
+# Model names are DB-configurable so you can switch without code changes:
+#   sqlite> UPDATE settings SET value='qwen3.5:35b-a3b'
+#           WHERE user_id=1 AND key='ollama_model';
+# Defaults below are used only when the DB setting is absent.
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"  # was "deepseek-reasoner" (deprecated 2026-07-24)
+DEFAULT_OLLAMA_MODEL   = "DRL70B:latest"     # DeepSeek-R1-Distill-Llama-70B Q4
+
+# Backward-compatible module-level constants (legacy code paths still read these)
+DEEPSEEK_MODEL = DEFAULT_DEEPSEEK_MODEL
+OLLAMA_MODEL   = DEFAULT_OLLAMA_MODEL
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/chat/completions"
+
+
+def _get_model_name(provider: str) -> str:
+    """Resolve the active model name from DB settings, falling back to defaults.
+    Avoids importing database at module load by lazy-importing here."""
+    try:
+        from database import SessionLocal, get_setting
+        db = SessionLocal()
+        try:
+            if provider == "deepseek_api":
+                return get_setting(db, "deepseek_model", 1, DEFAULT_DEEPSEEK_MODEL)
+            return get_setting(db, "ollama_model", 1, DEFAULT_OLLAMA_MODEL)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug(f"[AI] model setting lookup failed, using default: {e}")
+        return DEFAULT_DEEPSEEK_MODEL if provider == "deepseek_api" else DEFAULT_OLLAMA_MODEL
 
 
 def _call_deepseek_api(api_key, messages, max_tokens=2000, temperature=0.1):
@@ -21,7 +47,7 @@ def _call_deepseek_api(api_key, messages, max_tokens=2000, temperature=0.1):
         "Content-Type": "application/json",
     }
     payload = {
-        "model": DEEPSEEK_MODEL,
+        "model": _get_model_name("deepseek_api"),
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
@@ -36,7 +62,7 @@ def _call_ollama(messages, temperature=0.1):
     """Make a raw HTTP call to local Ollama API."""
     url = "http://localhost:11434/api/chat"
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": _get_model_name("ollama"),
         "messages": messages,
         "stream": False,
         "options": {
@@ -96,7 +122,7 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
             "target_price": None,
             "stop_loss": None,
             "reasoning": "未配置 DeepSeek API Key。请在设置页面中添加 API Key，或切换为本地大模型 (Ollama)。",
-            "model": DEEPSEEK_MODEL,
+            "model": _get_model_name("deepseek_api"),
             "timestamp": datetime.utcnow().isoformat()
         }
 
@@ -244,10 +270,10 @@ Respond ONLY with valid JSON (no markdown):
 
         if ai_provider == "ollama":
             content = _call_ollama(messages, temperature=0.1)
-            used_model = OLLAMA_MODEL
+            used_model = _get_model_name("ollama")
         else:
             content = _call_deepseek_api(api_key, messages, max_tokens=2000, temperature=0.1)
-            used_model = DEEPSEEK_MODEL
+            used_model = _get_model_name("deepseek_api")
 
         # Strip markdown if present
         content = content.strip()
