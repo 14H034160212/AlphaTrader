@@ -74,8 +74,9 @@ SYMBOL_SECTOR = {
     "GOLD": "Metals", "NEM": "Metals",
     # Uranium
     "CCJ": "Uranium", "NLR": "Uranium", "URA": "Uranium",
-    # China / EM
-    "BIDU": "China",
+    # China / EM (ADRs trading on US exchanges via Alpaca)
+    "BIDU": "China", "BABA": "China", "JD": "China",
+    "PDD": "China", "NTES": "China", "TCOM": "China",
     # Crypto proxies
     "COIN": "Crypto", "MSTR": "Crypto", "IBIT": "Crypto",
     # Defense
