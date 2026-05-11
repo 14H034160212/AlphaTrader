@@ -35,6 +35,7 @@ import position_sizer as ps
 import global_context as gc
 import scenario_tracker as st
 import hk_ipo_scanner as hk_ipo
+import tax_reporter as tax
 from trading_engine import TradingEngine
 from database import create_tables, get_db, get_setting, set_setting, Trade, AISignal, WatchedStock, Settings, User, PendingTrade, SignalArchive
 from auth import get_current_user, create_access_token, get_password_hash, verify_password
@@ -102,7 +103,8 @@ async def lifespan(app: FastAPI):
     task14 = asyncio.create_task(background_one_shot_rebalance())
     task15 = asyncio.create_task(background_hk_ipo_scan())
     task16 = asyncio.create_task(background_deposit_handler())
-    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan + deposit_handler")
+    task17 = asyncio.create_task(background_annual_tax_report())
+    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan + deposit_handler + annual_tax_report")
     yield
     task1.cancel()
     task2.cancel()
@@ -120,6 +122,7 @@ async def lifespan(app: FastAPI):
     task14.cancel()
     task15.cancel()
     task16.cancel()
+    task17.cancel()
     logger.info("Shutting down trading platform")
 
 
@@ -2158,6 +2161,42 @@ async def get_portfolio(current_user: User = Depends(get_current_user), db: Sess
     return engine.get_portfolio_summary()
 
 
+@app.get("/api/tax/nz-summary")
+async def get_nz_tax_summary(
+    fy_ending_year: int,
+    format: str = "json",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """NZ tax-year summary for the given financial year (ending March of fy_ending_year).
+    Example: fy_ending_year=2027 → period 2026-04-01 to 2027-03-31.
+    Hand the CSV output to your chartered accountant for IR3 filing.
+
+    Query params:
+      fy_ending_year — required; the calendar year the NZ FY ends in
+      format         — 'json' (default), 'csv', or 'html'
+    """
+    engine = TradingEngine(db, current_user.id)
+    if not engine.alpaca:
+        raise HTTPException(status_code=400, detail="Alpaca not configured for this user")
+    summary = await asyncio.get_event_loop().run_in_executor(
+        None, tax.compute_summary, engine.alpaca, fy_ending_year
+    )
+    if format == "csv":
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(
+            content=tax.to_csv_bundle(summary),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="alphatrader_nz_tax_fy{fy_ending_year}.csv"'
+            },
+        )
+    if format == "html":
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=tax.to_html(summary))
+    return summary
+
+
 @app.get("/api/trades")
 async def get_trades(limit: int = 50, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get trade history."""
@@ -3494,6 +3533,104 @@ async def background_hk_ipo_scan():
         except Exception as e:
             logger.error(f"[HK_IPO] scan error: {e}")
         await asyncio.sleep(600)  # re-check every 10 min; refresh gated to hourly
+
+
+async def background_annual_tax_report():
+    """
+    Task 17 — NZ tax-year summary auto-email.
+
+    Fires once on April 1 (NZ FY just ended March 31). Generates the full
+    tax summary for the just-completed FY and emails it to the user with
+    the CSV attached so they can forward to their accountant.
+
+    Idempotent: writes `tax_report_sent_fy<YYYY>` to settings; won't re-fire
+    if already sent for that FY. Disable via `annual_tax_report_enabled=false`.
+    """
+    await asyncio.sleep(600)
+    while True:
+        try:
+            now = datetime.utcnow()
+            # Only do work in early April (NZ FY ended March 31). Window: April 1-7.
+            if not (now.month == 4 and now.day <= 7):
+                await asyncio.sleep(3600 * 6)  # check every 6h outside window
+                continue
+
+            db = next(get_db())
+            try:
+                users = db.query(User).all()
+                for user in users:
+                    enabled = get_setting(db, "annual_tax_report_enabled", user.id, "true") == "true"
+                    if not enabled:
+                        continue
+
+                    fy_year = now.year  # FY just ended Mar 31 of this calendar year
+                    flag_key = f"tax_report_sent_fy{fy_year}"
+                    if get_setting(db, flag_key, user.id, "false") == "true":
+                        continue
+
+                    engine = TradingEngine(db, user.id)
+                    if not engine.alpaca:
+                        continue
+
+                    settings = {s.key: s.value for s in db.query(Settings).filter_by(user_id=user.id).all()}
+                    sender = settings.get("email_sender", "")
+                    app_pw = settings.get("email_app_password", "")
+                    recipient = settings.get("email_recipient", "")
+                    if not (sender and app_pw and recipient):
+                        logger.warning(f"[TaxReport] {user.username} email not configured")
+                        continue
+
+                    summary = await asyncio.get_event_loop().run_in_executor(
+                        None, tax.compute_summary, engine.alpaca, fy_year
+                    )
+                    csv_body = tax.to_csv_bundle(summary)
+                    html_body = tax.to_html(summary)
+
+                    # Send email with CSV attached
+                    sent = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: _send_tax_email(
+                            sender, app_pw, recipient,
+                            f"AlphaTrader NZ Tax Summary — FY {fy_year}",
+                            html_body, csv_body, fy_year,
+                        ),
+                    )
+                    if sent:
+                        set_setting(db, flag_key, "true", user.id)
+                        logger.warning(f"[TaxReport] ✅ FY{fy_year} summary emailed to {recipient}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[TaxReport] error: {e}")
+        await asyncio.sleep(3600 * 12)  # check twice a day during window
+
+
+def _send_tax_email(sender, app_pw, recipient, subject, html_body, csv_body, fy_year):
+    """SMTP-send the tax summary with CSV attached. Returns True on success."""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.base import MIMEBase
+    from email import encoders
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = sender
+        msg["To"] = recipient
+        msg["Subject"] = subject
+        msg.attach(MIMEText(html_body, "html"))
+        attach = MIMEBase("application", "octet-stream")
+        attach.set_payload(csv_body.encode("utf-8"))
+        encoders.encode_base64(attach)
+        attach.add_header("Content-Disposition", f'attachment; filename="alphatrader_nz_tax_fy{fy_year}.csv"')
+        msg.attach(attach)
+        with smtplib.SMTP("smtp.gmail.com", 587) as s:
+            s.starttls()
+            s.login(sender, app_pw)
+            s.send_message(msg)
+        return True
+    except Exception as e:
+        logger.error(f"[TaxReport] SMTP error: {e}")
+        return False
 
 
 async def background_deposit_handler():
