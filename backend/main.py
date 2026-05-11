@@ -101,7 +101,8 @@ async def lifespan(app: FastAPI):
     task13 = asyncio.create_task(background_dca_core_etf())
     task14 = asyncio.create_task(background_one_shot_rebalance())
     task15 = asyncio.create_task(background_hk_ipo_scan())
-    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan")
+    task16 = asyncio.create_task(background_deposit_handler())
+    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan + deposit_handler")
     yield
     task1.cancel()
     task2.cancel()
@@ -118,6 +119,7 @@ async def lifespan(app: FastAPI):
     task13.cancel()
     task14.cancel()
     task15.cancel()
+    task16.cancel()
     logger.info("Shutting down trading platform")
 
 
@@ -3492,6 +3494,128 @@ async def background_hk_ipo_scan():
         except Exception as e:
             logger.error(f"[HK_IPO] scan error: {e}")
         await asyncio.sleep(600)  # re-check every 10 min; refresh gated to hourly
+
+
+async def background_deposit_handler():
+    """
+    Task 16 — Deposit-triggered immediate allocation (replaces monthly DCA).
+
+    Polls Alpaca CSD/JNLC/JNLS activities every 30 minutes. When a new
+    deposit is detected (id not seen before), immediately allocates
+    `core_target_pct` of it to the core ETF (SPY) on the next market-open
+    tick. The remainder stays as cash so the existing auto-trade loop can
+    deploy it into tech satellites organically based on AI signals.
+
+    Why this beats monthly day-1 DCA:
+      • User funds ~monthly but on no fixed date — day-1 cron mistimes
+      • Buys at deposit-day prices, not stale month-old prices
+      • Self-paces with however often the user actually funds
+
+    Disable via `deposit_handler_enabled=false`.
+    State: `deposit_handler_last_id` tracks the latest processed CSD id.
+    """
+    await asyncio.sleep(240)
+    while True:
+        try:
+            db = next(get_db())
+            try:
+                users = db.query(User).all()
+                for user in users:
+                    enabled = get_setting(db, "deposit_handler_enabled", user.id, "true") == "true"
+                    if not enabled:
+                        continue
+
+                    engine = TradingEngine(db, user.id)
+                    if not engine.alpaca:
+                        continue
+
+                    last_id = get_setting(db, "deposit_handler_last_id", user.id, "")
+                    core_pct = float(get_setting(db, "core_target_pct", user.id, "50.0")) / 100
+                    core_symbol = get_setting(db, "core_etf_symbol", user.id, "SPY").upper()
+
+                    # Pull recent cash-deposit activities. Alpaca returns newest first.
+                    new_deposits: list = []
+                    try:
+                        for at in ("CSD", "JNLC", "JNLS"):
+                            for a in engine.alpaca.get_activities(activity_types=at):
+                                if str(a.id) == last_id:
+                                    raise StopIteration
+                                # Only positive net amounts (deposits, not withdrawals)
+                                if float(a.net_amount) > 0:
+                                    new_deposits.append(a)
+                    except StopIteration:
+                        pass
+                    except Exception as e:
+                        logger.error(f"[Deposit] activities fetch failed: {e}")
+                        continue
+
+                    if not new_deposits:
+                        continue
+
+                    # Sort chronologically (oldest first) so they get processed in order
+                    new_deposits.sort(key=lambda a: a.date)
+
+                    # Check market open once per cycle
+                    try:
+                        clock = engine.alpaca.get_clock()
+                        market_open = clock.is_open
+                    except Exception:
+                        market_open = False
+
+                    if not market_open:
+                        ts = new_deposits[-1].date
+                        logger.info(
+                            f"[Deposit] {len(new_deposits)} new deposit(s) detected (latest {ts}), "
+                            f"waiting for market open to allocate"
+                        )
+                        continue
+
+                    quote = md.get_stock_quote(core_symbol)
+                    if not quote or not quote.get("current"):
+                        logger.error(f"[Deposit] {core_symbol} quote unavailable, retry next cycle")
+                        continue
+                    core_price = float(quote["current"])
+
+                    for deposit in new_deposits:
+                        amount = float(deposit.net_amount)
+                        deposit_id = str(deposit.id)
+                        core_dollars = amount * core_pct
+                        core_qty = round(core_dollars / core_price, 4)
+                        if core_qty < 0.001:
+                            set_setting(db, "deposit_handler_last_id", deposit_id, user.id)
+                            continue
+
+                        result = engine.execute_buy(
+                            core_symbol, core_qty, core_price,
+                            ai_triggered=True, confidence=1.0,
+                            reasoning=(
+                                f"[DEPOSIT-AUTO] {core_pct*100:.0f}% of ${amount:.2f} deposit "
+                                f"auto-allocated to {core_symbol}. Remainder stays cash for "
+                                f"AI to deploy into satellites."
+                            ),
+                        )
+                        if result.get("success"):
+                            set_setting(db, "deposit_handler_last_id", deposit_id, user.id)
+                            logger.warning(
+                                f"[Deposit] ✅ +${amount:.2f} {deposit.activity_type} "
+                                f"→ bought {core_qty} {core_symbol} @ ${core_price:.2f} "
+                                f"(${core_dollars:.2f}, {core_pct*100:.0f}%)"
+                            )
+                            await broadcast({
+                                "type": "deposit_allocated",
+                                "amount": amount,
+                                "symbol": core_symbol,
+                                "qty": core_qty,
+                                "spent": core_dollars,
+                            })
+                        else:
+                            logger.error(f"[Deposit] {core_symbol} buy failed for ${amount}: {result}")
+                            break  # leave last_id unset to retry next cycle
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[Deposit] handler error: {e}")
+        await asyncio.sleep(1800)  # check every 30 min
 
 
 async def background_one_shot_rebalance():
