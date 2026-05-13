@@ -3444,11 +3444,13 @@ async def background_stop_loss_monitor():
                         continue
 
                     # Build set of symbols already covered by an open sell order
+                    open_orders = []
+                    pending_sells = set()
                     try:
                         open_orders = engine.alpaca.list_orders(status="open")
                         pending_sells = {o.symbol for o in open_orders if o.side == "sell"}
                     except Exception:
-                        pending_sells = set()
+                        pass
 
                     for ap in alpaca_positions:
                         symbol = ap.symbol
