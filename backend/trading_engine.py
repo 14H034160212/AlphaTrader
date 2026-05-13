@@ -510,6 +510,8 @@ class TradingEngine:
 
         if not auto_trade_enabled:
             return {"success": False, "skipped": True, "reason": "Auto-trading is disabled"}
+        if not current_price or current_price <= 0:
+            return {"success": False, "skipped": True, "reason": f"Invalid price {current_price!r} for {symbol}"}
         if confidence < min_confidence:
             return {"success": False, "skipped": True,
                     "reason": f"Confidence {confidence:.0%} below minimum {min_confidence:.0%}"}
