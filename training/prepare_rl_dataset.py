@@ -120,13 +120,47 @@ def build_dataset(
     output_dir: str,
     min_reward_abs: float = 0.5,
     val_split: float = 0.05,
+    exclude_last_days: int = 7,
+    exclude_challenge_set: bool = True,
 ) -> dict:
+    """
+    Build SFT dataset from RL JSONL.
+
+    Data-leakage guards:
+      - exclude_last_days=N: drop records timestamped within the last N days.
+        These records are reserved as the pipeline's holdout test set and must
+        NEVER appear in training.  Default 7 = matches rl_validation cutoff.
+      - exclude_challenge_set=True: drop any record whose fingerprint is in
+        rl_models/challenge_test_set.jsonl (permanently-frozen hard examples).
+    """
+    from datetime import datetime, timedelta
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
     import rl_data_collector as _rl
     records = _rl._parse_jsonl(rl_data_path)
 
+    # Cutoff for the rolling holdout
+    cutoff = datetime.utcnow() - timedelta(days=exclude_last_days) if exclude_last_days > 0 else None
+
+    # Permanent challenge-set fingerprints (timestamp + symbol)
+    challenge_fingerprints = set()
+    challenge_path = os.path.join(os.path.dirname(__file__), "..", "rl_models", "challenge_test_set.jsonl")
+    if exclude_challenge_set and os.path.exists(challenge_path):
+        with open(challenge_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                    challenge_fingerprints.add(f"{r.get('timestamp')}|{r.get('symbol')}")
+                except json.JSONDecodeError:
+                    pass
+        print(f"[Leakage Guard] Excluding {len(challenge_fingerprints)} challenge-set records")
+
     rows = []
     skipped = 0
+    skipped_holdout = 0
+    skipped_challenge = 0
     for rec in records:
         reward = rec.get("reward_3d")
         if reward is None or not isinstance(reward, (int, float)) or not math.isfinite(reward):
@@ -138,6 +172,22 @@ def build_dataset(
         action = rec.get("action", "HOLD")
         if action == "HOLD":
             skipped += 1
+            continue
+
+        # Data-leakage guard 1: drop rolling-holdout records
+        if cutoff is not None:
+            try:
+                ts = datetime.fromisoformat(rec["timestamp"])
+                if ts >= cutoff:
+                    skipped_holdout += 1
+                    continue
+            except Exception:
+                pass
+
+        # Data-leakage guard 2: drop permanent challenge-set records
+        fp = f"{rec.get('timestamp')}|{rec.get('symbol')}"
+        if fp in challenge_fingerprints:
+            skipped_challenge += 1
             continue
 
         prompt   = f"<|system|>\n{SYSTEM_PROMPT}\n<|user|>\n{_format_state(rec)}"
@@ -154,7 +204,9 @@ def build_dataset(
             "timestamp": rec.get("timestamp"),
         })
 
-    print(f"Kept {len(rows)} rows, skipped {skipped} (no reward / near-zero / HOLD)")
+    print(f"Kept {len(rows)} rows, skipped {skipped} (no reward / near-zero / HOLD), "
+          f"{skipped_holdout} (rolling holdout last {exclude_last_days}d), "
+          f"{skipped_challenge} (permanent challenge set)")
 
     # Shuffle and split
     import random
@@ -194,11 +246,17 @@ if __name__ == "__main__":
     parser.add_argument("--output",         default="./rl_sft_dataset")
     parser.add_argument("--min_reward_abs", type=float, default=0.5)
     parser.add_argument("--val_split",      type=float, default=0.05)
+    parser.add_argument("--exclude_last_days", type=int, default=7,
+                        help="Drop records from the last N days (reserved as pipeline holdout)")
+    parser.add_argument("--exclude_challenge_set", action="store_true", default=True,
+                        help="Drop records listed in rl_models/challenge_test_set.jsonl")
     args = parser.parse_args()
 
     build_dataset(
-        rl_data_path  = args.rl_data,
-        output_dir    = args.output,
-        min_reward_abs= args.min_reward_abs,
-        val_split     = args.val_split,
+        rl_data_path          = args.rl_data,
+        output_dir            = args.output,
+        min_reward_abs        = args.min_reward_abs,
+        val_split             = args.val_split,
+        exclude_last_days     = args.exclude_last_days,
+        exclude_challenge_set = args.exclude_challenge_set,
     )

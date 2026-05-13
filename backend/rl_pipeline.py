@@ -103,6 +103,23 @@ def run_cycle(holdout_days: int = 7) -> dict:
         except Exception as e:
             report["steps"].append({"step": "attribution", "ok": False, "error": str(e)})
 
+        # ── Step 2b: mine hard examples + error analysis ───────
+        try:
+            import rl_challenge_set as _cs
+            records_for_mining = _rl._parse_jsonl(_rl.RL_DATA_FILE)
+            mine_summary = _cs.mine_hard_examples(records_for_mining, max_new=50)
+            error_summary = _cs.analyze_errors(records_for_mining)
+            report["steps"].append({
+                "step": "challenge_mining",
+                "ok": True,
+                "added": mine_summary["added"],
+                "total_challenge_set": mine_summary["total_in_set"],
+                "weakest_sectors": error_summary.get("weakest_sectors", [])[:3],
+            })
+        except Exception as e:
+            logger.error(f"[Pipeline] Challenge mining failed: {e}")
+            report["steps"].append({"step": "challenge_mining", "ok": False, "error": str(e)})
+
         # ── Step 3: split train / holdout ──────────────────────
         records = _rl._parse_jsonl(_rl.RL_DATA_FILE)
         train, holdout = _val.split_train_holdout(records, holdout_days=holdout_days)
@@ -332,13 +349,18 @@ def trigger_lora_training_if_needed(records: list) -> str | None:
     if not os.path.exists(trainer):
         return f"LoRA trainer script not found: {trainer}"
 
-    # Regenerate dataset first so it includes the new records
+    # Regenerate dataset first so it includes the new records.
+    # CRITICAL: pass --exclude_last_days=7 so the rolling holdout records
+    # (which the pipeline uses to validate the trained adapter) are NEVER
+    # in the training set.  Also exclude the permanent challenge_test_set.
     prep_script = os.path.join(repo_root, "training", "prepare_rl_dataset.py")
     if os.path.exists(prep_script):
         try:
             subprocess.run(
-                [py, prep_script, "--rl_data", _val.RL_DATA_FILE,
-                 "--output", dataset],
+                [py, prep_script,
+                 "--rl_data", _val.RL_DATA_FILE,
+                 "--output", dataset,
+                 "--exclude_last_days", "7"],
                 check=True, timeout=600,
                 cwd=repo_root,
             )

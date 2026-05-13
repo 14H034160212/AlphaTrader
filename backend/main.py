@@ -2835,6 +2835,42 @@ async def rl_promote_shadow():
     return {"status": "promoted", "version": shadow_version}
 
 
+@app.get("/api/rl/challenge")
+async def rl_challenge_status():
+    """Status of the permanent challenge test set (hard examples)."""
+    import rl_challenge_set as _cs
+    return _cs.get_status()
+
+
+@app.get("/api/rl/errors")
+async def rl_error_analysis():
+    """Production-system error patterns by sector / action / confidence."""
+    import rl_data_collector as _rl
+    import rl_challenge_set as _cs
+    records = _rl._parse_jsonl(_rl.RL_DATA_FILE)
+    return _cs.analyze_errors(records)
+
+
+@app.post("/api/rl/challenge/mine")
+async def rl_challenge_mine(max_new: int = 100):
+    """Manually trigger hard-example mining (also runs every pipeline cycle)."""
+    import rl_data_collector as _rl
+    import rl_challenge_set as _cs
+    records = _rl._parse_jsonl(_rl.RL_DATA_FILE)
+    return _cs.mine_hard_examples(records, max_new=max_new)
+
+
+@app.get("/api/rl/compare")
+async def rl_compare(holdout_days: int = 7, include_lora: bool = False):
+    """
+    Apples-to-apples comparison of every available method on the same holdout.
+    Each method scored by the SAME unified decision rule (BUY/SELL/HOLD →
+    win/loss against realised reward_3d).  include_lora=true takes ~10 min.
+    """
+    import rl_compare as _cmp
+    return _cmp.run_comparison(holdout_days=holdout_days, include_lora=include_lora)
+
+
 @app.post("/api/rl/lora/deploy")
 async def rl_lora_deploy_manual():
     """Manually deploy the current adapter (skips auto-deploy gate)."""
