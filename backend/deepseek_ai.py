@@ -119,19 +119,36 @@ def _call_ollama(messages, temperature=0.1):
             logging.getLogger(__name__).warning(f"[LoRA vLLM] failed, falling back to Ollama: {e}")
 
     url = f"{_get_ollama_host()}/api/chat"
+    model_name = _get_model_name("ollama")
+
+    # Reasoning models (Qwen3.5, DeepSeek-R1) emit a long internal "thinking"
+    # trace before producing the final answer.  Without a big num_predict
+    # budget they get cut off mid-think and `content` comes back empty.
+    is_reasoning = any(tag in model_name.lower() for tag in ("qwen3", "r1", "thinking"))
+    num_predict = 4096 if is_reasoning else 2048
+
     payload = {
-        "model": _get_model_name("ollama"),
+        "model": model_name,
         "messages": messages,
         "stream": False,
         "options": {
-            "temperature": temperature
+            "temperature": temperature,
+            "num_predict": num_predict,
         }
     }
     try:
-        resp = requests.post(url, json=payload, timeout=360)
+        # Reasoning models are 3-5× slower than dense models — bump timeout
+        timeout = 600 if is_reasoning else 360
+        resp = requests.post(url, json=payload, timeout=timeout)
         resp.raise_for_status()
-        data = resp.json()
-        return data["message"]["content"]
+        msg = resp.json()["message"]
+        content = (msg.get("content") or "").strip()
+        # Reasoning-model fallback: if `content` is empty but `thinking` is
+        # populated (generation truncated before the answer block), use the
+        # thinking trace so downstream JSON parsers still get *something*.
+        if not content and msg.get("thinking"):
+            content = msg["thinking"]
+        return content
     except requests.exceptions.ConnectionError:
         raise ConnectionError("Cannot connect to local Ollama. Is it running?")
 
