@@ -277,10 +277,22 @@ def handle_lora_completion(records: list) -> dict | None:
     # Auto-deploy if approved AND the safety toggle is enabled
     auto_deploy = _read_setting("lora_auto_deploy_enabled", "false") == "true"
     deployed = None
+    shootout = None
     if decision["decision"] == "deploy" and auto_deploy:
         logger.info(f"[LoRA Handle] Auto-deploying adapter (version {version})")
         import rl_lora_deploy as _dep
         deployed = _dep.deploy_adapter(adapter_dir, version=version)
+        # After successful deploy, run a full shootout: Qwen2.5 (Ollama) vs
+        # Qwen3.5 base vs Qwen3.5+LoRA — apples-to-apples on challenge set
+        if deployed and deployed.get("status") == "ok":
+            try:
+                import rl_raw_model_validator as _raw
+                shootout = _raw.run_baseline_shootout(test_set="challenge",
+                                                       max_samples=50)
+                logger.info(f"[LoRA Handle] Post-deploy shootout complete: "
+                            f"{len(shootout.get('results', []))} models scored")
+            except Exception as e:
+                logger.warning(f"[LoRA Handle] Shootout failed: {e}")
     elif decision["decision"] == "deploy":
         logger.info("[LoRA Handle] Decision=deploy but auto-deploy disabled — manual promote via /api/rl/lora/deploy")
 
@@ -289,6 +301,7 @@ def handle_lora_completion(records: list) -> dict | None:
         "decision": decision,
         "metrics":  metrics,
         "deployed": deployed,
+        "shootout": shootout,
     }
 
 
