@@ -127,26 +127,39 @@ class RLSFTDataset(Dataset):
         response = row["response"]
         weight   = float(row.get("weight", 1.0))
 
-        full_text = f"{prompt}\n<|assistant|>\n{response}"
+        # Tokenize prompt and response SEPARATELY so we can left-truncate the
+        # prompt while preserving the full response.  The previous version
+        # right-truncated the concatenation, which silently chopped off the
+        # response (median prompt ≈ 1963 tokens, max_length 1024-2048) →
+        # all labels became -100 and loss was always 0.
+        prompt_ids   = self.tokenizer(f"{prompt}\n<|assistant|>\n",
+                                       add_special_tokens=True)["input_ids"]
+        response_ids = self.tokenizer(response,
+                                       add_special_tokens=False)["input_ids"]
+        eos = self.tokenizer.eos_token_id
+        if eos is not None and (not response_ids or response_ids[-1] != eos):
+            response_ids = response_ids + [eos]
 
-        enc = self.tokenizer(
-            full_text,
-            max_length=self.max_length,
-            truncation=True,
-            padding="max_length",
-            return_tensors="pt",
-        )
-        input_ids      = enc["input_ids"].squeeze(0)
-        attention_mask = enc["attention_mask"].squeeze(0)
+        # Reserve space for response (cap at 256 — responses are ~150 tokens median)
+        resp_max = min(256, self.max_length // 4)
+        if len(response_ids) > resp_max:
+            response_ids = response_ids[:resp_max]
 
-        # Only compute loss on response tokens
-        prompt_enc = self.tokenizer(
-            f"{prompt}\n<|assistant|>\n",
-            max_length=self.max_length,
-            truncation=True,
-        )
-        prompt_len = len(prompt_enc["input_ids"])
+        # Left-truncate prompt so prompt + response fits in max_length
+        budget = self.max_length - len(response_ids)
+        if len(prompt_ids) > budget:
+            prompt_ids = prompt_ids[-budget:]   # keep the most recent context
 
+        seq = prompt_ids + response_ids
+        prompt_len = len(prompt_ids)
+
+        # Pad to max_length
+        pad_id  = self.tokenizer.pad_token_id or 0
+        pad_len = self.max_length - len(seq)
+        input_ids      = torch.tensor(seq + [pad_id] * pad_len, dtype=torch.long)
+        attention_mask = torch.tensor([1] * len(seq) + [0] * pad_len, dtype=torch.long)
+
+        # Mask out prompt + padding from loss; only response tokens contribute
         labels = input_ids.clone()
         labels[:prompt_len] = -100
         labels[attention_mask == 0] = -100
@@ -186,28 +199,25 @@ def train(args):
     from transformers import AutoTokenizer, AutoModelForCausalLM, get_linear_schedule_with_warmup
     from peft import LoraConfig, get_peft_model, TaskType
 
-    # ── GPU selection ──────────────────────────────────────
-    if "CUDA_VISIBLE_DEVICES" in os.environ:
-        # User overrode manually
-        visible = [int(x) for x in os.environ["CUDA_VISIBLE_DEVICES"].split(",") if x.strip()]
-        print(f"[GPU] CUDA_VISIBLE_DEVICES override: {visible}")
-        selected_gpus = visible[:args.max_gpus]
+    # ── GPU info ───────────────────────────────────────────
+    # CUDA_VISIBLE_DEVICES was already set before this process started
+    # (via os.execvpe in __main__ or via user-supplied env var).
+    # By the time train() is called, PyTorch can only see the selected GPUs
+    # remapped as logical 0, 1, ...
+    num_gpus = torch.cuda.device_count()
+    cv = os.environ.get("CUDA_VISIBLE_DEVICES", "all")
+    print(f"[GPU] Training on {num_gpus} GPU(s) (CUDA_VISIBLE_DEVICES={cv})", flush=True)
+
+    # For MoE models (Qwen3.5), even QLoRA can't fit on 1 GPU because the
+    # 256 expert layers aren't all quantized → still need pipeline parallel.
+    # Dense models in QLoRA mode CAN fit on 1 GPU.
+    is_moe_model = "moe" in args.model_name_or_path.lower() or "a3b" in args.model_name_or_path.lower()
+    if args.use_qlora and not is_moe_model and num_gpus == 1:
+        device_map = {"": 0}
+        print("[GPU] QLoRA + dense + single GPU: placing on cuda:0", flush=True)
     else:
-        print("[GPU] Scanning available GPUs...")
-        selected_gpus = select_free_gpus(max_gpus=args.max_gpus, min_free_gb=40.0)
-        if not selected_gpus:
-            print("[GPU] No GPU with >= 40GB free found. Aborting.")
-            sys.exit(1)
-        # Set env var so PyTorch only sees these GPUs
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in selected_gpus)
-        print(f"[GPU] Set CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']}")
-
-    num_gpus = torch.cuda.device_count()  # after CUDA_VISIBLE_DEVICES is set
-    print(f"[GPU] Training on {num_gpus} GPU(s): {selected_gpus[:num_gpus]}")
-
-    # With 2 GPUs and a 32B model: device_map="auto" splits the model across
-    # both GPUs (pipeline parallelism). Single process — no torchrun needed.
-    device_map = "auto" if num_gpus > 1 else "cuda:0"
+        device_map = "auto" if num_gpus > 1 else {"": 0}
+        print(f"[GPU] Using device_map={device_map}", flush=True)
 
     # ── Tokenizer ──────────────────────────────────────────
     print(f"\n[Trainer] Loading tokenizer from {args.model_name_or_path}")
@@ -222,7 +232,7 @@ def train(args):
     # ── Model ──────────────────────────────────────────────
     print(f"[Trainer] Loading model with device_map={device_map!r} ...")
     load_kwargs = dict(
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         trust_remote_code=True,
         device_map=device_map,
     )
@@ -239,14 +249,24 @@ def train(args):
     model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path, **load_kwargs)
     model.gradient_checkpointing_enable()
     if args.use_qlora:
-        from peft import prepare_model_for_kbit_training
-        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+        # For MoE models, the standard prepare_model_for_kbit_training casts
+        # all non-quantized params (including bf16 expert layers) to float32,
+        # doubling memory.  Manually do the minimal prep instead: just enable
+        # input gradients so gradient checkpointing works with frozen base.
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+        else:
+            def make_inputs_require_grad(module, input, output):
+                output.requires_grad_(True)
+            model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 
-    # Print per-GPU memory after loading
+    # Print per-GPU memory after loading (logical GPU indices after CUDA_VISIBLE_DEVICES)
+    cv_list = [g.strip() for g in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if g.strip()]
     for i in range(num_gpus):
         alloc = torch.cuda.memory_allocated(i) / 1e9
         total = torch.cuda.get_device_properties(i).total_memory / 1e9
-        print(f"  GPU {selected_gpus[i]}: {alloc:.1f} / {total:.1f} GB used after model load")
+        phys  = cv_list[i] if i < len(cv_list) else str(i)
+        print(f"  GPU {phys} (logical {i}): {alloc:.1f} / {total:.1f} GB used after model load")
 
     # ── LoRA ───────────────────────────────────────────────
     # For MoE models (qwen35moe): apply LoRA to attention only.
@@ -300,10 +320,13 @@ def train(args):
     # With device_map="auto", inputs go to the first device; model handles the rest
     first_device = next(model.parameters()).device
 
+    import time
     for epoch in range(args.num_epochs):
         model.train()
         total_loss = 0.0
         optimizer.zero_grad()
+        epoch_start = time.time()
+        last_log_t  = time.time()
 
         for step, batch in enumerate(train_loader):
             input_ids      = batch["input_ids"].to(first_device)
@@ -317,6 +340,14 @@ def train(args):
             loss.backward()
             total_loss += loss.item() * args.gradient_accumulation_steps
 
+            # Per-step heartbeat so we see speed immediately
+            if step < 5 or (step + 1) % args.log_every_n_steps == 0:
+                dt = time.time() - last_log_t
+                last_log_t = time.time()
+                print(f"  E{epoch+1} step {step+1}/{len(train_loader)}  "
+                      f"loss={loss.item()*args.gradient_accumulation_steps:.4f}  "
+                      f"dt={dt:.1f}s", flush=True)
+
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 torch.nn.utils.clip_grad_norm_(
                     filter(lambda p: p.requires_grad, model.parameters()), 1.0)
@@ -324,11 +355,11 @@ def train(args):
                 scheduler.step()
                 optimizer.zero_grad()
 
-                if (step + 1) % (args.gradient_accumulation_steps * 10) == 0:
-                    avg = total_loss / (step + 1)
-                    lr  = scheduler.get_last_lr()[0]
-                    print(f"  Epoch {epoch+1} step {step+1}/{len(train_loader)}  "
-                          f"loss={avg:.4f}  lr={lr:.2e}")
+            # Mid-epoch checkpoint so partial training is usable
+            if args.save_every_n_steps > 0 and (step + 1) % args.save_every_n_steps == 0:
+                ckpt = os.path.join(args.output_dir, f"step_{step+1}")
+                model.save_pretrained(ckpt)
+                print(f"  [Checkpoint] step {step+1} → {ckpt}", flush=True)
 
         # Validation
         model.eval()
@@ -387,9 +418,32 @@ if __name__ == "__main__":
     parser.add_argument("--lora_alpha",          type=int,   default=32)
     parser.add_argument("--use_qlora",           action="store_true",
                         help="Use 4-bit QLoRA to halve VRAM usage (optional)")
+    parser.add_argument("--log_every_n_steps",   type=int,   default=5,
+                        help="How often to print loss (default: every 5 steps)")
+    parser.add_argument("--save_every_n_steps",  type=int,   default=1000,
+                        help="Save mid-epoch checkpoint every N steps (0=off)")
     args = parser.parse_args()
 
     # Safety cap — never exceed 2 GPUs regardless of CLI input
     args.max_gpus = min(args.max_gpus, 2)
 
+    # CUDA_VISIBLE_DEVICES MUST be set before any CUDA/torch initialisation.
+    # If not already set (by the user or a previous exec), detect free GPUs via
+    # nvidia-smi and re-exec this process with the env var baked in.  The
+    # re-exec'd child will skip this branch (env var already set) and go
+    # straight to train().
+    if "CUDA_VISIBLE_DEVICES" not in os.environ:
+        print("[GPU] Scanning available GPUs...")
+        selected = select_free_gpus(max_gpus=args.max_gpus, min_free_gb=40.0)
+        if not selected:
+            print("[GPU] No GPU with >= 40 GB free. Aborting.")
+            sys.exit(1)
+        gpu_str = ",".join(str(g) for g in selected)
+        print(f"[GPU] Re-launching with CUDA_VISIBLE_DEVICES={gpu_str}\n")
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = gpu_str
+        os.execvpe(sys.executable, [sys.executable] + sys.argv, env)
+        # execvpe replaces the current process — code below never runs
+
+    print(f"[GPU] CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']}")
     train(args)
