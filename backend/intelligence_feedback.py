@@ -23,15 +23,8 @@ def run_attribution_analysis():
         logger.warning(f"No RL data file found at {RL_DATA_FILE}")
         return
 
-    records = []
-    with open(RL_DATA_FILE, "r") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    records.append(json.loads(line))
-                except Exception:
-                    continue
+    import rl_data_collector as _rl
+    records = _rl._parse_jsonl(RL_DATA_FILE)
 
     # Filter to records that have outcomes
     processed_records = [r for r in records if r.get("outcome_filled")]
@@ -51,9 +44,10 @@ def run_attribution_analysis():
         }
     }
 
+    import math
     for rec in processed_records:
         reward = rec.get("reward_1d")
-        if reward is None:
+        if reward is None or not isinstance(reward, (int, float)) or not math.isfinite(reward):
             continue
         
         confidence = rec.get("confidence", 0)
