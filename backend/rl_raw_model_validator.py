@@ -88,7 +88,16 @@ def _parse_action(text: str) -> str | None:
 # ──────────────────────────────────────────────
 
 def _call_ollama(model_tag: str, system: str, user: str, host: str) -> str:
+    """
+    Call Ollama chat API.  Reasoning models (qwen3.5, deepseek-r1) emit a
+    lot of "thinking" tokens before producing the actual answer — we give
+    them a 600-token budget so the action verdict reliably comes through.
+    """
     import requests
+    # Reasoning models need more headroom for their internal thinking phase
+    is_reasoning = any(tag in model_tag.lower() for tag in ("qwen3", "r1", "thinking"))
+    num_predict = 600 if is_reasoning else 120
+
     payload = {
         "model": model_tag,
         "messages": [
@@ -96,11 +105,17 @@ def _call_ollama(model_tag: str, system: str, user: str, host: str) -> str:
             {"role": "user",   "content": user},
         ],
         "stream": False,
-        "options": {"temperature": 0.1, "num_predict": 80},
+        "options": {"temperature": 0.1, "num_predict": num_predict},
     }
-    r = requests.post(f"{host.rstrip('/')}/api/chat", json=payload, timeout=180)
+    r = requests.post(f"{host.rstrip('/')}/api/chat", json=payload, timeout=300)
     r.raise_for_status()
-    return r.json()["message"]["content"]
+    msg = r.json()["message"]
+    # Some reasoning models put the verdict in `thinking` if `content` truncates
+    content = msg.get("content", "") or ""
+    if not content.strip() and msg.get("thinking"):
+        # Fallback: search the thinking trace for an action keyword
+        content = msg["thinking"]
+    return content
 
 
 def _call_vllm(base_url: str, model_name: str, system: str, user: str) -> str:
