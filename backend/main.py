@@ -104,7 +104,8 @@ async def lifespan(app: FastAPI):
     task15 = asyncio.create_task(background_hk_ipo_scan())
     task16 = asyncio.create_task(background_deposit_handler())
     task17 = asyncio.create_task(background_annual_tax_report())
-    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan + deposit_handler + annual_tax_report")
+    task18 = asyncio.create_task(background_rl_policy_trainer())
+    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan + deposit_handler + annual_tax_report + rl_policy_trainer")
     yield
     task1.cancel()
     task2.cancel()
@@ -123,6 +124,7 @@ async def lifespan(app: FastAPI):
     task15.cancel()
     task16.cancel()
     task17.cancel()
+    task18.cancel()
     logger.info("Shutting down trading platform")
 
 
@@ -4082,6 +4084,28 @@ async def background_dca_core_etf():
         except Exception as e:
             logger.error(f"[DCA] Loop error: {e}")
         await asyncio.sleep(3600)  # check hourly; only acts once per month per user
+
+
+async def background_rl_policy_trainer():
+    """
+    Task 18 — Daily XGBoost RL policy model retraining.
+
+    Runs once at startup (after a short delay so the JSONL file is readable),
+    then retrains every 24 hours.  The model is saved to rl_policy_model.pkl
+    and hot-reloaded by rl_policy_model.predict_reward() on the next trade.
+    """
+    await asyncio.sleep(300)  # wait 5 min after startup before first train
+    while True:
+        try:
+            import rl_policy_model as _rlpm
+            result = await asyncio.get_event_loop().run_in_executor(None, _rlpm.train_model)
+            if result.get("error"):
+                logger.warning(f"[RL Policy Trainer] {result['error']}")
+            else:
+                logger.info(f"[RL Policy Trainer] Model retrained: {result['samples']} samples")
+        except Exception as e:
+            logger.error(f"[RL Policy Trainer] Error: {e}")
+        await asyncio.sleep(86400)  # retrain every 24 hours
 
 
 if __name__ == "__main__":
