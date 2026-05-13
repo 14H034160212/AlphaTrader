@@ -1,8 +1,14 @@
 """
 AlphaTrader RL LoRA Trainer (Path 2)
 =====================================
-Fine-tunes Qwen2.5-32B (or any compatible Qwen model) with LoRA adapters
-using reward-weighted SFT on AlphaTrader's real trading P&L data.
+Fine-tunes Qwen3.5-35B-A3B (MoE) with LoRA adapters using reward-weighted SFT
+on AlphaTrader's real trading P&L data.
+
+Model: Qwen/Qwen3.5-35B-A3B
+  - MoE architecture: 35B total params, only ~3B active per token (8 routed + 1 shared expert)
+  - bfloat16 size ≈ 70GB → split across 2 A100 80GB via device_map="auto" (~35GB each)
+  - LoRA applied to attention modules only (q/k/v/o_proj) — skips routed experts to
+    avoid 256x parameter explosion in the MoE FFN layers
 
 Strategy: Reward-weighted SFT (offline RL)
   - Records where reward_3d > 0 (correct signals) → high loss weight
@@ -14,22 +20,21 @@ Why reward-weighted SFT instead of GRPO/PPO first:
   - Stable training, no reward hacking risk
   - Can upgrade to GRPO after validating the adapter
 
-Hardware (max 2 GPUs):
-  - Script auto-selects the 2 GPUs with most free VRAM
-  - Currently: GPU 1 (81GB free) + GPU 2 (81GB free)
-  - 32B model in bfloat16 ≈ 64GB → split across 2 GPUs via device_map="auto"
-  - LoRA adapters are tiny (~1% params), gradient checkpointing saves activations
+Hardware (max 2 GPUs, auto-selected):
+  - Auto-selects GPUs with most free VRAM (currently GPU 1 + GPU 2, each 81GB free)
+  - Single process + device_map="auto" — do NOT use torchrun
+
+First-time setup (download model, ~70GB):
+  python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3.5-35B-A3B')"
 
 Usage:
   # Step 1: prepare dataset (run once)
   python prepare_rl_dataset.py --rl_data ../rl_training_data.jsonl --output ./rl_sft_dataset
 
-  # Step 2: train (auto GPU selection, max 2 GPUs — just run with python, NOT torchrun)
+  # Step 2: train
   python rl_lora_trainer.py \
-      --model_name_or_path Qwen/Qwen2.5-32B-Instruct \
       --dataset_dir ./rl_sft_dataset \
-      --output_dir ./lora_checkpoints \
-      --max_gpus 2
+      --output_dir ./lora_checkpoints
 
   # Override GPU selection manually:
   CUDA_VISIBLE_DEVICES=1,2 python rl_lora_trainer.py ...
@@ -244,16 +249,25 @@ def train(args):
         print(f"  GPU {selected_gpus[i]}: {alloc:.1f} / {total:.1f} GB used after model load")
 
     # ── LoRA ───────────────────────────────────────────────
+    # For MoE models (qwen35moe): apply LoRA to attention only.
+    # Skipping gate/up/down projections avoids 256x parameter explosion
+    # from the routed expert FFN layers — each layer has 256 expert copies.
+    is_moe = "moe" in args.model_name_or_path.lower() or "a3b" in args.model_name_or_path.lower()
+    if is_moe:
+        lora_target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+        print(f"[LoRA] MoE model detected — targeting attention modules only: {lora_target_modules}")
+    else:
+        lora_target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+                               "gate_proj", "up_proj", "down_proj"]
+        print(f"[LoRA] Dense model — targeting all linear modules: {lora_target_modules}")
+
     lora_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=0.05,
         bias="none",
-        target_modules=[
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj",
-        ],
+        target_modules=lora_target_modules,
     )
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
@@ -358,7 +372,8 @@ def train(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AlphaTrader RL LoRA Trainer")
-    parser.add_argument("--model_name_or_path",  default="Qwen/Qwen2.5-32B-Instruct")
+    parser.add_argument("--model_name_or_path",  default="Qwen/Qwen3.5-35B-A3B",
+                        help="HuggingFace model ID (default: Qwen/Qwen3.5-35B-A3B)")
     parser.add_argument("--dataset_dir",         default="./rl_sft_dataset")
     parser.add_argument("--output_dir",          default="./lora_checkpoints")
     parser.add_argument("--max_gpus",            type=int,   default=2,
