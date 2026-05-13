@@ -348,21 +348,35 @@ def _schedule_next_day_buy(db, user_id: int, symbol: str, reason: str, source_ti
     return True
 
 
+_rl_lessons_cache: tuple = ("", 0.0)  # (text, timestamp)
+_RL_LESSONS_TTL = 60.0  # seconds
+
+
 def get_rl_lessons() -> str:
     """
     Build RL lessons from two sources:
     1. intelligence_attribution_report.json — catalyst/sector performance
     2. Live position P&L from the DB — profitable holdings → positive signals,
        losing holdings → negative signals (user directive 2026-05-13)
+
+    Result is cached for 60 s to avoid repeated DB opens (called ~7× per scan).
     """
+    import time
+    from sqlalchemy import text as sa_text
+
+    global _rl_lessons_cache
+    cached_text, cached_at = _rl_lessons_cache
+    if cached_text and (time.time() - cached_at) < _RL_LESSONS_TTL:
+        return cached_text
+
     lines = ["### RL Feedback (Actual Portfolio Results — use to guide stock selection)"]
 
     # ── 1. Live position P&L as RL signal ───────────────────────────────────
     try:
         db = next(get_db())
         positions = db.execute(
-            "SELECT symbol, avg_cost, current_price, quantity "
-            "FROM positions WHERE user_id=1 AND quantity > 0.001"
+            sa_text("SELECT symbol, avg_cost, current_price, quantity "
+                    "FROM positions WHERE user_id=1 AND quantity > 0.001")
         ).fetchall()
         db.close()
         winners, losers = [], []
@@ -424,7 +438,9 @@ def get_rl_lessons() -> str:
             logger.debug(f"[RL] Attribution report error: {e}")
 
     lines.append("\nINSTRUCTION: Use the above as a feedback loop — amplify what works, reduce what doesn't.")
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    _rl_lessons_cache = (result, time.time())
+    return result
 
 
 # ─────────────────────────────────────────────
