@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
     task15 = asyncio.create_task(background_hk_ipo_scan())
     task16 = asyncio.create_task(background_deposit_handler())
     task17 = asyncio.create_task(background_annual_tax_report())
-    task18 = asyncio.create_task(background_rl_policy_trainer())
+    task18 = asyncio.create_task(background_rl_pipeline())
     logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan + deposit_handler + annual_tax_report + rl_policy_trainer")
     yield
     task1.cancel()
@@ -2773,6 +2773,124 @@ async def health():
 
 
 # ─────────────────────────────────────────────
+# RL Pipeline API
+# ─────────────────────────────────────────────
+
+@app.get("/api/rl/pipeline")
+async def rl_pipeline_status():
+    """Current pipeline state: production version, shadow, recent runs."""
+    import rl_pipeline as _pipe
+    return _pipe.get_status()
+
+
+@app.post("/api/rl/pipeline/run")
+async def rl_pipeline_run_now(background_tasks: BackgroundTasks):
+    """Manually trigger one pipeline cycle (runs in background)."""
+    import rl_pipeline as _pipe
+    background_tasks.add_task(lambda: _pipe.run_cycle())
+    return {"status": "triggered", "message": "Pipeline cycle running in background"}
+
+
+@app.get("/api/rl/models")
+async def rl_models_registry():
+    """Full version registry — every candidate trained, with metrics + decision."""
+    import rl_validation as _val
+    return _val.load_registry()
+
+
+@app.post("/api/rl/promote/{version}")
+async def rl_promote_version(version: str):
+    """
+    Manually promote a saved version to production.  Useful for rollback or
+    overriding the auto-promotion logic.
+    """
+    import rl_validation as _val
+    import rl_policy_model as _rlpm
+    import shutil
+    registry = _val.load_registry()
+    versioned_path = os.path.join(_rlpm.MODELS_DIR, f"xgb_{version}.pkl")
+    if not os.path.exists(versioned_path):
+        raise HTTPException(404, f"Version {version} not found")
+    shutil.copyfile(versioned_path, _rlpm.MODEL_FILE)
+    registry["production"] = version
+    _val.save_registry(registry)
+    return {"status": "promoted", "version": version}
+
+
+@app.post("/api/rl/promote-shadow")
+async def rl_promote_shadow():
+    """Promote the current shadow model to production."""
+    import rl_validation as _val
+    import rl_policy_model as _rlpm
+    registry = _val.load_registry()
+    shadow_version = registry.get("shadow")
+    if not shadow_version or not os.path.exists(_rlpm.SHADOW_FILE):
+        raise HTTPException(404, "No shadow model to promote")
+    import shutil
+    shutil.copyfile(_rlpm.SHADOW_FILE, _rlpm.MODEL_FILE)
+    registry["production"] = shadow_version
+    registry["shadow"]     = None
+    _val.save_registry(registry)
+    _rlpm.remove_shadow()
+    return {"status": "promoted", "version": shadow_version}
+
+
+@app.get("/api/rl/shadow/comparison")
+async def rl_shadow_comparison(days: int = 7):
+    """
+    A/B comparison of shadow vs production predictions over the last N days,
+    based on records that already have realised reward_3d.
+    """
+    import rl_data_collector as _rl
+    records = _rl._parse_jsonl(_rl.RL_DATA_FILE)
+    cutoff  = datetime.utcnow() - timedelta(days=days)
+
+    prod_hits, prod_total = 0, 0
+    shadow_hits, shadow_total = 0, 0
+    prod_rmse_sum, shadow_rmse_sum = 0.0, 0.0
+    import math as _m
+    for r in records:
+        reward = r.get("reward_3d")
+        if reward is None or not isinstance(reward, (int, float)) or not _m.isfinite(reward):
+            continue
+        try:
+            ts = datetime.fromisoformat(r["timestamp"])
+        except Exception:
+            continue
+        if ts < cutoff:
+            continue
+
+        prod_score   = r.get("rl_policy_score")
+        shadow_score = r.get("rl_shadow_score")
+        if abs(reward) < 0.5:    # ignore near-zero noise
+            continue
+
+        if isinstance(prod_score, (int, float)) and _m.isfinite(prod_score):
+            prod_total += 1
+            if (prod_score > 0) == (reward > 0):
+                prod_hits += 1
+            prod_rmse_sum += (prod_score - reward) ** 2
+        if isinstance(shadow_score, (int, float)) and _m.isfinite(shadow_score):
+            shadow_total += 1
+            if (shadow_score > 0) == (reward > 0):
+                shadow_hits += 1
+            shadow_rmse_sum += (shadow_score - reward) ** 2
+
+    def _stat(hits, total, rmse_sum):
+        return {
+            "samples": total,
+            "directional_accuracy": round(hits / total * 100, 2) if total else None,
+            "rmse": round((rmse_sum / total) ** 0.5, 4) if total else None,
+        }
+
+    return {
+        "window_days": days,
+        "production":  _stat(prod_hits,   prod_total,   prod_rmse_sum),
+        "shadow":      _stat(shadow_hits, shadow_total, shadow_rmse_sum),
+    }
+
+
+# ─────────────────────────────────────────────
 # WebSocket endpoint
 # ─────────────────────────────────────────────
 
@@ -4086,26 +4204,33 @@ async def background_dca_core_etf():
         await asyncio.sleep(3600)  # check hourly; only acts once per month per user
 
 
-async def background_rl_policy_trainer():
+async def background_rl_pipeline():
     """
-    Task 18 — Daily XGBoost RL policy model retraining.
+    Task 18 — End-to-end RL MLOps pipeline (daily).
 
-    Runs once at startup (after a short delay so the JSONL file is readable),
-    then retrains every 24 hours.  The model is saved to rl_policy_model.pkl
-    and hot-reloaded by rl_policy_model.predict_reward() on the next trade.
+    Replaces the old single-step "train + overwrite" loop with a full cycle:
+      1. back-fill rewards on JSONL
+      2. refresh attribution report
+      3. train candidate XGBoost on data older than 7 days
+      4. score candidate AND production model on the last 7 days (holdout)
+      5. decide: promote / shadow / reject based on directional accuracy
+      6. update rl_policy_model.pkl (production) or rl_policy_shadow.pkl
+      7. trigger LoRA retraining if +5000 new labeled records accumulated
+
+    Pipeline state is persisted to rl_models/registry.json — readable via the
+    /api/rl/pipeline endpoint.
     """
-    await asyncio.sleep(300)  # wait 5 min after startup before first train
+    await asyncio.sleep(300)   # wait 5 min after startup
     while True:
         try:
-            import rl_policy_model as _rlpm
-            result = await asyncio.get_event_loop().run_in_executor(None, _rlpm.train_model)
-            if result.get("error"):
-                logger.warning(f"[RL Policy Trainer] {result['error']}")
-            else:
-                logger.info(f"[RL Policy Trainer] Model retrained: {result['samples']} samples")
+            import rl_pipeline as _pipe
+            report = await asyncio.get_event_loop().run_in_executor(None, _pipe.run_cycle)
+            status = report.get("status", "unknown")
+            decision = (report.get("decision") or {}).get("decision", "-")
+            logger.info(f"[RL Pipeline] cycle complete: status={status}  decision={decision}")
         except Exception as e:
-            logger.error(f"[RL Policy Trainer] Error: {e}")
-        await asyncio.sleep(86400)  # retrain every 24 hours
+            logger.error(f"[RL Pipeline] Error: {e}", exc_info=True)
+        await asyncio.sleep(86400)   # one cycle per day
 
 
 if __name__ == "__main__":

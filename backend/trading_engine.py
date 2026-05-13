@@ -608,6 +608,8 @@ class TradingEngine:
 
             # RL auxiliary policy filter: skip BUY if the XGBoost model
             # predicts a negative 3d reward AND LLM confidence is marginal.
+            # Shadow mode: if a shadow model exists, log its prediction in
+            # parallel for later A/B comparison (does NOT affect the decision).
             try:
                 import rl_policy_model as _rlpm
                 quote_for_rl = {"current": current_price}
@@ -619,8 +621,12 @@ class TradingEngine:
                                   "vpa_signal", "vpa_volume_ratio", "valuation_gap_pct")
                         if indicators.get(k) is not None
                     })
-                rl_score = _rlpm.predict_reward(signal, quote_for_rl, indicators or {})
+                rl_score, shadow_score = _rlpm.predict_with_shadow(
+                    signal, quote_for_rl, indicators or {})
                 signal["rl_policy_score"] = rl_score
+                if shadow_score is not None:
+                    signal["rl_shadow_score"] = shadow_score
+                    logger.info(f"[RL Shadow] {symbol} prod={rl_score} shadow={shadow_score}")
                 if rl_score is not None and rl_score < -1.0 and confidence < 0.85:
                     return {
                         "success": False, "skipped": True,

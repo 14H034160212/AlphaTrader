@@ -90,6 +90,8 @@ def record_signal_state(
         "time_horizon": signal.get("time_horizon"),
         "key_factors": signal.get("key_factors", []),
         "model": signal.get("model"),
+        "rl_policy_score": signal.get("rl_policy_score"),
+        "rl_shadow_score": signal.get("rl_shadow_score"),
         "state": {
             "price": quote.get("current"),
             "change_pct": quote.get("change_pct"),
