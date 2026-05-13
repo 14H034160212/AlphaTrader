@@ -18,3 +18,8 @@ node_modules/
 *.db.old
 *.jsonl
 .claude/
+
+# RL artifacts (large runtime files)
+rl_training_data.jsonl
+rl_policy_model.pkl
+training/rl_sft_dataset/

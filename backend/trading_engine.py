@@ -606,6 +606,34 @@ class TradingEngine:
                         ),
                     }
 
+            # RL auxiliary policy filter: skip BUY if the XGBoost model
+            # predicts a negative 3d reward AND LLM confidence is marginal.
+            try:
+                import rl_policy_model as _rlpm
+                quote_for_rl = {"current": current_price}
+                if indicators:
+                    quote_for_rl.update({
+                        k: indicators.get(k)
+                        for k in ("change_pct", "volume", "pe_ratio",
+                                  "fifty_two_week_low", "fifty_two_week_high",
+                                  "vpa_signal", "vpa_volume_ratio", "valuation_gap_pct")
+                        if indicators.get(k) is not None
+                    })
+                rl_score = _rlpm.predict_reward(signal, quote_for_rl, indicators or {})
+                signal["rl_policy_score"] = rl_score
+                if rl_score is not None and rl_score < -1.0 and confidence < 0.85:
+                    return {
+                        "success": False, "skipped": True,
+                        "reason": (
+                            f"RL policy veto: predicted 3d reward {rl_score:+.2f}% "
+                            f"(negative) with confidence {confidence:.0%} < 85%"
+                        ),
+                    }
+                if rl_score is not None:
+                    logger.info(f"[RL Policy] {symbol} predicted 3d reward: {rl_score:+.2f}%")
+            except Exception as _e:
+                logger.debug(f"[RL Policy] Score unavailable for {symbol}: {_e}")
+
             # Sector exposure cap (BUY only). Core ETFs exempt. Prevents
             # cluster failure where multiple stocks in one narrative drop
             # together (e.g. defense LMT/NOC/RTX March 2026).
