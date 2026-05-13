@@ -14,13 +14,16 @@ import math
 import os
 import logging
 import pickle
+from datetime import datetime
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-MODEL_FILE = os.path.join(os.path.dirname(__file__), "..", "rl_policy_model.pkl")
+MODEL_FILE   = os.path.join(os.path.dirname(__file__), "..", "rl_policy_model.pkl")
 RL_DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "rl_training_data.jsonl")
+MODELS_DIR   = os.path.join(os.path.dirname(__file__), "..", "rl_models")
+SHADOW_FILE  = os.path.join(MODELS_DIR, "rl_policy_shadow.pkl")
 
 # Minimum training samples required before we trust the model
 _MIN_SAMPLES = 200
@@ -86,22 +89,17 @@ def _extract_features(rec: dict) -> list | None:
         return None
 
 
-def train_model() -> dict:
+def train_model_on(records: list) -> object | None:
     """
-    Train XGBoost regressor on all JSONL records that have reward_3d filled.
-    Saves the model to MODEL_FILE.  Called daily by the scheduler.
+    Train an XGBoost regressor on the given records (no I/O).
+    Returns the model instance, or None if there's insufficient data.
+    The orchestrator uses this for validate-before-deploy workflows.
     """
     try:
         from xgboost import XGBRegressor
     except ImportError:
         logger.error("[RL Policy] xgboost not installed")
-        return {"error": "xgboost not installed"}
-
-    if not os.path.exists(RL_DATA_FILE):
-        return {"error": "RL data file not found"}
-
-    import rl_data_collector as _rl
-    records = _rl._parse_jsonl(RL_DATA_FILE)
+        return None
 
     X, y = [], []
     for rec in records:
@@ -115,9 +113,8 @@ def train_model() -> dict:
         y.append(float(reward))
 
     if len(X) < _MIN_SAMPLES:
-        msg = f"Only {len(X)} labeled samples (need {_MIN_SAMPLES}), skipping training"
-        logger.warning(f"[RL Policy] {msg}")
-        return {"error": msg, "samples": len(X)}
+        logger.warning(f"[RL Policy] Only {len(X)} samples (need {_MIN_SAMPLES})")
+        return None
 
     X_np = np.array(X, dtype=np.float32)
     y_np = np.array(y, dtype=np.float32)
@@ -134,18 +131,88 @@ def train_model() -> dict:
         n_jobs=-1,
     )
     model.fit(X_np, y_np)
+    return model
 
-    with open(MODEL_FILE, "wb") as f:
+
+def train_model() -> dict:
+    """
+    Legacy entry point: train on ALL records (no holdout, no validation) and
+    overwrite MODEL_FILE.  Kept for backward compatibility with the legacy
+    Task 18 path — but the new Task 19 pipeline uses train_model_on() +
+    rl_pipeline.run_cycle() which does proper holdout validation and
+    only promotes if the new model beats the current one.
+    """
+    if not os.path.exists(RL_DATA_FILE):
+        return {"error": "RL data file not found"}
+
+    import rl_data_collector as _rl
+    records = _rl._parse_jsonl(RL_DATA_FILE)
+
+    model = train_model_on(records)
+    if model is None:
+        return {"error": "training skipped (insufficient data)", "samples": 0}
+
+    n_labeled = sum(1 for r in records
+                    if isinstance(r.get("reward_3d"), (int, float)) and math.isfinite(r["reward_3d"]))
+
+    save_versioned_model(model, version=None)   # writes both MODEL_FILE and a versioned copy
+
+    logger.info(f"[RL Policy] Trained on {n_labeled} samples → {MODEL_FILE}")
+    return {"samples": n_labeled, "model_file": MODEL_FILE}
+
+
+def save_versioned_model(model, version: str | None = None) -> str:
+    """
+    Save the model to a versioned file (rl_models/xgb_v{N}.pkl) and update
+    the production symlink rl_policy_model.pkl.  Returns the version string.
+    """
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    if version is None:
+        version = datetime.now().strftime("v%Y%m%d_%H%M%S")
+    versioned_path = os.path.join(MODELS_DIR, f"xgb_{version}.pkl")
+    with open(versioned_path, "wb") as f:
         pickle.dump(model, f)
+    # Update MODEL_FILE atomically (real copy, not symlink, to keep loader simple)
+    tmp = MODEL_FILE + ".tmp"
+    with open(tmp, "wb") as f:
+        pickle.dump(model, f)
+    os.replace(tmp, MODEL_FILE)
+    logger.info(f"[RL Policy] Saved version {version} → {versioned_path}")
+    return version
 
-    logger.info(f"[RL Policy] Trained on {len(X)} samples → {MODEL_FILE}")
-    return {"samples": len(X), "model_file": MODEL_FILE}
+
+def save_shadow_model(model, version: str | None = None) -> str:
+    """
+    Save model as the SHADOW model (predicts in parallel but doesn't trade).
+    Trading engine reads SHADOW_FILE to log shadow predictions for later A/B.
+    """
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    if version is None:
+        version = datetime.now().strftime("v%Y%m%d_%H%M%S")
+    versioned_path = os.path.join(MODELS_DIR, f"xgb_{version}.pkl")
+    with open(versioned_path, "wb") as f:
+        pickle.dump(model, f)
+    tmp = SHADOW_FILE + ".tmp"
+    with open(tmp, "wb") as f:
+        pickle.dump(model, f)
+    os.replace(tmp, SHADOW_FILE)
+    logger.info(f"[RL Policy] Saved shadow version {version} → {SHADOW_FILE}")
+    return version
+
+
+def remove_shadow() -> None:
+    """Remove shadow model file (e.g. after promotion or rejection)."""
+    if os.path.exists(SHADOW_FILE):
+        os.remove(SHADOW_FILE)
+        logger.info("[RL Policy] Removed shadow model")
 
 
 # --- Inference (hot-reloads model if file changes on disk) ---
 
-_model_cache = None
+_model_cache  = None
 _model_mtime  = 0.0
+_shadow_cache = None
+_shadow_mtime = 0.0
 
 
 def _load_model():
@@ -162,6 +229,64 @@ def _load_model():
         logger.debug(f"[RL Policy] Model load error: {e}")
         return None
     return _model_cache
+
+
+def _load_shadow():
+    global _shadow_cache, _shadow_mtime
+    if not os.path.exists(SHADOW_FILE):
+        return None
+    try:
+        mtime = os.path.getmtime(SHADOW_FILE)
+        if _shadow_cache is None or mtime > _shadow_mtime:
+            with open(SHADOW_FILE, "rb") as f:
+                _shadow_cache = pickle.load(f)
+            _shadow_mtime = mtime
+    except Exception as e:
+        logger.debug(f"[RL Policy] Shadow load error: {e}")
+        return None
+    return _shadow_cache
+
+
+def predict_with_shadow(signal: dict, quote: dict, indicators: dict) -> tuple:
+    """
+    Returns (production_score, shadow_score).  Either may be None if its
+    model file is missing.  Used by the trading engine to log shadow
+    predictions in parallel with the production decision.
+    """
+    prod   = predict_reward(signal, quote, indicators)
+    shadow = None
+    model  = _load_shadow()
+    if model is not None:
+        rec = _signal_to_record(signal, quote, indicators)
+        feats = _extract_features(rec)
+        if feats is not None:
+            try:
+                shadow = float(model.predict(np.array([feats], dtype=np.float32))[0])
+                shadow = round(shadow, 4) if math.isfinite(shadow) else None
+            except Exception:
+                shadow = None
+    return prod, shadow
+
+
+def _signal_to_record(signal: dict, quote: dict, indicators: dict) -> dict:
+    """Build the record dict that _extract_features expects."""
+    return {
+        "action":     signal.get("signal", "HOLD"),
+        "confidence": signal.get("confidence", 0),
+        "sector":     signal.get("sector", "Other"),
+        "state": {
+            "price":               quote.get("current"),
+            "change_pct":          quote.get("change_pct"),
+            "volume":              quote.get("volume"),
+            "pe_ratio":            quote.get("pe_ratio"),
+            "fifty_two_week_low":  quote.get("fifty_two_week_low"),
+            "fifty_two_week_high": quote.get("fifty_two_week_high"),
+            "vpa_signal":          quote.get("vpa_signal"),
+            "vpa_volume_ratio":    quote.get("vpa_volume_ratio"),
+            "valuation_gap_pct":   quote.get("valuation_gap_pct"),
+            "indicators":          indicators or {},
+        },
+    }
 
 
 def predict_reward(signal: dict, quote: dict, indicators: dict) -> float | None:
