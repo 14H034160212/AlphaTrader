@@ -349,46 +349,82 @@ def _schedule_next_day_buy(db, user_id: int, symbol: str, reason: str, source_ti
 
 
 def get_rl_lessons() -> str:
-    """Read the latest RL intelligence attribution report and format it for the AI prompt."""
-    report_path = "/data/qbao775/AlphaTrader/intelligence_attribution_report.json"
-    if not os.path.exists(report_path):
-        return ""
+    """
+    Build RL lessons from two sources:
+    1. intelligence_attribution_report.json — catalyst/sector performance
+    2. Live position P&L from the DB — profitable holdings → positive signals,
+       losing holdings → negative signals (user directive 2026-05-13)
+    """
+    lines = ["### RL Feedback (Actual Portfolio Results — use to guide stock selection)"]
+
+    # ── 1. Live position P&L as RL signal ───────────────────────────────────
     try:
-        with open(report_path, "r") as f:
-            report = json.load(f)
-        
-        # Summary of best/worst macro scenarios
-        macro_stats = report.get("catalyst_performance", {})
-        sector_stats = report.get("sector_performance", {})
-        
-        lines = ["### Intelligence Performance Attribution (Actual Market Results)"]
-        
-        # 1. Catalyst Performance
-        if macro_stats:
-            sorted_macros = sorted(macro_stats.items(), key=lambda x: x[1].get("avg_reward", 0), reverse=True)
-            top = [f"{m}: {s.get('avg_reward', 0):+.2f}% avg reward ({s.get('count', 0)} signals)" for m, s in sorted_macros[:3] if s.get('count', 0) > 0]
-            bottom = [f"{m}: {s.get('avg_reward', 0):+.2f}% avg reward ({s.get('count', 0)} signals)" for m, s in sorted_macros[-3:] if s.get('count', 0) > 0]
-            
-            if top:
-                lines.append("Most Accurate Catalysts Recently:")
-                lines.extend([f"  - {t}" for t in top])
-            if bottom:
-                lines.append("Least Accurate/Overpriced Catalysts Recently:")
-                lines.extend([f"  - {b}" for b in bottom])
-
-        # 2. Sector Performance (Grounding)
-        if sector_stats:
-            lines.append("\nRecent Sector Success Rates:")
-            sorted_sectors = sorted(sector_stats.items(), key=lambda x: x[1].get("avg_reward", 0), reverse=True)
-            for sector, data in sorted_sectors:
-                if data.get("count", 0) > 0:
-                    lines.append(f"  - {sector}: {data['avg_reward']:+.2f}% avg 1d return")
-
-        lines.append("\nINSTRUCTION: Favor signals backed by 'Accurate' catalysts and strong sector trends. Be skeptical of 'Risky' or overextended areas.")
-        return "\n".join(lines)
+        db = next(get_db())
+        positions = db.execute(
+            "SELECT symbol, avg_cost, current_price, quantity "
+            "FROM positions WHERE user_id=1 AND quantity > 0.001"
+        ).fetchall()
+        db.close()
+        winners, losers = [], []
+        for sym, cost, cur, qty in positions:
+            if cost and cost > 0 and cur and cur > 0:
+                pnl_pct = (cur - cost) / cost * 100
+                if pnl_pct >= 5.0:
+                    winners.append((sym, pnl_pct))
+                elif pnl_pct <= -5.0:
+                    losers.append((sym, pnl_pct))
+        if winners:
+            winners.sort(key=lambda x: x[1], reverse=True)
+            lines.append("POSITIVE signals (profitable positions — consider adding/holding):")
+            for sym, pnl in winners[:5]:
+                lines.append(f"  + {sym}: {pnl:+.1f}% — market is rewarding this, weight UP")
+        if losers:
+            losers.sort(key=lambda x: x[1])
+            lines.append("NEGATIVE signals (losing positions — be cautious, consider reducing):")
+            for sym, pnl in losers[:5]:
+                lines.append(f"  - {sym}: {pnl:+.1f}% — market is punishing this, weight DOWN")
     except Exception as e:
-        logger.error(f"Error reading RL lessons: {e}")
-        return ""
+        logger.debug(f"[RL] Position P&L signal error: {e}")
+
+    # ── 2. Large-cap user preference ────────────────────────────────────────
+    lines.append(
+        "\nUSER DIRECTIVE: Strongly prefer large, well-known tech companies "
+        "(NVDA, AAPL, MSFT, AMZN, TSLA, GOOGL, META, AMD, BABA, etc.). "
+        "Avoid small/obscure companies — they consistently underperform in this portfolio. "
+        "Geopolitical/war scenarios (Iran-US) should NOT drive stock selection; focus on tech fundamentals."
+    )
+
+    # ── 3. Attribution report (catalyst/sector) ──────────────────────────────
+    report_path = "/data/qbao775/AlphaTrader/intelligence_attribution_report.json"
+    if os.path.exists(report_path):
+        try:
+            with open(report_path, "r") as f:
+                report = json.load(f)
+            macro_stats = report.get("catalyst_performance", {})
+            sector_stats = report.get("sector_performance", {})
+            if macro_stats:
+                sorted_macros = sorted(macro_stats.items(), key=lambda x: x[1].get("avg_reward", 0), reverse=True)
+                top = [f"{m}: {s.get('avg_reward', 0):+.2f}% avg ({s.get('count', 0)} signals)"
+                       for m, s in sorted_macros[:3] if s.get('count', 0) > 0]
+                bottom = [f"{m}: {s.get('avg_reward', 0):+.2f}% avg ({s.get('count', 0)} signals)"
+                          for m, s in sorted_macros[-3:] if s.get('count', 0) > 0]
+                if top:
+                    lines.append("\nBest-performing catalysts:")
+                    lines.extend([f"  + {t}" for t in top])
+                if bottom:
+                    lines.append("Worst-performing catalysts (avoid over-weighting):")
+                    lines.extend([f"  - {b}" for b in bottom])
+            if sector_stats:
+                sorted_sectors = sorted(sector_stats.items(), key=lambda x: x[1].get("avg_reward", 0), reverse=True)
+                lines.append("\nSector performance:")
+                for sector, data in sorted_sectors:
+                    if data.get("count", 0) > 0:
+                        lines.append(f"  {sector}: {data['avg_reward']:+.2f}% avg 1d return")
+        except Exception as e:
+            logger.debug(f"[RL] Attribution report error: {e}")
+
+    lines.append("\nINSTRUCTION: Use the above as a feedback loop — amplify what works, reduce what doesn't.")
+    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────
