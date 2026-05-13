@@ -92,6 +92,54 @@ SYMBOL_SECTOR = {
 }
 
 
+# Large-cap preferred list (user directive 2026-05-13):
+# "尽可能买耳熟能详的科技大公司，不要买一些小公司"
+# Symbols here get a confidence boost; unknowns require higher conviction.
+LARGE_CAP_PREFERRED = {
+    # US Mega-cap Tech
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA",
+    "AMD", "AVGO", "ORCL", "CRM", "ADBE", "QCOM", "INTC", "TXN", "ARM",
+    # Semiconductors (large cap)
+    "TSM", "ASML", "MU", "KLAC", "LRCX", "AMAT", "MRVL",
+    # Large-cap China ADRs
+    "BABA", "JD", "PDD", "NTES", "BIDU", "TCOM",
+    # Core ETFs
+    "SPY", "QQQ", "VOO", "IVV", "VTI",
+    # Large-cap Financials / Consumer
+    "JPM", "V", "MA", "COST", "WMT",
+    # Large-cap Crypto proxy
+    "COIN",
+}
+
+# Minimum market cap (USD billions) for non-preferred symbols.
+# Signals for companies below this threshold require confidence >= SMALL_CAP_MIN_CONFIDENCE.
+LARGE_CAP_MIN_MARKET_CAP_B = 10.0   # $10B minimum
+SMALL_CAP_MIN_CONFIDENCE   = 0.85   # higher bar for unknowns
+
+
+def is_large_cap_preferred(symbol: str) -> bool:
+    """True if symbol is in the user-preferred large-cap list."""
+    return symbol.upper() in LARGE_CAP_PREFERRED
+
+
+def should_skip_small_cap(symbol: str, confidence: float, market_cap_b: float = None) -> bool:
+    """
+    Return True if this signal should be rejected because the symbol is not
+    a preferred large-cap AND fails the minimum confidence bar.
+    market_cap_b: market cap in billions (from yfinance quote), or None if unknown.
+    """
+    sym = symbol.upper()
+    if sym in LARGE_CAP_PREFERRED:
+        return False  # always allow preferred names
+    if sym in CORE_ETF_WHITELIST:
+        return False
+    # If market cap is known and large enough, allow with normal confidence
+    if market_cap_b is not None and market_cap_b >= LARGE_CAP_MIN_MARKET_CAP_B:
+        return False
+    # Unknown or small cap: require higher confidence
+    return confidence < SMALL_CAP_MIN_CONFIDENCE
+
+
 # Runtime-registered HK IPO tickers — populated by hk_ipo_scanner. These get
 # the synthetic 'HK_IPO_NEW' sector tag so they hit the 5% cap regardless of
 # what (if anything) is in SYMBOL_SECTOR.

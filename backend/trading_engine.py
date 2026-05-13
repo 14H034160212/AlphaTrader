@@ -581,6 +581,29 @@ class TradingEngine:
                 else:
                     return {"success": False, "skipped": True, "reason": "No short position to cover"}
 
+            # Large-cap preference filter (user directive 2026-05-13).
+            # Unknown/small companies need higher conviction to trade.
+            if action == "BUY" and not ps.is_core_etf(symbol):
+                market_cap_b = None
+                try:
+                    if isinstance(current_price, (int, float)) and current_price > 0:
+                        # Use market_cap from the price cache if available
+                        from main import price_cache
+                        cached = price_cache.get(symbol.upper(), {})
+                        mc = cached.get("market_cap") or cached.get("marketCap")
+                        if mc and mc > 0:
+                            market_cap_b = mc / 1e9
+                except Exception:
+                    pass
+                if ps.should_skip_small_cap(symbol, confidence, market_cap_b):
+                    return {
+                        "success": False, "skipped": True,
+                        "reason": (
+                            f"Small/unknown cap filter: {symbol} not in large-cap preferred list "
+                            f"and confidence {confidence:.0%} < {ps.SMALL_CAP_MIN_CONFIDENCE:.0%} required for unknowns"
+                        ),
+                    }
+
             # Sector exposure cap (BUY only). Core ETFs exempt. Prevents
             # cluster failure where multiple stocks in one narrative drop
             # together (e.g. defense LMT/NOC/RTX March 2026).

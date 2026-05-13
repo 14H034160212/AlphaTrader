@@ -197,6 +197,12 @@ Strategy Rules:
 3. Only output SELL if we currently hold this stock and should take profits or cut losses.
 4. If a stock looks overvalued or overextended but we don't hold it, output HOLD — never SHORT.
 
+## PORTFOLIO STYLE MANDATE (CRITICAL — User explicit directive)
+- **LARGE-CAP FIRST**: Strongly prefer well-known, large-cap tech companies: NVDA, AAPL, MSFT, AMZN, TSLA, GOOGL, META, AMD, BABA, JD, NTES, QQQ, SPY, etc.
+- **AVOID SMALL/UNKNOWN**: Small or obscure companies consistently underperform in this portfolio. Only recommend them if confidence ≥ 0.85 AND fundamentals are exceptional.
+- **IGNORE WAR SCENARIOS**: Geopolitical events (Iran-US war, sanctions, etc.) should NOT drive BUY decisions. Focus on tech fundamentals, earnings, and sector momentum.
+- **TECH SECTOR BIAS**: The portfolio target is 45% satellite in high-quality tech. When in doubt, favor blue-chip tech names over anything else.
+
 ## Stock: {symbol}
 
 ### Current Quote
