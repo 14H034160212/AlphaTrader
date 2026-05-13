@@ -2835,6 +2835,59 @@ async def rl_promote_shadow():
     return {"status": "promoted", "version": shadow_version}
 
 
+@app.post("/api/rl/lora/deploy")
+async def rl_lora_deploy_manual():
+    """Manually deploy the current adapter (skips auto-deploy gate)."""
+    import rl_lora_deploy as _dep
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if "__file__" in dir() else "/data/qbao775/AlphaTrader"
+    adapter_dir = os.path.join(repo_root, "training", "lora_checkpoints", "best")
+    if not os.path.exists(adapter_dir):
+        raise HTTPException(404, "No LoRA adapter at training/lora_checkpoints/best/")
+    version = datetime.utcnow().strftime("v%Y%m%d_%H%M%S")
+    result = _dep.deploy_adapter(adapter_dir, version=version)
+    return result
+
+
+@app.post("/api/rl/lora/rollback")
+async def rl_lora_rollback():
+    """Stop the LoRA vLLM service and clear the routing setting."""
+    import rl_lora_deploy as _dep
+    return _dep.rollback_lora()
+
+
+@app.post("/api/rl/lora/auto-deploy/{enabled}")
+async def rl_lora_set_auto_deploy(enabled: str):
+    """Toggle auto-deployment of LoRA models that pass validation."""
+    val = "true" if enabled.lower() in ("true", "1", "on", "yes") else "false"
+    db = next(get_db())
+    try:
+        set_setting(db, "lora_auto_deploy_enabled", val, 1)
+    finally:
+        db.close()
+    return {"lora_auto_deploy_enabled": val}
+
+
+@app.get("/api/rl/lora/status")
+async def rl_lora_status():
+    """LoRA service status: vLLM running? deployed adapter? auto-deploy toggle?"""
+    import rl_lora_deploy as _dep
+    db = next(get_db())
+    try:
+        url        = get_setting(db, "lora_inference_url",        1, "")
+        version    = get_setting(db, "lora_model_version",        1, "")
+        deployed_at= get_setting(db, "lora_deployed_at",          1, "")
+        auto       = get_setting(db, "lora_auto_deploy_enabled",  1, "false")
+    finally:
+        db.close()
+    return {
+        "vllm_url":             url,
+        "deployed_version":     version,
+        "deployed_at":          deployed_at,
+        "auto_deploy_enabled":  auto == "true",
+        "vllm_port_in_use":     _dep._is_port_in_use(_dep.LORA_VLLM_PORT),
+    }
+
+
 @app.get("/api/rl/shadow/comparison")
 async def rl_shadow_comparison(days: int = 7):
     """
@@ -4230,7 +4283,7 @@ async def background_rl_pipeline():
             logger.info(f"[RL Pipeline] cycle complete: status={status}  decision={decision}")
         except Exception as e:
             logger.error(f"[RL Pipeline] Error: {e}", exc_info=True)
-        await asyncio.sleep(86400)   # one cycle per day
+        await asyncio.sleep(21600)   # one cycle every 6 hours (4× per day)
 
 
 if __name__ == "__main__":
