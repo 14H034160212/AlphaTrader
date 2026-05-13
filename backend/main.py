@@ -2835,6 +2835,41 @@ async def rl_promote_shadow():
     return {"status": "promoted", "version": shadow_version}
 
 
+@app.post("/api/rl/shootout")
+async def rl_model_shootout(test_set: str = "challenge",
+                             max_samples: int = 100,
+                             background_tasks: BackgroundTasks = None):
+    """
+    Head-to-head model comparison on the same test set.
+    Auto-detects every reachable backend (Ollama models + LoRA vLLM) and
+    scores each with the same BUY/SELL/HOLD decision rule.
+
+    test_set: "challenge" | "holdout" | "combined"
+    Heavy: takes 10-30 min depending on # of backends and samples.
+    Runs in the background — poll /api/rl/shootout/latest for results.
+    """
+    import rl_raw_model_validator as _raw
+    if background_tasks is not None:
+        background_tasks.add_task(_raw.run_baseline_shootout, test_set, max_samples)
+        return {"status": "started",
+                "message": f"Shootout queued on {test_set} test set (~10-30 min)",
+                "poll_endpoint": "/api/rl/shootout/latest"}
+    return _raw.run_baseline_shootout(test_set=test_set, max_samples=max_samples)
+
+
+@app.get("/api/rl/shootout/latest")
+async def rl_shootout_latest():
+    """Return the most recent shootout report from rl_models/raw_model_reports/."""
+    import rl_raw_model_validator as _raw
+    if not os.path.exists(_raw.RAW_REPORT_DIR):
+        return {"status": "no_reports"}
+    files = sorted(os.listdir(_raw.RAW_REPORT_DIR), reverse=True)
+    if not files:
+        return {"status": "no_reports"}
+    with open(os.path.join(_raw.RAW_REPORT_DIR, files[0])) as f:
+        return json.load(f)
+
+
 @app.get("/api/rl/challenge")
 async def rl_challenge_status():
     """Status of the permanent challenge test set (hard examples)."""
