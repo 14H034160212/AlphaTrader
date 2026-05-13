@@ -548,14 +548,19 @@ class TradingEngine:
         stop_loss = signal.get("stop_loss")
 
         kelly_sz = None
+        try:
+            tp = float(target_price) if target_price is not None else None
+            sl = float(stop_loss) if stop_loss is not None else None
+        except (TypeError, ValueError):
+            tp, sl = None, None
         if (action in ("BUY", "COVER") and
-                target_price and stop_loss and
-                target_price > current_price and stop_loss < current_price):
+                tp and sl and
+                tp > current_price and sl < current_price):
             kelly_sz = ps.kelly_position_size(
                 confidence=confidence,
                 current_price=current_price,
-                target_price=float(target_price),
-                stop_loss=float(stop_loss),
+                target_price=tp,
+                stop_loss=sl,
                 portfolio_value=total_equity,
                 indicators=indicators,
             )
