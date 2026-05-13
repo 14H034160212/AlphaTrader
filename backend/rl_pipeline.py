@@ -32,8 +32,9 @@ logger = logging.getLogger(__name__)
 
 # Threshold (in NEW labeled records since last LoRA training) that triggers
 # a new LoRA training run.  Keeps training cost bounded while still
-# incorporating fresh signal regularly.
-LORA_TRIGGER_THRESHOLD = 5000
+# incorporating fresh signal regularly.  At ~50-100 records/day this is
+# roughly 20-40 days between LoRA trainings (each takes ~3 days to finish).
+LORA_TRIGGER_THRESHOLD = 2000
 
 # Lock file so the cycle never runs twice in parallel
 _LOCK_FILE = "/tmp/rl_pipeline.lock"
@@ -162,6 +163,12 @@ def run_cycle(holdout_days: int = 7) -> dict:
         report["status"] = "ok"
         report["version"] = version
 
+        # ── Step 8b: check if a previous LoRA training finished ─
+        # If yes: validate → optionally deploy via vLLM hot-swap
+        lora_completion = handle_lora_completion(records)
+        if lora_completion:
+            report["steps"].append({"step": "lora_completion", "ok": True, "result": lora_completion})
+
         # ── Step 9: LoRA trigger check ─────────────────────────
         lora_msg = trigger_lora_training_if_needed(records)
         if lora_msg:
@@ -176,6 +183,109 @@ def run_cycle(holdout_days: int = 7) -> dict:
 
     report["finished_at"] = datetime.utcnow().isoformat()
     return report
+
+
+# ──────────────────────────────────────────────
+# LoRA completion handler (validate + deploy)
+# ──────────────────────────────────────────────
+
+_LORA_LAST_VALIDATED_FLAG = "rl_models/lora_last_validated_adapter.txt"
+
+
+def handle_lora_completion(records: list) -> dict | None:
+    """
+    Check if a LoRA training subprocess has finished and produced an adapter
+    in training/lora_checkpoints/best/.  If so:
+      1. Skip if we already validated this exact adapter (idempotent)
+      2. Validate on holdout via rl_lora_validator
+      3. If approved (and auto-deploy is enabled), call rl_lora_deploy
+      4. Always write the validation report to the registry
+
+    Returns the result dict, or None if no new adapter to handle.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    adapter_dir = os.path.join(repo_root, "training", "lora_checkpoints", "best")
+    if not os.path.exists(adapter_dir):
+        return None
+
+    # Use the adapter's mtime as a fingerprint — re-validate only on changes
+    try:
+        adapter_file = os.path.join(adapter_dir, "adapter_model.safetensors")
+        if not os.path.exists(adapter_file):
+            return None
+        mtime = str(os.path.getmtime(adapter_file))
+    except OSError:
+        return None
+
+    last_validated = ""
+    flag_path = os.path.join(repo_root, _LORA_LAST_VALIDATED_FLAG)
+    if os.path.exists(flag_path):
+        with open(flag_path) as f:
+            last_validated = f.read().strip()
+    if last_validated == mtime:
+        return None      # already handled this adapter
+
+    # Check no LoRA training is currently running (don't validate a half-trained adapter)
+    try:
+        out = subprocess.check_output(["pgrep", "-f", "rl_lora_trainer"], text=True).strip()
+        if out:
+            logger.info("[LoRA Handle] training still in progress, skip validation")
+            return None
+    except subprocess.CalledProcessError:
+        pass    # no training process — adapter is final
+
+    import rl_validation as _val
+    import rl_lora_validator as _lv
+
+    # Build holdout from the same 7-day window
+    _, holdout = _val.split_train_holdout(records, holdout_days=7)
+    if len(holdout) < 30:
+        return {"status": "skipped", "reason": "not enough holdout samples"}
+
+    logger.info(f"[LoRA Handle] Validating adapter at {adapter_dir} (mtime={mtime})")
+    metrics = _lv.validate_lora(adapter_dir, holdout, max_samples=100)
+    prod_metrics = _lv.compare_to_production(metrics or {}, holdout)
+    decision = _lv.decide_lora_promotion(metrics, prod_metrics)
+
+    version = datetime.utcnow().strftime("v%Y%m%d_%H%M%S")
+    _val.register_version(version, "lora",
+                          metrics or {"error": "no metrics"},
+                          decision, path=adapter_dir)
+
+    # Mark this adapter as handled (don't re-validate on next cycle)
+    os.makedirs(os.path.dirname(flag_path), exist_ok=True)
+    with open(flag_path, "w") as f:
+        f.write(mtime)
+
+    # Auto-deploy if approved AND the safety toggle is enabled
+    auto_deploy = _read_setting("lora_auto_deploy_enabled", "false") == "true"
+    deployed = None
+    if decision["decision"] == "deploy" and auto_deploy:
+        logger.info(f"[LoRA Handle] Auto-deploying adapter (version {version})")
+        import rl_lora_deploy as _dep
+        deployed = _dep.deploy_adapter(adapter_dir, version=version)
+    elif decision["decision"] == "deploy":
+        logger.info("[LoRA Handle] Decision=deploy but auto-deploy disabled — manual promote via /api/rl/lora/deploy")
+
+    return {
+        "version":  version,
+        "decision": decision,
+        "metrics":  metrics,
+        "deployed": deployed,
+    }
+
+
+def _read_setting(key: str, default: str) -> str:
+    """Safe DB setting read with import-time-friendly fallback."""
+    try:
+        from database import get_db, get_setting
+        db = next(get_db())
+        try:
+            return get_setting(db, key, 1, default)
+        finally:
+            db.close()
+    except Exception:
+        return default
 
 
 # ──────────────────────────────────────────────

@@ -73,8 +73,51 @@ def _get_ollama_host() -> str:
         return "http://localhost:11434"
 
 
+def _get_lora_inference_url() -> str:
+    """If non-empty, the LoRA-fine-tuned vLLM service is up — route through it.
+    Set by the auto-deployment pipeline after a LoRA model passes validation."""
+    try:
+        from database import SessionLocal, get_setting
+        db = SessionLocal()
+        try:
+            return get_setting(db, "lora_inference_url", 1, "").rstrip("/")
+        finally:
+            db.close()
+    except Exception:
+        return ""
+
+
+def _call_lora_vllm(messages, temperature=0.1, base_url: str = ""):
+    """OpenAI-compatible chat completion against the LoRA vLLM server."""
+    url = f"{base_url}/chat/completions"
+    payload = {
+        "model": "alphatrader-lora",
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": 2000,
+    }
+    resp = requests.post(url, json=payload, timeout=360)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]["content"]
+
+
 def _call_ollama(messages, temperature=0.1):
-    """Make a raw HTTP call to local Ollama API."""
+    """Make a raw HTTP call to the LLM backend.
+    Routing priority:
+      1. If lora_inference_url DB setting is non-empty → call LoRA vLLM
+         (the fine-tuned, validated model from the MLOps pipeline)
+      2. Otherwise → call regular Ollama at ollama_host
+    On vLLM failure, automatically falls back to Ollama for resilience."""
+    lora_url = _get_lora_inference_url()
+    if lora_url:
+        try:
+            return _call_lora_vllm(messages, temperature, base_url=lora_url)
+        except Exception as e:
+            # vLLM failed — fall back to Ollama instead of crashing the trade
+            import logging
+            logging.getLogger(__name__).warning(f"[LoRA vLLM] failed, falling back to Ollama: {e}")
+
     url = f"{_get_ollama_host()}/api/chat"
     payload = {
         "model": _get_model_name("ollama"),
