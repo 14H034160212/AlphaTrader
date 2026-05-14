@@ -102,6 +102,79 @@ def _call_lora_vllm(messages, temperature=0.1, base_url: str = ""):
     return data["choices"][0]["message"]["content"]
 
 
+def _extract_signal_json(content: str) -> dict:
+    """Robustly pull the final {signal,...} JSON object out of an LLM response.
+
+    Handles four observed Qwen3.5/reasoning-model failure modes that the old
+    greedy `re.search(r'(\\{.*\\})', ...)` regex choked on:
+      1. Closed `<think>...</think>` blocks (older Qwen3 / DeepSeek-R1 style).
+      2. Open-ended `Thinking Process:` / `## Reasoning` prefixes (Qwen3.5
+         in open-thinking mode — NO <think> tags, just freeform reasoning).
+      3. Truncated output where reasoning runs out of budget before the JSON
+         section is reached (returns "no JSON found", not a crash).
+      4. Multiple `{...}` blocks in the response (reasoning steps that
+         contain JSON-ish fragments). Last balanced object wins — it's the
+         model's final answer.
+
+    Raises ValueError if no parseable JSON dict containing "signal" is found.
+    """
+    import re
+    text = (content or "").strip()
+
+    # 1. Strip closed <think>...</think> blocks
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+    # 2. Strip stray opener (truncated mid-think) — keep whatever follows it,
+    #    or whatever preceded it if nothing follows
+    if "<think>" in text:
+        parts = text.split("<think>", 1)
+        text = (parts[1] or parts[0]).strip()
+
+    # 3. Detect reasoning-loop pathology: same line repeated 5+ times. Don't
+    #    feed garbage downstream — fail fast so the caller logs a clean HOLD.
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if lines:
+        from collections import Counter
+        most_common, top_n = Counter(lines).most_common(1)[0]
+        if top_n >= 5 and len(most_common) > 8:
+            raise ValueError(
+                f"Reasoning loop detected (line repeated {top_n}x): {most_common[:80]!r}"
+            )
+
+    # 4. Strip markdown code fence wrappers
+    text = re.sub(r"```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = text.replace("```", "").strip()
+
+    if not text or "{" not in text:
+        raise ValueError("No JSON found in response (likely truncated mid-reasoning)")
+
+    # 5. Walk all balanced JSON objects; keep the last one that has a signal key.
+    #    This survives "Thinking Process: ... { reasoning blob } ... final: { real answer }".
+    decoder = json.JSONDecoder()
+    candidates = []
+    i = 0
+    while i < len(text):
+        if text[i] == "{":
+            try:
+                obj, end = decoder.raw_decode(text, i)
+                if isinstance(obj, dict):
+                    candidates.append(obj)
+                i = end
+                continue
+            except json.JSONDecodeError:
+                pass
+        i += 1
+
+    # Prefer the last object containing a "signal" field; else the last dict.
+    for obj in reversed(candidates):
+        if "signal" in obj:
+            return obj
+    if candidates:
+        return candidates[-1]
+
+    raise ValueError("Could not extract valid JSON from response")
+
+
 def _call_ollama(messages, temperature=0.1):
     """Make a raw HTTP call to the LLM backend.
     Routing priority:
@@ -122,10 +195,12 @@ def _call_ollama(messages, temperature=0.1):
     model_name = _get_model_name("ollama")
 
     # Reasoning models (Qwen3.5, DeepSeek-R1) emit a long internal "thinking"
-    # trace before producing the final answer.  Without a big num_predict
-    # budget they get cut off mid-think and `content` comes back empty.
+    # trace before producing the final answer.  We don't want that for structured
+    # JSON output: it wastes tokens, blows num_predict, and (when Qwen3 is in
+    # "open-thinking" mode without <think> tags) pollutes the parser. Disable
+    # thinking mode via Ollama's `think` flag — supported on Qwen3 family.
     is_reasoning = any(tag in model_name.lower() for tag in ("qwen3", "r1", "thinking"))
-    num_predict = 4096 if is_reasoning else 2048
+    num_predict = 6144 if is_reasoning else 2048   # bump fallback budget too
 
     payload = {
         "model": model_name,
@@ -136,6 +211,9 @@ def _call_ollama(messages, temperature=0.1):
             "num_predict": num_predict,
         }
     }
+    if is_reasoning:
+        # Ollama >=0.4 honors this for hybrid models like Qwen3.5
+        payload["think"] = False
     try:
         # Reasoning models are 3-5× slower than dense models — bump timeout
         timeout = 600 if is_reasoning else 360
@@ -344,8 +422,14 @@ Respond ONLY with valid JSON (no markdown):
             global_ctx=global_ctx_section
         )
 
+        # /no_think is a Qwen3.x directive — harmless on other models, decisive
+        # for Qwen3.5 where it suppresses the reasoning trace at decode time.
         messages = [
-            {"role": "system", "content": "You are a world-class quantitative analyst. Respond with valid JSON only, no markdown code blocks."},
+            {"role": "system", "content": (
+                "You are a world-class quantitative analyst. "
+                "Respond with valid JSON only, no markdown code blocks, no commentary. "
+                "/no_think"
+            )},
             {"role": "user", "content": prompt}
         ]
 
@@ -353,29 +437,12 @@ Respond ONLY with valid JSON (no markdown):
             content = _call_ollama(messages, temperature=0.1)
             used_model = _get_model_name("ollama")
         else:
-            content = _call_deepseek_api(api_key, messages, max_tokens=2000, temperature=0.1)
+            # Reasoning models on the cloud side (DeepSeek-V4-pro etc.) also need
+            # a bigger budget so the final JSON isn't cut off after reasoning.
+            content = _call_deepseek_api(api_key, messages, max_tokens=4000, temperature=0.1)
             used_model = _get_model_name("deepseek_api")
 
-        # Strip markdown if present
-        content = content.strip()
-        # Clean reasoning tags '<think>...</think>' generated by local models
-        if "<think>" in content and "</think>" in content:
-            content = content.split("</think>")[-1].strip()
-            
-        if content.startswith("```"):
-            lines = content.split("\n")
-            content = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
-
-        try:
-            result = json.loads(content)
-        except json.JSONDecodeError:
-            # Try to extract JSON if there's text around it
-            import re
-            json_match = re.search(r'(\{.*\})', content, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group(1))
-            else:
-                raise ValueError("Could not extract valid JSON from response")
+        result = _extract_signal_json(content)
 
         result["model"] = used_model
         result["timestamp"] = datetime.utcnow().isoformat()
@@ -423,21 +490,23 @@ Respond ONLY with valid JSON:
   "sector_analysis": "<sector analysis>"
 }}""".format(json.dumps(positions, indent=2), json.dumps(market_data, indent=2))
 
-        messages = [{"role": "system", "content": "You are a portfolio manager. Respond with valid JSON only."},
+        # Same /no_think directive as analyze_stock — suppress Qwen3 reasoning
+        # trace so the response is just the JSON we want.
+        messages = [{"role": "system", "content": (
+                        "You are a portfolio manager. Respond with valid JSON only. /no_think"
+                    )},
                     {"role": "user", "content": prompt}]
 
         if ai_provider == "ollama":
             content = _call_ollama(messages, temperature=0.1)
         else:
-            content = _call_deepseek_api(api_key, messages, max_tokens=1500, temperature=0.1)
-            
-        content = content.strip()
-        if "<think>" in content and "</think>" in content:
-            content = content.split("</think>")[-1].strip()
-        if content.startswith("```"):
-            lines = content.split("\n")
-            content = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
-        return json.loads(content)
+            # Bumped 1500 → 3000 to give reasoning models room for thoughts+JSON
+            content = _call_deepseek_api(api_key, messages, max_tokens=3000, temperature=0.1)
+
+        # Reuse the same robust extractor analyze_stock uses — handles closed
+        # <think> tags, open "Thinking Process:" prefixes, multi-JSON outputs,
+        # reasoning loops, and markdown fences uniformly.
+        return _extract_signal_json(content)
     except Exception as e:
         logger.error("Portfolio analysis error: %s", e)
         return {"suggestions": [], "overall_assessment": "分析出错: {}".format(str(e))}
