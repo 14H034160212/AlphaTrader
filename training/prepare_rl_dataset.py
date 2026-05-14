@@ -178,6 +178,9 @@ def build_dataset(
         if cutoff is not None:
             try:
                 ts = datetime.fromisoformat(rec["timestamp"])
+                # Strip tz so we can compare with the tz-naive cutoff
+                if ts.tzinfo is not None:
+                    ts = ts.replace(tzinfo=None)
                 if ts >= cutoff:
                     skipped_holdout += 1
                     continue

@@ -2910,7 +2910,11 @@ async def rl_compare(holdout_days: int = 7, include_lora: bool = False):
 async def rl_lora_deploy_manual():
     """Manually deploy the current adapter (skips auto-deploy gate)."""
     import rl_lora_deploy as _dep
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if "__file__" in dir() else "/data/qbao775/AlphaTrader"
+    # __file__ is in module scope, accessible from within this function.
+    # The `"__file__" in dir()` check used to fail (dir() returns local names)
+    # so the fallback hardcoded path always won — fixed by referencing it
+    # directly through module scope.
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     adapter_dir = os.path.join(repo_root, "training", "lora_checkpoints", "best")
     if not os.path.exists(adapter_dir):
         raise HTTPException(404, "No LoRA adapter at training/lora_checkpoints/best/")

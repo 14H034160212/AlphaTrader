@@ -421,6 +421,8 @@ def get_status() -> dict:
     for v in versions:
         try:
             t = datetime.fromisoformat(v["created_at"])
+            if t.tzinfo is not None:
+                t = t.replace(tzinfo=None)
             if t >= cutoff:
                 recent.append(v)
         except Exception:
