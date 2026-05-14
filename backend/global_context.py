@@ -680,6 +680,12 @@ def _build_ai_narrative(prices, risk_env, score, vix_val, vix_level,
     if vix_val > 25:
         lines.append(f"  🚨 VIX={vix_val:.1f} 高度恐惧：所有BUY信号置信度应降低，等待企稳信号。")
 
+    # User-focus themes (see memory: feedback_report_topics) — keep this list narrow.
+    lines.append(
+        "\n**🔍 用户重点关注主题**: 半导体板块 (NVDA/TSM/AMD/AVGO/ASML/MU/ARM/MRVL/KLAC/SOXL) "
+        "及 AI 相关 (大模型基建、AI 服务器、电力/HBM 供应链)。若有这类强信号，提高置信度权重。"
+    )
+
     return "\n".join(lines)
 
 

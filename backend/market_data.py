@@ -290,8 +290,9 @@ GLOBAL_POPULAR_STOCKS = {
 
 # Default watchlist (US-focused, backward compatible)
 DEFAULT_WATCHLIST = [
-    # ---- AI & Semiconductors ----
+    # ---- AI & Semiconductors (user-prioritized — see memory feedback_report_topics) ----
     "NVDA", "TSM", "ASML", "AMD", "AVGO",
+    "MU", "ARM", "MRVL", "KLAC",          # memory/storage + IP + WFE additions
     # ---- Big Tech & E-Commerce ----
     "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA",
     # ---- Value & Financials ----
@@ -304,6 +305,11 @@ DEFAULT_WATCHLIST = [
     "GLD", "SLV",
     # ---- HK / China ADR ----
     "0700.HK", "9988.HK", "1810.HK",
+    # ---- HK 2026 AI/chip IPO momentum (高 beta, 已 IPO 大幅暴涨, 警惕回调) ----
+    "6082.HK",   # Shanghai Biren Tech — 国产 GPU, IPO 2026-01-02 +76% debut
+    "9903.HK",   # Iluvatar CoreX (天数智芯) — 国产 GPU, IPO 2026-01-08 $144→$442 ATH
+    "0100.HK",   # MiniMax (稀宇) — 大模型 LLM, IPO 2026-01-09 +190% 两日
+    "2513.HK",   # Zhipu AI (智谱) — 大模型 LLM, IPO 2026-01-08, 2026-02-20 +42.72%
     # ---- Defense ----
     "LMT", "RTX",
 ]

@@ -1207,8 +1207,25 @@ def detect_active_macro_scenarios(hours_back: int = 6, db=None) -> list:
             logger.warning(f"[MacroScan] Lifecycle scan failed, falling back to static: {e}")
 
     # ── Fallback: static MACRO_SCENARIOS dict ──
+    # When falling back (e.g., DB unreachable), we lose the per-row muted_by_user
+    # signal. Re-read the user-muted list out of band so the fallback still honors it.
+    muted_ids: set = set()
+    if db is not None:
+        try:
+            from database import ScenarioState
+            muted_ids = {
+                row.scenario_id
+                for row in db.query(ScenarioState.scenario_id)
+                .filter(ScenarioState.muted_by_user.is_(True))
+                .all()
+            }
+        except Exception:
+            muted_ids = set()
+
     active = []
     for scenario_id, scenario in MACRO_SCENARIOS.items():
+        if scenario_id in muted_ids:
+            continue
         keywords = [k.lower() for k in scenario["trigger_keywords"]]
         matched_items = []
         for item in all_news:
@@ -1348,23 +1365,51 @@ def build_macro_scenario_context(active_scenarios: list) -> str:
 # product launches, regulatory approvals, etc.
 # When matched, generates a BUY-leaning context for the AI.
 
+# Cross-stock macro catalyst keywords. These get appended to ANY stock whose
+# business is materially exposed to the event. Tracks events that span multiple
+# tickers (state visits, CEO delegations, trade deals, export thaws). Add stock
+# tickers to TRUMP_CHINA_BENEFICIARIES below as new ones come up.
+TRUMP_CHINA_VISIT_2026_KWS = [
+    "trump china visit", "trump in china", "trump beijing", "xi summit",
+    "trump xi", "us-china summit", "us china summit", "trump xi summit",
+    "ceo delegation", "tech ceos china", "huang china", "musk china",
+    "tim cook china", "ai chip exports china", "us-china trade deal",
+    "china trade thaw", "tariff rollback", "rare earth deal",
+    "open up china", "trump china deal", "us china deal",
+]
+# Tickers whose business is directly tied to Trump's May 2026 China visit
+# (CEO accompanied OR sector benefits from trade thaw / chip-export relief)
+TRUMP_CHINA_BENEFICIARIES = {
+    # CEOs personally on the trip
+    "NVDA", "AMD", "TSLA", "AAPL", "META", "MU",
+    # Sector beneficiaries (chip cycle / China revenue exposure)
+    "AVGO", "ASML", "TSM", "MRVL", "KLAC",
+    # HK / China ADRs — trade thaw boosts these directly
+    "BABA", "9988.HK", "0700.HK", "3690.HK", "1810.HK", "9618.HK",
+    # China AI plays — Baidu Ernie, SMIC, Lenovo benefit from chip / trade thaw
+    "BIDU", "9888.HK", "0981.HK", "0992.HK",
+    # HK 2026 AI/chip IPO names — biggest movers on China-AI thaw + chip cycle
+    "6082.HK", "9903.HK", "0100.HK", "2513.HK",
+    # Broad index leveraged (rallies on trade-deal headlines)
+    "SOXL", "TQQQ", "SPY", "QQQ",
+}
+
+
 CATALYST_MAP = {
     "AMD": {
         "catalyst_keywords": [
             "major contract", "partnership", "ai chip deal", "chip deployment",
             "gigawatt", "multi-year deal", "wins deal", "selected by", "chosen by",
             "supply agreement", "record revenue", "beats estimates", "beat expectations",
-            "data center", "mi300", "mi350", "instinct", "hyperscaler",
+            "data center", "mi300", "mi350", "mi325", "mi400", "instinct", "hyperscaler",
             "meta amd", "google amd", "microsoft amd", "amazon amd",
+            # China export thaw — mirrors NVDA additions; AMD MI300 was on the
+            # same Commerce Dept export-control list as Nvidia H200.
+            "china export", "export license", "cleared for china",
+            "china approval", "ai chip sales to china", "lifts ban",
+            "export controls eased",
         ],
-        "upside_thesis": "AMD MI300/MI350 AI GPU adoption by hyperscalers; server CPU share gains vs Intel",
-    },
-    "NVDA": {
-        "catalyst_keywords": [
-            "blackwell", "gb200", "h100 sold out", "record datacenter", "beats estimates",
-            "ai infrastructure", "sovereign ai", "new model", "major order",
-        ],
-        "upside_thesis": "NVIDIA Blackwell GPU cycle; sovereign AI infrastructure spending",
+        "upside_thesis": "AMD MI300/MI350 AI GPU adoption by hyperscalers; server CPU share gains vs Intel; China-export thaw",
     },
     "META": {
         "catalyst_keywords": [
@@ -1396,10 +1441,20 @@ CATALYST_MAP = {
     },
     "NVDA": {
         "catalyst_keywords": [
+            # ── product / cycle ──
             "blackwell", "gb200", "record datacenter", "beats estimates",
             "ai infrastructure spending", "sovereign ai", "new chip",
+            # ── China export thaw (h100/h200/h20 are the export-controlled SKUs;
+            #     these news items rallied NVDA 5-10% historically) ──
+            "h200", "h100", "h20", "b30", "b40",
+            "china export", "export license", "cleared for china",
+            "china approval", "ai chip sales to china", "lifts ban",
+            "export controls eased", "china market access",
+            # ── major orders / partnerships ──
+            "supply agreement", "multi-billion order", "hyperscaler deal",
+            "saudi ai", "uae ai",
         ],
-        "upside_thesis": "NVIDIA Blackwell GPU supercycle; AI training demand",
+        "upside_thesis": "NVIDIA Blackwell supercycle + AI training demand + China-export thaw (H100/H200/H20 re-opening multi-billion TAM)",
     },
     "AMZN": {
         "catalyst_keywords": [
@@ -1482,6 +1537,148 @@ CATALYST_MAP = {
             "pentagon", "ukraine", "israel defense", "iran strike",
         ],
         "upside_thesis": "RTX (Raytheon) benefits from missile/air defense demand in Middle East conflicts",
+    },
+    # ── HK large-cap tech (user-prioritized; cross-listed catalyst sharing) ────
+    # `linked_symbols` makes detect_catalysts_for_symbol() also scan news for the
+    # paired US ADR / HK listing — Alibaba earnings on BABA propagate to 9988.HK
+    # signal generation and vice-versa. Without this link, a HK-only signal scan
+    # would miss US-reported earnings entirely.
+    "BABA": {
+        "catalyst_keywords": [
+            "alibaba earnings", "alibaba beats", "alibaba revenue", "cloud revenue growth",
+            "taobao growth", "tmall record", "international commerce", "aidc revenue",
+            "alibaba ai", "qwen", "tongyi", "buyback", "guidance raised", "beats estimates",
+            "alibaba cloud", "lazada profitability",
+        ],
+        "linked_symbols": ["9988.HK"],
+        "upside_thesis": "Alibaba cloud/AI re-acceleration + Taobao/Tmall e-commerce recovery; aggressive buyback program",
+    },
+    "9988.HK": {
+        "catalyst_keywords": [
+            "alibaba earnings", "alibaba beats", "alibaba revenue", "9988 earnings",
+            "cloud revenue growth", "taobao growth", "alibaba ai", "qwen",
+            "buyback", "guidance raised", "beats estimates",
+            "阿里财报", "阿里业绩", "阿里巴巴", "阿里云", "通义",
+        ],
+        "linked_symbols": ["BABA"],
+        "upside_thesis": "Alibaba (HK listing) — same fundamentals as BABA ADR; catalysts mirror US listing",
+    },
+    "0700.HK": {
+        "catalyst_keywords": [
+            "tencent earnings", "tencent beats", "tencent gaming", "wechat ads",
+            "fintech revenue", "weixin pay", "tencent ai", "honor of kings",
+            "tencent cloud", "guidance raised", "beats estimates",
+            "腾讯财报", "腾讯业绩", "微信", "游戏收入",
+        ],
+        "linked_symbols": ["TCEHY"],   # OTC ADR; harmless if not in watchlist
+        "upside_thesis": "Tencent gaming recovery + WeChat ad/payments monetization + AI infra",
+    },
+    "3690.HK": {
+        "catalyst_keywords": [
+            "meituan earnings", "meituan beats", "food delivery growth", "instashopping",
+            "keeta expansion", "meituan profitability", "guidance raised", "beats estimates",
+            "美团财报", "美团业绩", "外卖",
+        ],
+        "linked_symbols": [],
+        "upside_thesis": "Meituan food-delivery dominance + Instashopping/Keeta expansion driving margins",
+    },
+    "1810.HK": {
+        "catalyst_keywords": [
+            "xiaomi earnings", "xiaomi ev", "su7", "yu7", "xiaomi auto",
+            "smartphone share", "iot revenue", "xiaomi ai", "guidance raised", "beats estimates",
+            "小米财报", "小米业绩", "小米汽车", "su7", "yu7",
+        ],
+        "linked_symbols": [],
+        "upside_thesis": "Xiaomi EV (SU7/YU7) ramp + premium smartphone share gain + IoT ecosystem",
+    },
+    "9618.HK": {
+        "catalyst_keywords": [
+            "jd earnings", "jd beats", "jd logistics", "jd retail growth",
+            "jd cloud", "618 promotion", "guidance raised", "beats estimates",
+            "京东财报", "京东业绩", "京东物流",
+        ],
+        "linked_symbols": ["JD"],
+        "upside_thesis": "JD.com supply-chain advantage + logistics monetization + 618/Singles Day cycles",
+    },
+    # ── China AI plays (benefit directly from US-China AI thaw) ────────────────
+    "BIDU": {
+        "catalyst_keywords": [
+            "baidu earnings", "baidu beats", "ernie bot", "ernie 5", "baidu ai",
+            "apollo robotaxi", "intelligent driving", "baidu cloud",
+            "guidance raised", "beats estimates",
+            "百度财报", "百度业绩", "文心一言", "Apollo",
+        ],
+        "linked_symbols": ["9888.HK"],
+        "upside_thesis": "Baidu Ernie LLM monetization + Apollo robotaxi commercialization + AI cloud growth",
+    },
+    "9888.HK": {
+        "catalyst_keywords": [
+            "baidu earnings", "ernie bot", "ernie 5", "baidu ai",
+            "apollo robotaxi", "intelligent driving", "baidu cloud",
+            "guidance raised", "beats estimates",
+            "百度财报", "百度业绩", "文心一言",
+        ],
+        "linked_symbols": ["BIDU"],
+        "upside_thesis": "Baidu (HK listing) — same fundamentals as BIDU ADR; AI/robotaxi catalysts mirror US listing",
+    },
+    "0981.HK": {  # SMIC — China's biggest foundry
+        "catalyst_keywords": [
+            "smic earnings", "smic capacity", "china foundry", "n+1 process",
+            "china chip", "domestic chip", "huawei chip",
+            "guidance raised", "beats estimates",
+            "中芯国际", "中芯", "国产芯片",
+        ],
+        "linked_symbols": [],
+        "upside_thesis": "SMIC — China's leading foundry; benefits from domestic AI chip demand + government push",
+    },
+    "0992.HK": {  # Lenovo — AI server beneficiary
+        "catalyst_keywords": [
+            "lenovo earnings", "ai server", "ai pc", "lenovo ai",
+            "infrastructure solutions", "guidance raised", "beats estimates",
+            "联想财报", "联想业绩", "AI 服务器",
+        ],
+        "linked_symbols": [],
+        "upside_thesis": "Lenovo — AI server ramp + AI PC cycle + enterprise infrastructure spending",
+    },
+    # ── HK 2026 AI/chip IPOs — high-momentum but high-volatility ─────────────
+    "6082.HK": {  # Shanghai Biren — domestic GPU, IPO 2026-01-02
+        "catalyst_keywords": [
+            "biren", "壁仞", "biren gpu", "biren chip", "general-purpose gpu",
+            "domestic gpu", "domestic chip", "国产 gpu", "国产芯片",
+            "supply agreement", "new contract", "ai chip deployment",
+            "lifts ban", "china export",
+        ],
+        "linked_symbols": [],
+        "upside_thesis": "Biren — China's first HK-listed GPU; benefits from domestic AI chip demand + Huawei/Alibaba/ByteDance procurement",
+    },
+    "9903.HK": {  # Iluvatar CoreX (天数智芯) — domestic GPU, IPO 2026-01-08
+        "catalyst_keywords": [
+            "iluvatar", "iluvatar corex", "天数智芯", "tianshu",
+            "domestic gpu", "国产 gpu", "国产芯片",
+            "h200 alternative", "b200 alternative", "ai chip roadmap",
+            "supply agreement", "new contract",
+        ],
+        "linked_symbols": [],
+        "upside_thesis": "Iluvatar CoreX — Targets NVDA H200/B200 alternative in China; 2026-28 roadmap acceleration",
+    },
+    "0100.HK": {  # MiniMax (稀宇) — LLM, IPO 2026-01-09
+        "catalyst_keywords": [
+            "minimax", "稀宇", "abab", "minimax-text", "minimax-vl",
+            "llm benchmark", "model release", "new model",
+            "to c monetization", "consumer ai", "talkie",
+        ],
+        "linked_symbols": [],
+        "upside_thesis": "MiniMax — consumer-AI focused LLM player (Talkie app); benefits from China LLM monetization wave",
+    },
+    "2513.HK": {  # Zhipu AI (智谱) — LLM, IPO 2026-01-08
+        "catalyst_keywords": [
+            "zhipu", "智谱", "glm", "glm-4", "chatglm",
+            "llm benchmark", "model release", "new model",
+            "to b enterprise", "enterprise ai", "government contract",
+            "guidance raised",
+        ],
+        "linked_symbols": [],
+        "upside_thesis": "Zhipu AI — enterprise/government LLM player (GLM series); first publicly-listed AI foundation model company",
     },
 }
 
@@ -1591,31 +1788,70 @@ def detect_catalysts_for_symbol(target_symbol: str, hours_back: int = 24) -> lis
     such as large contracts, partnerships, earnings beats, product launches.
     """
     config = CATALYST_MAP.get(target_symbol)
-    if not config:
+    is_macro_beneficiary = target_symbol in TRUMP_CHINA_BENEFICIARIES
+
+    # Exit only if BOTH per-stock keywords are missing AND symbol isn't on any
+    # cross-stock macro beneficiary list. Pure macro plays (e.g. AAPL/MU, whose
+    # CEOs are on the China trip but who don't have hand-curated CATALYST_MAP
+    # entries) must still be reachable through the macro event keywords.
+    if not config and not is_macro_beneficiary:
         return []
 
     catalysts = []
-    keywords = [k.lower() for k in config["catalyst_keywords"]]
+    keywords = []
+    if config:
+        keywords += [k.lower() for k in config["catalyst_keywords"]]
+    if is_macro_beneficiary:
+        keywords += [k.lower() for k in TRUMP_CHINA_VISIT_2026_KWS]
 
-    # Fetch news for the target stock itself (direct catalysts)
-    news_items = fetch_news_with_fallback(target_symbol, hours_back)
+    # Cap the thesis even when there's no per-stock config (macro-only beneficiary).
+    upside_thesis = (
+        config["upside_thesis"] if config
+        else "Cross-stock macro beneficiary (e.g. Trump 2026 China visit) — direct exposure to event-driven re-rating"
+    )
+    linked_symbols = config.get("linked_symbols", []) if config else []
 
-    for item in news_items:
-        title_lower = item["title"].lower()
-        matched_keywords = [kw for kw in keywords if kw in title_lower]
-        if matched_keywords:
-            strength = len(matched_keywords)
-            catalysts.append({
-                "target_symbol": target_symbol,
-                "news_title": item["title"],
-                "publisher": item.get("publisher", ""),
-                "time": item["time"],
-                "matched_keywords": matched_keywords,
-                "upside_thesis": config["upside_thesis"],
-                "strength": strength,
-                "catalyst_level": "STRONG" if strength >= 3 else "MEDIUM" if strength >= 2 else "MILD",
-                "source": item.get("source", "yfinance"),
-            })
+    # Aggregate news from the target itself plus any linked cross-listings
+    # (e.g. BABA earnings news must reach 9988.HK signal generation).
+    news_sources: list[tuple[str, list]] = [
+        (target_symbol, fetch_news_with_fallback(target_symbol, hours_back))
+    ]
+    for linked in linked_symbols:
+        try:
+            news_sources.append((linked, fetch_news_with_fallback(linked, hours_back)))
+        except Exception as e:
+            logger.debug(f"[CatalystMap] linked-symbol news fetch failed for {linked}: {e}")
+
+    # Also scan the geopolitical RSS feeds — cross-stock macro catalysts
+    # (state visits, CEO delegations, trade thaws) live there, not in any
+    # single symbol's yfinance feed. Without this, events like Trump's 2026
+    # China visit (Musk/Cook/Huang accompanying) would never reach NVDA/AAPL/
+    # TSLA's catalyst detector even though they're highly bullish for those names.
+    try:
+        geo_news = fetch_geopolitical_news(hours_back=max(hours_back, 12))
+        if geo_news:
+            news_sources.append(("__geopolitical__", geo_news))
+    except Exception as e:
+        logger.debug(f"[CatalystMap] geopolitical news fetch failed: {e}")
+
+    for src_sym, news_items in news_sources:
+        for item in news_items:
+            title_lower = item["title"].lower()
+            matched_keywords = [kw for kw in keywords if kw in title_lower]
+            if matched_keywords:
+                strength = len(matched_keywords)
+                catalysts.append({
+                    "target_symbol": target_symbol,
+                    "news_title": item["title"],
+                    "news_origin": src_sym,    # which symbol's feed this came from
+                    "publisher": item.get("publisher", ""),
+                    "time": item["time"],
+                    "matched_keywords": matched_keywords,
+                    "upside_thesis": upside_thesis,
+                    "strength": strength,
+                    "catalyst_level": "STRONG" if strength >= 3 else "MEDIUM" if strength >= 2 else "MILD",
+                    "source": item.get("source", "yfinance"),
+                })
 
     if catalysts:
         for c in catalysts:
@@ -1634,8 +1870,12 @@ def build_catalyst_context(symbol: str, catalysts: list) -> str:
 
     lines = [f"### 🚀 POSITIVE CATALYST ALERTS for {symbol}"]
     for c in catalysts:
+        origin = c.get("news_origin", symbol)
+        # When the catalyst news arrived via a linked listing (e.g. BABA → 9988.HK),
+        # surface that so the AI knows this isn't direct local news.
+        origin_note = f" [via linked listing {origin}]" if origin != symbol else ""
         lines.append(
-            f"\n[{c['catalyst_level']}] Positive Catalyst Detected:\n"
+            f"\n[{c['catalyst_level']}] Positive Catalyst Detected:{origin_note}\n"
             f"  News: \"{c['news_title']}\"\n"
             f"  Source: {c['publisher']} ({c['time'][:10]})\n"
             f"  Keywords matched: {', '.join(c['matched_keywords'])}\n"
