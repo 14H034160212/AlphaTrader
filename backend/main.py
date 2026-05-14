@@ -2983,6 +2983,8 @@ async def rl_shadow_comparison(days: int = 7):
             continue
         try:
             ts = datetime.fromisoformat(r["timestamp"])
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)   # cutoff is tz-naive
         except Exception:
             continue
         if ts < cutoff:

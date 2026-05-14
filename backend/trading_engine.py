@@ -610,22 +610,32 @@ class TradingEngine:
             # predicts a negative 3d reward AND LLM confidence is marginal.
             # Shadow mode: if a shadow model exists, log its prediction in
             # parallel for later A/B comparison (does NOT affect the decision).
+            #
+            # Scores are normally pre-computed by record_signal_state() so the
+            # same numbers end up in the JSONL.  Fallback recompute here only
+            # if scores aren't present (e.g. auto_trade called without
+            # record_signal_state first).
             try:
-                import rl_policy_model as _rlpm
-                quote_for_rl = {"current": current_price}
-                if indicators:
-                    quote_for_rl.update({
-                        k: indicators.get(k)
-                        for k in ("change_pct", "volume", "pe_ratio",
-                                  "fifty_two_week_low", "fifty_two_week_high",
-                                  "vpa_signal", "vpa_volume_ratio", "valuation_gap_pct")
-                        if indicators.get(k) is not None
-                    })
-                rl_score, shadow_score = _rlpm.predict_with_shadow(
-                    signal, quote_for_rl, indicators or {})
-                signal["rl_policy_score"] = rl_score
+                rl_score     = signal.get("rl_policy_score")
+                shadow_score = signal.get("rl_shadow_score")
+                if rl_score is None and shadow_score is None:
+                    import rl_policy_model as _rlpm
+                    quote_for_rl = {"current": current_price}
+                    if indicators:
+                        quote_for_rl.update({
+                            k: indicators.get(k)
+                            for k in ("change_pct", "volume", "pe_ratio",
+                                      "fifty_two_week_low", "fifty_two_week_high",
+                                      "vpa_signal", "vpa_volume_ratio", "valuation_gap_pct")
+                            if indicators.get(k) is not None
+                        })
+                    rl_score, shadow_score = _rlpm.predict_with_shadow(
+                        signal, quote_for_rl, indicators or {})
+                    signal["rl_policy_score"] = rl_score
+                    if shadow_score is not None:
+                        signal["rl_shadow_score"] = shadow_score
+
                 if shadow_score is not None:
-                    signal["rl_shadow_score"] = shadow_score
                     logger.info(f"[RL Shadow] {symbol} prod={rl_score} shadow={shadow_score}")
                 if rl_score is not None and rl_score < -1.0 and confidence < 0.85:
                     return {

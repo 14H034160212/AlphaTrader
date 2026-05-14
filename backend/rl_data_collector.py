@@ -77,7 +77,26 @@ def record_signal_state(
     Called immediately when an AI signal is generated.
     Appends one record to the JSONL dataset with a file lock to prevent
     concurrent-write corruption.
+
+    Side-effect: pre-computes RL policy scores (production + shadow) on the
+    signal dict so they're recorded in the JSONL AND auto_trade() can re-use
+    them without recomputing.  Previous version recorded with scores=None
+    because auto_trade() set them only AFTER record_signal_state ran.
     """
+    # Pre-compute RL scores so the JSONL row has them.  Best-effort: any
+    # failure (model not trained yet, missing features) leaves the fields None.
+    if signal.get("rl_policy_score") is None and signal.get("rl_shadow_score") is None:
+        try:
+            import rl_policy_model as _rlpm
+            prod_score, shadow_score = _rlpm.predict_with_shadow(
+                signal, quote, indicators or {})
+            if prod_score is not None:
+                signal["rl_policy_score"] = prod_score
+            if shadow_score is not None:
+                signal["rl_shadow_score"] = shadow_score
+        except Exception as _e:
+            logger.debug(f"[RL] Could not pre-compute scores: {_e}")
+
     record = {
         "timestamp": datetime.utcnow().isoformat(),
         "symbol": signal.get("symbol"),
