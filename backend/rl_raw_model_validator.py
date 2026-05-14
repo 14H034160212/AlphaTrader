@@ -71,15 +71,33 @@ def _build_user_prompt(rec: dict) -> str | None:
 
 
 def _parse_action(text: str) -> str | None:
+    """
+    Extract a BUY/SELL/HOLD action from generated text.
+
+    Priority:
+      1. Explicit "Signal: BUY" / "Signal: SELL" pattern (most reliable)
+      2. The LAST action keyword in the text (= the final decision after
+         the model deliberates over options)
+
+    Previous version (BUG): looped tokens in (BUY, SELL, HOLD) order and
+    returned the first match found anywhere in the text — even if the
+    model said "we could BUY but actually SELL" it returned BUY.  This
+    biased reasoning-model evaluations toward BUY.
+    """
     if not text:
         return None
     t = text.upper()
+
+    # 1) Look for explicit "Signal: X" pattern first (strict, deterministic)
     m = re.search(r"SIGNAL[:\s]+(BUY|SELL|HOLD|SHORT|COVER)", t)
     if m:
         return m.group(1)
-    for tok in ("BUY", "SELL", "HOLD"):
-        if re.search(rf"\b{tok}\b", t):
-            return tok
+
+    # 2) Find ALL action-keyword positions, return the LAST one
+    # (the model's final conclusion after weighing alternatives)
+    matches = list(re.finditer(r"\b(BUY|SELL|HOLD|SHORT|COVER)\b", t))
+    if matches:
+        return matches[-1].group(1)
     return None
 
 
@@ -193,7 +211,7 @@ def validate_model(
     backend_spec examples:
       "ollama:qwen2.5-coder:32b"
       "ollama:qwen3.5:35b"
-      "vllm:http://127.0.0.1:11436/v1|alphatrader-lora"
+      "vllm:http://127.0.0.1:11500/v1|alphatrader-lora"
       "hf:Qwen/Qwen3.5-35B-A3B"
       "hf:Qwen/Qwen3.5-35B-A3B|training/lora_checkpoints/best"
     """
@@ -315,9 +333,9 @@ def run_baseline_shootout(test_set: str = "challenge",
 
     # Probe LoRA vLLM if up
     try:
-        r = requests.get("http://127.0.0.1:11436/v1/models", timeout=2)
+        r = requests.get("http://127.0.0.1:11500/v1/models", timeout=2)
         if r.ok:
-            backends.append(("vllm:http://127.0.0.1:11436/v1|alphatrader-lora", None))
+            backends.append(("vllm:http://127.0.0.1:11500/v1|alphatrader-lora", None))
     except Exception:
         pass
 
