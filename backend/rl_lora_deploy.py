@@ -185,13 +185,18 @@ def start_lora_vllm(merged_model_path: str) -> bool:
         "--trust-remote-code",
     ]
     logger.info(f"[LoRA Deploy] Launching vLLM: {' '.join(cmd)}")
-    proc = subprocess.Popen(
-        cmd,
-        stdout=open(LORA_VLLM_LOG, "a"),
-        stderr=subprocess.STDOUT,
-        env=env,
-        start_new_session=True,
-    )
+    # Hand the child a real fd that survives parent-side close (vLLM runs for hours).
+    log_fd = os.open(LORA_VLLM_LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_fd,
+            stderr=subprocess.STDOUT,
+            env=env,
+            start_new_session=True,
+        )
+    finally:
+        os.close(log_fd)
     with open(LORA_VLLM_PID_FILE, "w") as f:
         f.write(str(proc.pid))
     logger.info(f"[LoRA Deploy] vLLM PID {proc.pid}, waiting for healthcheck...")

@@ -26,3 +26,19 @@ training/rl_sft_dataset/
 
 # Pipeline artifacts (large runtime files)
 rl_models/
+
+# LoRA training checkpoints (multi-GB; recreated each training run)
+training/lora_checkpoints/
+
+# Old / backup model snapshots
+*.pkl.OLD_*
+
+# Broker installer tarballs (download from official site, don't commit)
+moomoo_OpenD_*.tar.gz
+ibgateway*.sh
+
+# Per-environment secrets (loaded by start.sh via `source backend/.env`)
+backend/.env
+
+# Runtime-generated catalyst attribution stats (auto-updated by RL pipeline)
+intelligence_attribution_report.json
