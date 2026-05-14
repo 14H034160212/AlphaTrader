@@ -38,18 +38,31 @@ LORA_TRIGGER_THRESHOLD = 2000
 
 # Lock file so the cycle never runs twice in parallel
 _LOCK_FILE = "/tmp/rl_pipeline.lock"
+# Treat any lock older than this as stale (PID may have been recycled by the OS
+# onto an unrelated process, which would otherwise keep us blocked indefinitely).
+_LOCK_MAX_AGE_SEC = 24 * 3600
 
 
 def _acquire_lock() -> bool:
     """Single-writer lock so concurrent ticks don't trample each other."""
     if os.path.exists(_LOCK_FILE):
         try:
+            age = max(0.0, datetime.utcnow().timestamp() - os.path.getmtime(_LOCK_FILE))
+        except OSError:
+            age = 0.0
+        try:
             with open(_LOCK_FILE) as f:
                 pid = int(f.read().strip())
             os.kill(pid, 0)   # raises if pid not alive
-            return False      # another instance is running
+            if age > _LOCK_MAX_AGE_SEC:
+                logger.warning(
+                    f"[Pipeline] Lock held by PID {pid} for {age/3600:.1f}h "
+                    "(> 24h) — treating as stale and reclaiming"
+                )
+            else:
+                return False      # another instance is genuinely running
         except (OSError, ValueError):
-            pass              # stale lock — claim it
+            pass              # stale lock (dead pid / bad file) — claim it
     with open(_LOCK_FILE, "w") as f:
         f.write(str(os.getpid()))
     return True
@@ -384,20 +397,26 @@ def trigger_lora_training_if_needed(records: list) -> str | None:
     env["CUDA_VISIBLE_DEVICES"] = "1,2"
     env["PYTHONUNBUFFERED"]     = "1"
     log_path = "/tmp/rl_lora_auto.log"
-    proc = subprocess.Popen(
-        [py, "-u", trainer,
-         "--dataset_dir", dataset,
-         "--output_dir",  output,
-         "--num_epochs", "1",
-         "--per_device_batch_size", "1",
-         "--gradient_accumulation_steps", "8",
-         "--max_length", "2048",
-         "--log_every_n_steps", "10",
-         "--save_every_n_steps", "1000",
-         "--max_gpus", "2"],
-        stdout=open(log_path, "a"), stderr=subprocess.STDOUT,
-        env=env, cwd=repo_root, start_new_session=True,
-    )
+    # Hold the log fd open for the lifetime of the child via pass_fds so the
+    # parent Python can close its handle without affecting subprocess writes.
+    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        proc = subprocess.Popen(
+            [py, "-u", trainer,
+             "--dataset_dir", dataset,
+             "--output_dir",  output,
+             "--num_epochs", "1",
+             "--per_device_batch_size", "1",
+             "--gradient_accumulation_steps", "8",
+             "--max_length", "2048",
+             "--log_every_n_steps", "10",
+             "--save_every_n_steps", "1000",
+             "--max_gpus", "2"],
+            stdout=log_fd, stderr=subprocess.STDOUT,
+            env=env, cwd=repo_root, start_new_session=True,
+        )
+    finally:
+        os.close(log_fd)  # child already dup'd it via fork/exec
     logger.info(f"[Pipeline] Spawned LoRA training subprocess PID {proc.pid}")
     return f"LoRA training spawned (PID {proc.pid}, log {log_path}) — {delta} new records"
 
@@ -425,7 +444,11 @@ def get_status() -> dict:
                 t = t.replace(tzinfo=None)
             if t >= cutoff:
                 recent.append(v)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                f"[Pipeline] Skipping registry entry with bad created_at "
+                f"{v.get('created_at')!r}: {exc}"
+            )
             continue
     decisions_30d = {"promote": 0, "shadow": 0, "reject": 0}
     for v in recent:

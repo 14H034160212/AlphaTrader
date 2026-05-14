@@ -188,6 +188,11 @@ class ScenarioState(Base):
     last_ai_review_at = Column(DateTime, nullable=True)
     ai_review_summary = Column(Text, nullable=True)
 
+    # User-driven mute: when True, lifecycle and keyword scans skip this scenario
+    # entirely (no reactivation, no decay, excluded from reports). Cleared only by
+    # explicit user action.
+    muted_by_user = Column(Boolean, default=False, nullable=False)
+
 
 class Settings(Base):
     __tablename__ = "settings"
@@ -228,6 +233,9 @@ def _migrate_add_columns():
         _add_col_if_missing("positions", "broker",   "TEXT DEFAULT 'Paper'")
         _add_col_if_missing("positions", "currency", "TEXT DEFAULT 'USD'")
         _add_col_if_missing("positions", "market",   "TEXT DEFAULT 'US'")
+
+        # scenario_states: user-driven mute (skipped by lifecycle + reports)
+        _add_col_if_missing("scenario_states", "muted_by_user", "INTEGER DEFAULT 0")
 
         conn.commit()
         conn.close()

@@ -6,6 +6,17 @@ LOG_FILE="/tmp/alphatrader.log"
 PYTHON="/data/qbao775/miniconda3/envs/alphatrader/bin/python3"
 export CUDA_VISIBLE_DEVICES=7   # Use GPU-7 (~52GB free), avoid GPU 0-6 used by RL training
 
+# Load secrets from backend/.env (gitignored). Required: SECRET_KEY for JWT signing.
+# To rotate: edit backend/.env, restart the supervisor, all users must re-login.
+ENV_FILE="$BACKEND_DIR/.env"
+if [ ! -r "$ENV_FILE" ]; then
+    echo "[$(date)] FATAL: $ENV_FILE missing or unreadable; backend will refuse to start." >> "$LOG_FILE"
+    exit 1
+fi
+set -a
+. "$ENV_FILE"
+set +a
+
 echo "[$(date)] AlphaTrader 守护进程启动" >> "$LOG_FILE"
 
 while true; do

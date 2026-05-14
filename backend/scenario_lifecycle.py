@@ -154,15 +154,17 @@ def _row_to_dict(row) -> dict:
         "consecutive_misses": row.consecutive_misses,
         "resolved_at": row.resolved_at,
         "resolution_reason": row.resolution_reason,
+        "muted_by_user": bool(getattr(row, "muted_by_user", False)),
     }
 
 
 def get_active_scenarios(db: Session) -> List[dict]:
-    """Return all ACTIVE or DECLINING scenarios from DB."""
+    """Return all ACTIVE or DECLINING scenarios from DB, excluding user-muted ones."""
     from database import ScenarioState
     rows = (
         db.query(ScenarioState)
         .filter(ScenarioState.lifecycle_state.in_(ACTIVE_STATES))
+        .filter((ScenarioState.muted_by_user.is_(False)) | (ScenarioState.muted_by_user.is_(None)))
         .all()
     )
     return [_row_to_dict(r) for r in rows]
@@ -194,6 +196,10 @@ def _scan_keywords_single_pass(rows, titles: List[str], now: datetime):
     resolution_events = []
 
     for row in rows:
+        # User-muted scenarios are completely inert: no evidence, no reactivation,
+        # no decay updates. They stay frozen in their current state until unmuted.
+        if getattr(row, "muted_by_user", False):
+            continue
         trigger_kws = _jload(row.trigger_keywords_json)
         res_kws = _jload(row.resolution_keywords_json)
 
@@ -288,6 +294,8 @@ def _decay_stale_rows(rows, now: datetime) -> bool:
     changed = False
     for row in rows:
         if row.lifecycle_state not in ACTIVE_STATES:
+            continue
+        if getattr(row, "muted_by_user", False):
             continue
         misses = row.consecutive_misses or 0
 

@@ -12,8 +12,15 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from database import get_db, User
 
-# Secret key for JWT signing - in a real app, use an environment variable
-SECRET_KEY = os.environ.get("SECRET_KEY", "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
+# Secret key for JWT signing — MUST be supplied via env var.
+# Refusing a hardcoded fallback: a leaked default key lets anyone forge tokens for any user.
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY environment variable is not set. "
+        "Generate one with `python -c 'import secrets; print(secrets.token_hex(32))'` "
+        "and export it before starting the backend."
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days for convenience
 
