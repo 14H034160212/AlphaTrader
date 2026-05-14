@@ -20,9 +20,9 @@ vLLM is the same one already running for VLLM::Worker_TP on GPU 3+4 — we
 launch ours on a separate port (11500) and a separate GPU pair (1+2 once
 training finishes) so it doesn't compete.
 """
+import glob
 import logging
 import os
-import shutil
 import signal
 import socket
 import subprocess
@@ -215,6 +215,26 @@ def start_lora_vllm(merged_model_path: str) -> bool:
     return False
 
 
+_KEEP_MERGED_VERSIONS = 3   # disk cleanup: each merged Qwen3.5-35B is ~70GB
+
+
+def _cleanup_old_merges(models_root: str) -> None:
+    """
+    Each deploy writes a ~70GB lora_merged_v*/ directory.  Without cleanup the
+    disk would fill up.  Keep the newest _KEEP_MERGED_VERSIONS, delete the rest.
+    Idempotent: safe to call on every deploy.
+    """
+    candidates = sorted(glob.glob(os.path.join(models_root, "lora_merged_v*")),
+                         key=os.path.getmtime, reverse=True)
+    for stale in candidates[_KEEP_MERGED_VERSIONS:]:
+        try:
+            import shutil
+            shutil.rmtree(stale)
+            logger.info(f"[LoRA Deploy] Cleaned up old merged dir: {stale}")
+        except Exception as e:
+            logger.warning(f"[LoRA Deploy] Failed to clean {stale}: {e}")
+
+
 def deploy_adapter(
     adapter_path: str,
     version: str,
@@ -225,10 +245,14 @@ def deploy_adapter(
     Returns {"status": "ok" | "failed", "url", "version", "error" (opt)}.
     """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    merged_dir = os.path.join(repo_root, "rl_models", f"lora_merged_{version}")
+    models_root = os.path.join(repo_root, "rl_models")
+    merged_dir = os.path.join(models_root, f"lora_merged_{version}")
 
     # Stop any existing LoRA vLLM
     stop_lora_vllm()
+
+    # Free disk before merging (each merged model is ~70GB)
+    _cleanup_old_merges(models_root)
 
     # Merge
     merged = merge_adapter(base_model, adapter_path, merged_dir)

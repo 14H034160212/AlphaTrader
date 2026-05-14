@@ -218,6 +218,11 @@ def update_trade_outcomes():
         for rec in sym_records:
             try:
                 signal_time = datetime.fromisoformat(rec["timestamp"])
+                # `now` (datetime.utcnow()) is tz-naive; strip any tz info on
+                # signal_time to keep `now < target_dt` comparisons safe even
+                # for externally-imported tz-aware records.
+                if signal_time.tzinfo is not None:
+                    signal_time = signal_time.replace(tzinfo=None)
             except Exception:
                 continue
             entry_price = rec["state"].get("price")

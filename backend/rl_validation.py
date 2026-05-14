@@ -65,6 +65,11 @@ def split_train_holdout(records: list, holdout_days: int = 7) -> tuple:
             continue
         try:
             ts = datetime.fromisoformat(rec["timestamp"])
+            # JSONL writer (rl_data_collector) uses datetime.utcnow() which is
+            # tz-naive.  If an externally-imported record has tz info, strip it
+            # so we can compare with our tz-naive cutoff without TypeError.
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)
         except Exception:
             continue
         if ts >= cutoff:
