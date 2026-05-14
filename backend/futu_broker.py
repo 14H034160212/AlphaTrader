@@ -83,6 +83,7 @@ class FutuBroker(BrokerInterface):
         cn_acc_id: int = 0,
         hk_acc_id: int = 0,
         us_acc_id: int = 0,
+        security_firm: str = "FUTUSECURITIES",
     ):
         self.host = host
         self.port = port
@@ -90,11 +91,14 @@ class FutuBroker(BrokerInterface):
         self._cn_acc_id = cn_acc_id
         self._hk_acc_id = hk_acc_id
         self._us_acc_id = us_acc_id
+        self._security_firm_name = security_firm
 
         self._futu_available = False
         self._TrdEnv = None
         self._TrdSide = None
         self._OrderType = None
+        self._TrdMarket = None
+        self._SecurityFirm = None
         self._ft = None
 
         try:
@@ -103,8 +107,16 @@ class FutuBroker(BrokerInterface):
             self._TrdEnv = ft.TrdEnv.REAL if trade_env == "REAL" else ft.TrdEnv.SIMULATE
             self._TrdSide = ft.TrdSide
             self._OrderType = ft.OrderType
+            self._TrdMarket = ft.TrdMarket
+            # Resolve security_firm string → enum (NZ accounts need FUTUAU; HK
+            # needs FUTUSECURITIES). Falls back to FUTUSECURITIES if unknown.
+            self._SecurityFirm = getattr(ft.SecurityFirm, security_firm,
+                                          ft.SecurityFirm.FUTUSECURITIES)
             self._futu_available = True
-            logger.info(f"[Futu] futu-api loaded. OpenD target: {host}:{port} env={trade_env}")
+            logger.info(
+                f"[Futu] futu-api loaded. OpenD target: {host}:{port} "
+                f"env={trade_env} security_firm={security_firm}"
+            )
         except ImportError:
             logger.warning("[Futu] futu-api not installed. Run: pip install futu-api. Using paper fallback.")
 
@@ -130,19 +142,39 @@ class FutuBroker(BrokerInterface):
             logger.debug(f"[Futu] Connection check failed: {e}")
             return False
 
+    def _trade_ctx(self, market: str):
+        """Build OpenSecTradeContext for the given market (CN/HK/US).
+
+        Replaces deprecated OpenHKTradeContext / OpenUSTradeContext /
+        OpenCNTradeContext which were removed from futu-api 10.x. Same wire
+        protocol, just a unified entry point with explicit market filter and
+        security_firm (NZ accounts need FUTUAU, HK needs FUTUSECURITIES, etc.).
+        """
+        ft = self._ft
+        market_enum = {
+            "CN": ft.TrdMarket.CN,
+            "HK": ft.TrdMarket.HK,
+            "US": ft.TrdMarket.US,
+        }.get(market, ft.TrdMarket.US)
+        return ft.OpenSecTradeContext(
+            filter_trdmarket=market_enum,
+            host=self.host, port=self.port,
+            security_firm=self._SecurityFirm,
+        )
+
     def get_account(self) -> Dict:
         if not self._futu_available:
             return {"cash": 0.0, "equity": 0.0, "buying_power": 0.0, "currency": "USD"}
         try:
             ft = self._ft
             # Try CN account first, then HK, then US
-            for ctx_cls, market, acc_id, currency in [
-                (ft.OpenCNTradeContext, "CN", self._cn_acc_id, "CNY"),
-                (ft.OpenHKTradeContext, "HK", self._hk_acc_id, "HKD"),
-                (ft.OpenUSTradeContext, "US", self._us_acc_id, "USD"),
+            for market, acc_id, currency in [
+                ("CN", self._cn_acc_id, "CNY"),
+                ("HK", self._hk_acc_id, "HKD"),
+                ("US", self._us_acc_id, "USD"),
             ]:
                 try:
-                    with ctx_cls(host=self.host, port=self.port) as ctx:
+                    with self._trade_ctx(market) as ctx:
                         ret, data = ctx.accinfo_query(
                             trd_env=self._TrdEnv,
                             acc_id=acc_id or 0,
@@ -188,22 +220,15 @@ class FutuBroker(BrokerInterface):
         # Integer qty for HK/CN
         qty_int = int(quantity) if market in ("CN", "HK") else round(quantity, 4)
 
-        ctx_cls_map = {
-            "CN": ft.OpenCNTradeContext,
-            "HK": ft.OpenHKTradeContext,
-            "US": ft.OpenUSTradeContext,
-        }
         acc_id_map = {
             "CN": self._cn_acc_id,
             "HK": self._hk_acc_id,
             "US": self._us_acc_id,
         }
-
-        ctx_cls = ctx_cls_map.get(market, ft.OpenUSTradeContext)
         acc_id = acc_id_map.get(market, 0)
 
         try:
-            with ctx_cls(host=self.host, port=self.port) as ctx:
+            with self._trade_ctx(market) as ctx:
                 # For CN/HK market orders, use AUCTION_LIMIT or MARKET type
                 order_type = self._OrderType.MARKET
                 # Futu CN market orders use price=0 + MARKET order type
@@ -242,14 +267,14 @@ class FutuBroker(BrokerInterface):
             return []
         ft = self._ft
         result = []
-        ctx_map = {
-            "CN": (ft.OpenCNTradeContext, self._cn_acc_id),
-            "HK": (ft.OpenHKTradeContext, self._hk_acc_id),
-            "US": (ft.OpenUSTradeContext, self._us_acc_id),
+        acc_id_map = {
+            "CN": self._cn_acc_id,
+            "HK": self._hk_acc_id,
+            "US": self._us_acc_id,
         }
-        for market, (ctx_cls, acc_id) in ctx_map.items():
+        for market, acc_id in acc_id_map.items():
             try:
-                with ctx_cls(host=self.host, port=self.port) as ctx:
+                with self._trade_ctx(market) as ctx:
                     ret, data = ctx.position_list_query(
                         trd_env=self._TrdEnv, acc_id=acc_id or 0
                     )
@@ -282,7 +307,7 @@ class FutuBroker(BrokerInterface):
             return None
         ft = self._ft
         try:
-            with ft.OpenCNTradeContext(host=self.host, port=self.port) as ctx:
+            with self._trade_ctx("CN") as ctx:
                 ret, data = ctx.accinfo_query(
                     trd_env=self._TrdEnv, acc_id=self._cn_acc_id or 0
                 )
@@ -327,7 +352,15 @@ def _futu_to_alphatrader(futu_code: str) -> str:
 # ── Factory helper used by TradingEngine ─────────────────────────────────────
 
 def create_futu_broker_from_settings(settings: dict) -> FutuBroker:
-    """Build a FutuBroker from a Settings dict."""
+    """Build a FutuBroker from a Settings dict.
+
+    `futu_security_firm` MUST match where the user opened the account:
+      • FUTUSECURITIES — Futu HK (default for legacy users)
+      • FUTUAU         — Moomoo Australia / Moomoo NZ
+      • FUTUSG / FUTUINC / FUTUJP / FUTUMY / FUTUCA — other regional entities
+    Without the right value, OpenD returns the SIMULATE account but hides the
+    REAL one. Settings key is optional; defaults to FUTUSECURITIES for back-compat.
+    """
     return FutuBroker(
         host=settings.get("futu_host", "127.0.0.1"),
         port=int(settings.get("futu_port", "11111")),
@@ -335,4 +368,5 @@ def create_futu_broker_from_settings(settings: dict) -> FutuBroker:
         cn_acc_id=int(settings.get("futu_cn_acc_id", "0") or 0),
         hk_acc_id=int(settings.get("futu_hk_acc_id", "0") or 0),
         us_acc_id=int(settings.get("futu_us_acc_id", "0") or 0),
+        security_firm=settings.get("futu_security_firm", "FUTUSECURITIES"),
     )
