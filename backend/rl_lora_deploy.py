@@ -2,7 +2,7 @@
 LoRA Adapter Deployer
 ======================
 Once validate_lora() approves a new adapter, this module merges it into the
-base model and serves it via a vLLM server on port 11436.  Updates the DB
+base model and serves it via a vLLM server on port 11500.  Updates the DB
 setting `lora_inference_url` so deepseek_ai.py routes new signals through
 the fine-tuned model.
 
@@ -12,12 +12,12 @@ Pipeline:
   3. Spawn vLLM with the merged model as a background subprocess
   4. Poll healthcheck until /v1/models returns OK (or 5 min timeout)
   5. Update DB settings:
-        lora_inference_url=http://localhost:11436/v1
+        lora_inference_url=http://localhost:11500/v1
         lora_model_version={version}
   6. deepseek_ai.py reads these on the next analysis call
 
 vLLM is the same one already running for VLLM::Worker_TP on GPU 3+4 — we
-launch ours on a separate port (11436) and a separate GPU pair (1+2 once
+launch ours on a separate port (11500) and a separate GPU pair (1+2 once
 training finishes) so it doesn't compete.
 """
 import logging
@@ -32,7 +32,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-LORA_VLLM_PORT       = 11436
+LORA_VLLM_PORT       = 11500     # NOTE: 11436 was taken by another Ollama (deepseek-r1:70b)
 LORA_VLLM_GPUS       = "1,2"     # use the same GPUs that did training
 LORA_VLLM_LOG        = "/tmp/lora_vllm.log"
 LORA_VLLM_PID_FILE   = "/tmp/lora_vllm.pid"

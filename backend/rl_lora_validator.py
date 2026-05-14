@@ -33,18 +33,26 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_action(text: str) -> str | None:
-    """Pull a BUY/SELL/HOLD signal out of generated text."""
+    """
+    Pull a BUY/SELL/HOLD signal out of generated text.
+
+    Priority:
+      1. Explicit "Signal: X" pattern (deterministic — matches training format)
+      2. LAST action keyword in the text (= the model's final conclusion)
+
+    NOTE: The previous version had a BUY-bias bug: it looped over
+    (BUY, SELL, HOLD) and returned the first match found anywhere in
+    the text, so "we could BUY but actually SELL" always returned BUY.
+    """
     if not text:
         return None
     t = text.upper()
-    # Look for "Signal: BUY" pattern first (matches our training format)
     m = re.search(r"SIGNAL[:\s]+(BUY|SELL|HOLD|SHORT|COVER)", t)
     if m:
         return m.group(1)
-    # Fallback: scan for any standalone token
-    for tok in ("BUY", "SELL", "HOLD"):
-        if re.search(rf"\b{tok}\b", t):
-            return tok
+    matches = list(re.finditer(r"\b(BUY|SELL|HOLD|SHORT|COVER)\b", t))
+    if matches:
+        return matches[-1].group(1)
     return None
 
 

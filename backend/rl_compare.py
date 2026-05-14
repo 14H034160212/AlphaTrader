@@ -237,29 +237,33 @@ def run_comparison(holdout_days: int = 7,
     if include_challenge_set:
         try:
             import rl_challenge_set as _cs
-            challenge = _cs.load_challenge_set()
+            challenge_all = _cs.load_challenge_set()
+            # Filter records and rewards IN TANDEM so positions match.
+            # Previous version filtered rewards but used full record list for
+            # actions → zip silently truncated and misaligned action with reward.
+            challenge = [r for r in challenge_all
+                         if isinstance(r.get("reward_3d"), (int, float))
+                         and math.isfinite(r["reward_3d"])]
             if challenge:
-                challenge_rewards = [r["reward_3d"] for r in challenge
-                                      if isinstance(r.get("reward_3d"), (int, float))
-                                      and math.isfinite(r["reward_3d"])]
-                if challenge_rewards:
-                    challenge_methods = []
-                    if prod_model is not None:
-                        actions = [_xgb_predict_action(prod_model, r)[0] for r in challenge]
-                        challenge_methods.append(score_method(actions, challenge_rewards,
-                                                              "XGBoost (production) — challenge set"))
-                    if shadow_model is not None:
-                        actions = [_xgb_predict_action(shadow_model, r)[0] for r in challenge]
-                        challenge_methods.append(score_method(actions, challenge_rewards,
-                                                              "XGBoost (shadow) — challenge set"))
-                    actions = [_production_action(r)[0] for r in challenge]
+                challenge_rewards = [r["reward_3d"] for r in challenge]
+                challenge_methods = []
+                if prod_model is not None:
+                    actions = [_xgb_predict_action(prod_model, r)[0] for r in challenge]
                     challenge_methods.append(score_method(actions, challenge_rewards,
-                                                          "Production live — challenge set"))
-                    challenge_methods.sort(key=_sort_key)
-                    results["challenge_set"] = {
-                        "size":    len(challenge),
-                        "methods": challenge_methods,
-                    }
+                                                          "XGBoost (production) — challenge set"))
+                if shadow_model is not None:
+                    actions = [_xgb_predict_action(shadow_model, r)[0] for r in challenge]
+                    challenge_methods.append(score_method(actions, challenge_rewards,
+                                                          "XGBoost (shadow) — challenge set"))
+                actions = [_production_action(r)[0] for r in challenge]
+                challenge_methods.append(score_method(actions, challenge_rewards,
+                                                      "Production live — challenge set"))
+                challenge_methods.sort(key=_sort_key)
+                results["challenge_set"] = {
+                    "size":            len(challenge_all),
+                    "scored_size":     len(challenge),
+                    "methods":         challenge_methods,
+                }
         except Exception as e:
             results["challenge_set_error"] = str(e)
 
