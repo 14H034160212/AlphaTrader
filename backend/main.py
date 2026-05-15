@@ -237,7 +237,12 @@ def build_rich_portfolio_context(db, user_id: int, engine) -> str:
     lines.append(f"- Total P&L: ${ret:+,.2f} ({ret_pct:+.2f}%)")
 
     # ── Current Positions ─────────────────────────────────────────────────────
-    positions = summary.get("positions", [])
+    # Filter qty>0 only — stale rows with qty=0 + avg_cost intact (from old
+    # SIMULATE trades or fully-closed positions) confuse the AI: it reads the
+    # avg_cost as "currently holding at that price". Saw 0700.HK qty=0
+    # avg=$462.20 listed → AI said "portfolio already holds this stock at $462.20".
+    raw_positions = summary.get("positions", [])
+    positions = [p for p in raw_positions if abs(float(p.get("quantity", 0) or 0)) > 0.001]
     if positions:
         lines.append("\n### Current Holdings")
         for p in sorted(positions, key=lambda x: abs(x.get("market_value", 0)), reverse=True):
