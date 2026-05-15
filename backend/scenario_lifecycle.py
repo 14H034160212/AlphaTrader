@@ -337,11 +337,21 @@ Your job is to assess whether tracked macro scenarios are still relevant based o
 ## Recent News Headlines (last 6 hours)
 {news_block}
 
+## User-muted themes (DO NOT propose new scenarios on these)
+The user has explicitly muted these themes — DO NOT create new scenarios whose name,
+description, or trigger keywords involve them, even if multiple headlines mention them.
+If a tracked muted scenario is in the list above, just MAINTAIN it (don't ESCALATE).
+
+  • Middle East conflict / Iran / Hormuz / Israel / Lebanon (any combination)
+  • US-on-China tariffs / trade wars driven by Trump tariff policy
+  • Stale 2024/2025 narratives that no longer move markets
+
 ## Your Tasks
 1. For each ACTIVE/DECLINING scenario, assess whether evidence supports its current state.
    Recommend: MAINTAIN, ESCALATE (increase severity), DE_ESCALATE (decrease severity), or RESOLVE (scenario is over).
 2. Identify if any news headlines suggest an entirely NEW macro scenario not currently tracked.
    Only propose scenarios with CLEAR market implications and at least 2 supporting headlines.
+   **SKIP** anything in the "User-muted themes" list above.
 3. For any proposed new scenario, specify: name, description, trigger_keywords (at least 5),
    resolution_keywords (at least 3), stocks_to_avoid, potential_beneficiaries, initial severity.
 
@@ -601,10 +611,33 @@ def apply_ai_review(db: Session, review: dict):
         row.last_ai_review_at = now
         row.ai_review_summary = reasoning
 
+    # Themes the user explicitly muted — block AI Layer 4 from regenerating them.
+    # The prompt also tells the LLM to skip these, but defense-in-depth: even if
+    # the LLM ignores the instruction, persistence is blocked here.
+    _MUTED_THEMES = (
+        "iran", "hormuz", "lebanon", "israel", "middle_east", "mid_east",
+        "us_iran", "us-iran", "saudi_arabia_iran",
+        "tariff", "global_tariffs", "trade_war",
+    )
+
     # Create new AI-generated scenarios
     for ns in review.get("new_scenarios", []):
         slug = re.sub(r'[^a-z0-9]+', '_', ns["name"].lower())[:30].strip('_')
         scenario_id = f"ai_gen_{now.strftime('%Y%m%d')}_{slug}"
+
+        # Block muted themes (check both proposed name + ID + trigger keywords)
+        haystack = (
+            ns["name"].lower() + " " +
+            scenario_id + " " +
+            " ".join(ns.get("trigger_keywords", []) or []).lower() + " " +
+            (ns.get("description", "") or "").lower()
+        )
+        if any(t in haystack for t in _MUTED_THEMES):
+            logger.warning(
+                f"[ScenarioLifecycle] AI proposed muted-theme scenario "
+                f"'{ns['name']}' — REJECTED before persist (matches user mute list)."
+            )
+            continue
 
         existing = db.query(ScenarioState).filter(
             ScenarioState.scenario_id == scenario_id

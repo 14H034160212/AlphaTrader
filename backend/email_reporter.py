@@ -561,6 +561,146 @@ def generate_report_html(
 
 
 # ---------------------------------------------------------------------------
+# HK / Futu daily report (separate from the main US-focused daily report)
+# ---------------------------------------------------------------------------
+
+def generate_hk_report_html(
+    date_str: str,
+    hk_account: dict,              # FutuBroker.get_account() — HKD denominated
+    hk_positions: list,            # list of {symbol, quantity, avg_cost, current_price, unrealized_pnl}
+    hk_signals: list,              # list of {symbol, signal, confidence, reasoning, timestamp}
+    hk_trades_today: list,         # list of trade dicts from DB (Trade rows)
+) -> str:
+    """Generate a focused HK-only daily report.
+
+    Kept lean intentionally — the main US report is the kitchen sink.
+    HK email is meant to be glanceable on phone first thing in the morning.
+    """
+    cash = float(hk_account.get("cash", 0) or 0)
+    equity = float(hk_account.get("equity", 0) or 0)
+    market_val = max(0.0, equity - cash)
+    total_unrealized = sum(float(p.get("unrealized_pnl", 0) or 0) for p in hk_positions)
+    pnl_color = _color(total_unrealized)
+
+    # ── Position rows ──
+    if hk_positions:
+        pos_rows = ""
+        for p in hk_positions:
+            qty = float(p.get("quantity", 0) or 0)
+            avg = float(p.get("avg_cost", 0) or 0)
+            cur = float(p.get("current_price", 0) or 0)
+            pnl = float(p.get("unrealized_pnl", 0) or 0)
+            pct = ((cur / avg - 1) * 100) if avg > 0 else 0
+            mv = qty * cur
+            c = _color(pnl)
+            pos_rows += f"""
+              <tr>
+                <td style="padding:8px;font-weight:600;">{p.get('symbol','')}</td>
+                <td style="padding:8px;">{qty:g}</td>
+                <td style="padding:8px;">HK${avg:.3f}</td>
+                <td style="padding:8px;">HK${cur:.3f}</td>
+                <td style="padding:8px;">HK${mv:,.2f}</td>
+                <td style="padding:8px;color:{c};font-weight:600;">HK${pnl:+.2f} ({pct:+.2f}%)</td>
+              </tr>"""
+    else:
+        pos_rows = '<tr><td colspan="6" style="padding:12px;text-align:center;color:#999;">暂无港股持仓</td></tr>'
+
+    # ── Today's trades ──
+    if hk_trades_today:
+        trade_rows = ""
+        for t in hk_trades_today:
+            side_color = "#16a34a" if t.get("side") == "BUY" else "#dc2626"
+            ts = (t.get("timestamp") or "")[:19]
+            trade_rows += f"""
+              <tr>
+                <td style="padding:8px;color:#666;font-size:12px;">{ts}</td>
+                <td style="padding:8px;font-weight:600;">{t.get('symbol','')}</td>
+                <td style="padding:8px;color:{side_color};font-weight:700;">{t.get('side','')}</td>
+                <td style="padding:8px;">{t.get('quantity','')}</td>
+                <td style="padding:8px;">HK${float(t.get('price', 0) or 0):.3f}</td>
+                <td style="padding:8px;">HK${float(t.get('total_value', 0) or 0):.2f}</td>
+              </tr>"""
+    else:
+        trade_rows = '<tr><td colspan="6" style="padding:12px;text-align:center;color:#999;">今日无港股成交</td></tr>'
+
+    # ── Today's signals (BUY/SELL only, top 5 by conf) ──
+    actionable = [s for s in hk_signals if s.get("signal") in ("BUY", "SELL")]
+    actionable.sort(key=lambda s: s.get("confidence", 0), reverse=True)
+    if actionable:
+        sig_rows = ""
+        for s in actionable[:5]:
+            sig_rows += f"""
+              <tr>
+                <td style="padding:8px;font-weight:600;">{s.get('symbol','')}</td>
+                <td style="padding:8px;">{_signal_badge(s.get('signal','HOLD'))}</td>
+                <td style="padding:8px;">{int((s.get('confidence', 0) or 0) * 100)}%</td>
+                <td style="padding:8px;color:#555;font-size:12px;">{(s.get('reasoning','') or '')[:160]}</td>
+              </tr>"""
+    else:
+        sig_rows = '<tr><td colspan="4" style="padding:12px;text-align:center;color:#999;">今日无 BUY/SELL 信号（全 HOLD）</td></tr>'
+
+    # ── Summary line ──
+    n_pos = len(hk_positions)
+    n_trades = len(hk_trades_today)
+    n_signals = len(hk_signals)
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>HK Daily — {date_str}</title></head>
+<body style="font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f7;margin:0;padding:20px;">
+  <div style="max-width:760px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+              box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+
+    <div style="background:linear-gradient(135deg,#dc2626 0%,#ea580c 100%);color:#fff;padding:24px;">
+      <div style="font-size:13px;opacity:0.85;">🇭🇰 港股每日报告 · {date_str}</div>
+      <div style="font-size:24px;font-weight:700;margin-top:4px;">Moomoo NZ — Hong Kong Account</div>
+    </div>
+
+    <div style="padding:24px;">
+      <h3 style="margin-top:0;color:#333;">账户概览</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr><td style="padding:6px;color:#666;">Equity (净值)</td><td style="padding:6px;text-align:right;font-weight:600;">HK${equity:,.2f}</td></tr>
+        <tr><td style="padding:6px;color:#666;">Cash 现金</td><td style="padding:6px;text-align:right;">HK${cash:,.2f}</td></tr>
+        <tr><td style="padding:6px;color:#666;">Market value 持仓市值</td><td style="padding:6px;text-align:right;">HK${market_val:,.2f}</td></tr>
+        <tr><td style="padding:6px;color:#666;">Unrealized P&amp;L 浮动盈亏</td><td style="padding:6px;text-align:right;color:{pnl_color};font-weight:600;">HK${total_unrealized:+.2f}</td></tr>
+        <tr><td style="padding:6px;color:#666;">Counts 数量</td><td style="padding:6px;text-align:right;color:#666;font-size:12px;">{n_pos} 仓位 · {n_trades} 今日成交 · {n_signals} 今日信号</td></tr>
+      </table>
+
+      <h3 style="color:#333;margin-top:24px;">持仓 Positions</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fafafa;border-radius:6px;overflow:hidden;">
+        <thead><tr style="background:#fef2f2;">
+          <th style="padding:8px;text-align:left;">Symbol</th><th style="padding:8px;text-align:left;">Qty</th>
+          <th style="padding:8px;text-align:left;">Avg cost</th><th style="padding:8px;text-align:left;">Current</th>
+          <th style="padding:8px;text-align:left;">Market value</th><th style="padding:8px;text-align:left;">Unrealized P&amp;L</th>
+        </tr></thead><tbody>{pos_rows}</tbody>
+      </table>
+
+      <h3 style="color:#333;margin-top:24px;">今日成交 Trades</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fafafa;border-radius:6px;overflow:hidden;">
+        <thead><tr style="background:#fef2f2;">
+          <th style="padding:8px;text-align:left;">Time</th><th style="padding:8px;text-align:left;">Symbol</th>
+          <th style="padding:8px;text-align:left;">Side</th><th style="padding:8px;text-align:left;">Qty</th>
+          <th style="padding:8px;text-align:left;">Price</th><th style="padding:8px;text-align:left;">Value</th>
+        </tr></thead><tbody>{trade_rows}</tbody>
+      </table>
+
+      <h3 style="color:#333;margin-top:24px;">Top AI 信号 (BUY/SELL only)</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fafafa;border-radius:6px;overflow:hidden;">
+        <thead><tr style="background:#fef2f2;">
+          <th style="padding:8px;text-align:left;">Symbol</th><th style="padding:8px;text-align:left;">Signal</th>
+          <th style="padding:8px;text-align:left;">Conf</th><th style="padding:8px;text-align:left;">Reasoning</th>
+        </tr></thead><tbody>{sig_rows}</tbody>
+      </table>
+
+      <div style="margin-top:24px;padding:12px;background:#fef3c7;border-left:4px solid #f59e0b;color:#92400e;font-size:12px;">
+        <strong>说明</strong>: 此邮件覆盖 Moomoo NZ HK 账户（acc_id ending …390321）。
+        US 仓位走另一封 Alpaca 邮件。
+      </div>
+    </div>
+  </div>
+</body></html>"""
+
+
+# ---------------------------------------------------------------------------
 # SMTP send
 # ---------------------------------------------------------------------------
 
