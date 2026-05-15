@@ -3275,6 +3275,58 @@ async def background_email_reporter():
                     if sent:
                         last_sent_date = now.date()
                         logger.info(f"[EmailReport] Daily report sent for {now.date()}")
+
+                    # ── Separate HK report ────────────────────────────────────
+                    # Sent only when Futu is enabled + connected. Standalone email
+                    # so the user can glance at HK P&L on phone without scrolling
+                    # past the (US-heavy) main report.
+                    try:
+                        if engine._futu and engine._futu.is_connected():
+                            hk_account = engine._futu.get_account()  # HKD-denominated
+                            hk_positions = [
+                                p for p in engine._futu.get_all_positions()
+                                if p.get("market") == "HK"
+                            ]
+                            since_24h = datetime.utcnow() - timedelta(hours=24)
+                            hk_signals = [
+                                {
+                                    "symbol": s.symbol, "signal": s.signal,
+                                    "confidence": s.confidence,
+                                    "reasoning": s.reasoning or "",
+                                    "timestamp": s.timestamp.isoformat() if s.timestamp else "",
+                                }
+                                for s in db.query(AISignal)
+                                    .filter(AISignal.user_id == 1,
+                                            AISignal.timestamp >= since_24h,
+                                            AISignal.symbol.like("%.HK"))
+                                    .order_by(AISignal.timestamp.desc())
+                                    .limit(20)
+                                    .all()
+                            ]
+                            hk_trades_today = [
+                                {
+                                    "symbol": t.symbol, "side": t.side,
+                                    "quantity": t.quantity, "price": t.price,
+                                    "total_value": t.total_value,
+                                    "timestamp": t.timestamp.isoformat() if t.timestamp else "",
+                                }
+                                for t in db.query(Trade)
+                                    .filter(Trade.user_id == 1,
+                                            Trade.timestamp >= since_24h,
+                                            Trade.symbol.like("%.HK"))
+                                    .order_by(Trade.timestamp.desc())
+                                    .all()
+                            ]
+                            hk_html = er.generate_hk_report_html(
+                                date_str, hk_account, hk_positions,
+                                hk_signals, hk_trades_today,
+                            )
+                            hk_subject = f"🇭🇰 AlphaTrader HK Daily — {now.strftime('%Y-%m-%d')}"
+                            er.send_email(sender, app_pw, recipient, hk_subject, hk_html)
+                            logger.info(f"[EmailReport] HK report sent ({len(hk_positions)} positions, "
+                                        f"{len(hk_trades_today)} trades, {len(hk_signals)} signals)")
+                    except Exception as _hke:
+                        logger.warning(f"[EmailReport] HK report send failed: {_hke}")
                 finally:
                     db.close()
         except Exception as e:
