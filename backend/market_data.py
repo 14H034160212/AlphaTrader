@@ -453,10 +453,13 @@ def get_stock_quote(symbol: str) -> dict:
             "ddm_value": round(ddm_value, 2),
             "intrinsic_value": round(intrinsic_value, 2),
             "valuation_gap_pct": round(valuation_gap, 3),
-            "vpa_signal": vpa_metrics["vpa_signal"],
-            "crowding": vpa_metrics["crowding"],
-            "liquidity": vpa_metrics["liquidity"],
-            "vpa_volume_ratio": vpa_metrics["volume_ratio"],
+            # Defensive: thinly-traded HK IPO names (e.g. 0100.HK MiniMax) can
+            # yield incomplete VPA dicts when yfinance returns sparse history.
+            # Was raising KeyError 'volume_ratio' which crashed the whole quote.
+            "vpa_signal": vpa_metrics.get("vpa_signal", "NEUTRAL"),
+            "crowding": vpa_metrics.get("crowding", "NORMAL"),
+            "liquidity": vpa_metrics.get("liquidity", "UNKNOWN"),
+            "vpa_volume_ratio": vpa_metrics.get("volume_ratio", 1.0),
         }
         _cache.set(cache_key, result, QUOTE_TTL)
         return result

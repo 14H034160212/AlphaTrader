@@ -306,6 +306,16 @@ class TradingEngine:
                 notional_amount = round(total_cost, 2)
                 if notional_amount < 1.0:
                     return {"success": False, "error": f"Notional ${notional_amount:.2f} below Alpaca minimum $1"}
+                # Pre-check buying power to avoid spamming Alpaca with rejections
+                # when account is cash-poor (logs filled with "insufficient buying power"
+                # noise when cash hit ~$66 after morning deployment).
+                try:
+                    bp = float(self.alpaca.get_account().buying_power)
+                    if notional_amount > bp:
+                        return {"success": False, "skipped": True,
+                                "reason": f"Notional ${notional_amount:.2f} exceeds Alpaca buying_power ${bp:.2f}"}
+                except Exception as _e:
+                    logger.debug(f"[Alpaca] buying_power pre-check failed: {_e}")
                 qty_amount = round(notional_amount / price, 6) if price > 0 else quantity
                 order = self.alpaca.submit_order(
                     symbol=symbol, qty=qty_amount,

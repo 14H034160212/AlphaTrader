@@ -142,7 +142,10 @@ def record_signal_state(
         with open(RL_DATA_FILE, "a") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             try:
-                f.write(json.dumps(record, separators=(",", ":")) + "\n")
+                # default=str catches stray datetime / numpy types in indicators
+                # dict that occasionally leak from get_technical_indicators().
+                # Was failing with "Object of type datetime is not JSON serializable".
+                f.write(json.dumps(record, separators=(",", ":"), default=str) + "\n")
             finally:
                 fcntl.flock(f, fcntl.LOCK_UN)
     except Exception as e:
