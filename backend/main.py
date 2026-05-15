@@ -281,9 +281,40 @@ def build_rich_portfolio_context(db, user_id: int, engine) -> str:
     lines.append(f"- Trades today: {len(today_trades)}")
     lines.append(f"- Total trades on record: {len(recent_trades)}")
 
-    # ── Cash Reserve Status ────────────────────────────────────────────────────
+    # ── HK / Futu account (SEPARATE FROM ALPACA) ─────────────────────────────
+    # Without this, AI evaluating .HK symbols sees Alpaca's "cash 4%" and refuses
+    # to buy, even though Moomoo HK has HK$4,656 sitting idle. Was producing 12
+    # consecutive HK signals all at conf=0.72 with "cash critically low" reasoning.
+    if getattr(engine, "_futu", None) and engine._futu.is_connected():
+        try:
+            hk_acc = engine._futu.get_account()
+            hk_positions = [p for p in engine._futu.get_all_positions()
+                           if p.get("market") == "HK"]
+            hk_cash = float(hk_acc.get("cash", 0) or 0)
+            hk_equity = float(hk_acc.get("equity", 0) or 0)
+            lines.append("\n### Hong Kong Account (Moomoo — SEPARATE from US Alpaca above)")
+            lines.append(f"- HK Cash: HK${hk_cash:,.2f}  (this account is denominated in HKD)")
+            lines.append(f"- HK Equity: HK${hk_equity:,.2f}")
+            if hk_positions:
+                lines.append("- HK Holdings:")
+                for p in hk_positions:
+                    lines.append(f"  - {p.get('symbol')}: {p.get('quantity'):g} shares "
+                                 f"@ HK${p.get('avg_cost',0):.3f} "
+                                 f"(now HK${p.get('current_price',0):.3f}, "
+                                 f"P&L HK${p.get('unrealized_pnl',0):+.2f})")
+            else:
+                lines.append(f"- HK Holdings: NONE — all HK${hk_cash:,.2f} sitting idle, available for HK stocks")
+            lines.append(
+                "- **IMPORTANT FOR AI**: When evaluating a `.HK` symbol, use the HK Cash above "
+                "(not the US Alpaca cash). The two are completely separate broker accounts "
+                "with independent cash pools. Cash-reserve rules ('15% target') apply per-account."
+            )
+        except Exception as _hke:
+            lines.append(f"\n### Hong Kong Account: unavailable ({_hke})")
+
+    # ── Cash Reserve Status (US / Alpaca) ────────────────────────────────────
     cash_status = engine.get_cash_reserve_status()
-    lines.append(f"\n### Cash Reserve")
+    lines.append(f"\n### Cash Reserve (US / Alpaca)")
     lines.append(f"- Cash: ${cash_status['cash']:,.2f} ({cash_status['cash_pct']:.0f}% of portfolio)")
     lines.append(f"- Target reserve: ${cash_status['target_cash']:,.2f} (15% minimum)")
     if not cash_status["healthy"]:
