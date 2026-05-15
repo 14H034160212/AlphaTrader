@@ -151,33 +151,33 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant Loop as ⏱️ auto_trade_loop (1h)
+    participant Trader as ⏱️ auto_trade_loop
     participant MD as market_data.py
     participant NI as news_intelligence.py
     participant KR as Kronos (A100 GPU)
-    participant AI as LLM (70B)
+    participant AI as LLM (Qwen3.5 35B)
     participant FLT as Risk Filters
     participant ENG as TradingEngine
     participant DB as SQLite
 
-    Loop->>Loop: Triggered every 1 hour
+    Trader->>Trader: Triggered every ~15-30 min
     loop For each symbol in watchlist
         par Gather data in parallel
-            Loop->>MD: get_stock_quote + history + indicators + news
-            Loop->>NI: scan_all_threats + detect_catalysts
-            Loop->>KR: predict_next_candles (5 candles)
+            Trader->>MD: get_stock_quote + history + indicators + news
+            Trader->>NI: scan_all_threats + detect_catalysts
+            Trader->>KR: predict_next_candles (5 candles)
         end
-        Loop->>Loop: Build super-prompt (all data merged)
-        Loop->>AI: analyze_stock(prompt)
-        AI-->>Loop: {signal, confidence, target, stop}
-        Loop->>DB: Store AI signal
-        Loop->>FLT: Apply 5 filters
-        alt All filters passed & confidence ≥ 70%
+        Trader->>Trader: Build super-prompt (all data merged)
+        Trader->>AI: analyze_stock(prompt) with /no_think
+        AI-->>Trader: signal / confidence / target / stop
+        Trader->>DB: Store AI signal
+        Trader->>FLT: Apply 5 filters
+        alt All filters passed & confidence ≥ 75%
             FLT->>ENG: Execute trade
             ENG->>DB: Record trade + update position
-            ENG-->>Loop: Broadcast via WebSocket
+            ENG-->>Trader: Broadcast via WebSocket
         else Filtered out
-            FLT-->>Loop: Skip (log reason)
+            FLT-->>Trader: Skip (log reason)
         end
     end
 ```
