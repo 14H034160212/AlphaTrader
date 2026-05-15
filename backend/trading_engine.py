@@ -368,6 +368,9 @@ class TradingEngine:
             side="BUY" if not is_cover else "COVER",
             quantity=quantity, price=price, total_value=total_cost,
             order_type=broker_name,
+            broker=broker_name,   # was defaulting to 'Paper' — left actual Alpaca/Futu fills mislabeled
+            currency=currency,
+            market=detect_market(symbol),
             ai_triggered=ai_triggered, ai_confidence=confidence, reasoning=reasoning,
         )
         self.db.add(trade)
@@ -490,6 +493,9 @@ class TradingEngine:
             side="SELL" if not is_short else "SHORT",
             quantity=quantity, price=price, total_value=total_proceeds,
             order_type=broker_name,
+            broker=broker_name,
+            currency=currency,
+            market=detect_market(symbol),
             ai_triggered=ai_triggered, ai_confidence=confidence, reasoning=reasoning,
         )
         self.db.add(trade)

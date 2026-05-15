@@ -261,12 +261,20 @@ def build_rich_portfolio_context(db, user_id: int, engine) -> str:
         lines.append("\n### Current Holdings: None (100% cash)")
 
     # ── Recent Trade History ──────────────────────────────────────────────────
+    # Cap at 7 days — older SIMULATE-mode paper trades (broker=Paper, before
+    # REAL switch on 2026-05-15) leaked into AI prompts and produced "I'm
+    # already holding 0700.HK at $462" hallucinations. Also exclude broker='Paper'
+    # entries: real Alpaca/Futu fills are tagged with their broker name in the
+    # broker column.
+    cutoff_7d = datetime.utcnow() - timedelta(days=7)
     recent_trades = db.query(Trade).filter(
-        Trade.user_id == user_id
+        Trade.user_id == user_id,
+        Trade.timestamp >= cutoff_7d,
+        Trade.broker != "Paper",
     ).order_by(Trade.timestamp.desc()).limit(15).all()
 
     if recent_trades:
-        lines.append("\n### Recent Trade History (last 15 trades)")
+        lines.append("\n### Recent Trade History (last 7 days, live fills only)")
         for t in recent_trades:
             age_hours = (datetime.utcnow() - t.timestamp).total_seconds() / 3600 if t.timestamp else 0
             age_str = f"{age_hours:.0f}h ago" if age_hours < 48 else f"{age_hours/24:.0f}d ago"
@@ -277,7 +285,7 @@ def build_rich_portfolio_context(db, user_id: int, engine) -> str:
             if t.reasoning:
                 lines.append(f"  Reason: {t.reasoning[:100]}")
     else:
-        lines.append("\n### Recent Trade History: No trades yet")
+        lines.append("\n### Recent Trade History: No live fills in last 7 days")
 
     # ── Performance Note ──────────────────────────────────────────────────────
     today_trades = [t for t in recent_trades if t.timestamp and
