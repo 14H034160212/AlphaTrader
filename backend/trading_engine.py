@@ -350,8 +350,11 @@ class TradingEngine:
             position.quantity += quantity
             position.current_price = price
             position.last_updated = datetime.utcnow()
+            # Fully-closed positions get DELETED, not just zeroed. Leaving
+            # rows with qty=0 + avg_cost intact confused the AI prompt builder
+            # ("portfolio already holds X at $462") even though we held 0 shares.
             if abs(position.quantity) < 0.0001:
-                position.quantity = 0
+                self.db.delete(position)
         else:
             position = Position(
                 user_id=self.user_id, symbol=symbol,
@@ -468,8 +471,9 @@ class TradingEngine:
             position.quantity -= quantity
             position.current_price = price
             position.last_updated = datetime.utcnow()
+            # Same as execute_buy: delete on full close, don't leave a stale row.
             if abs(position.quantity) < 0.0001:
-                position.quantity = 0
+                self.db.delete(position)
         else:
             allow_short = get_setting(self.db, "allow_short_selling", self.user_id, "false") == "true"
             if not allow_short:
