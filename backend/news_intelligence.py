@@ -1211,10 +1211,14 @@ def detect_active_macro_scenarios(hours_back: int = 6, db=None) -> list:
     logger.info(f"[MacroScan] Scanning {len(all_news)} total news items ({len(geo_news)} geopolitical)")
 
     # ── DB-aware path: use dynamic scenario lifecycle ──
+    # Was importing non-existent `scan_trigger_keywords` which failed every
+    # call and silently fell back to the static MACRO_SCENARIOS dict for
+    # months. `run_lifecycle_scan` is the actual entry point; it returns
+    # (active_scenarios, resolution_events) — we only want the first here.
     if db is not None:
         try:
-            from scenario_lifecycle import scan_trigger_keywords
-            active = scan_trigger_keywords(db, all_news)
+            from scenario_lifecycle import run_lifecycle_scan
+            active, _resolution_events = run_lifecycle_scan(db, all_news)
             if active:
                 for s in active:
                     logger.warning(
