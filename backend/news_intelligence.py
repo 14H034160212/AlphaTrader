@@ -657,16 +657,32 @@ def build_tech_impact_context(symbol: str, impacts: list) -> str:
     return "\n".join(lines)
 
 
+# Process-local cache. detect_catalysts_for_symbol() now calls this per-symbol
+# per scan cycle; with 50+ symbols and ~30 RSS sources × 10s timeout each, an
+# uncached call could block auto_trade_loop for many minutes if even one source
+# is slow. TTL is conservative — geopolitical news rarely moves faster than 5min.
+_GEO_NEWS_CACHE: dict = {"items": [], "fetched_at": 0.0, "hours_back": None}
+_GEO_NEWS_TTL_SEC = 300
+
+
 def fetch_geopolitical_news(hours_back: int = 12) -> list:
     """
     Fetch breaking geopolitical news from major global RSS sources.
     Returns unified list of news items with title, publisher, time.
+    Cached for _GEO_NEWS_TTL_SEC; cache invalidates if hours_back changes.
     These feed into macro scenario detection to catch events like:
     - Wars, military strikes, sanctions
     - Oil supply disruptions (Strait of Hormuz, OPEC decisions)
     - Central bank announcements
     - Trade war escalations
     """
+    import time as _t
+    now_ts = _t.time()
+    if (_GEO_NEWS_CACHE["hours_back"] == hours_back
+            and now_ts - _GEO_NEWS_CACHE["fetched_at"] < _GEO_NEWS_TTL_SEC
+            and _GEO_NEWS_CACHE["items"]):
+        return _GEO_NEWS_CACHE["items"]
+
     cutoff = datetime.utcnow() - timedelta(hours=hours_back)
     all_items = []
 
@@ -727,6 +743,9 @@ def fetch_geopolitical_news(hours_back: int = 12) -> list:
             logger.debug(f"[GeoNews] {source['name']} failed: {e}")
 
     logger.info(f"[GeoNews] Fetched {len(all_items)} geopolitical news items from {len(GEOPOLITICAL_RSS_SOURCES)} sources")
+    _GEO_NEWS_CACHE["items"] = all_items
+    _GEO_NEWS_CACHE["fetched_at"] = now_ts
+    _GEO_NEWS_CACHE["hours_back"] = hours_back
     return all_items
 
 

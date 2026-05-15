@@ -108,10 +108,37 @@ class FutuBroker(BrokerInterface):
             self._TrdSide = ft.TrdSide
             self._OrderType = ft.OrderType
             self._TrdMarket = ft.TrdMarket
-            # Resolve security_firm string → enum (NZ accounts need FUTUAU; HK
-            # needs FUTUSECURITIES). Falls back to FUTUSECURITIES if unknown.
+            # Resolve security_firm string → enum. Loudly warn on typos —
+            # silent fallback to FUTUSECURITIES hides Moomoo NZ/AU/SG accounts.
+            if not hasattr(ft.SecurityFirm, security_firm):
+                logger.warning(
+                    f"[Futu] Unknown security_firm '{security_firm}'. Valid: "
+                    f"FUTUSECURITIES (HK), FUTUAU (Moomoo AU/NZ), FUTUSG, "
+                    f"FUTUINC (US), FUTUJP, FUTUMY, FUTUCA. "
+                    f"Falling back to FUTUSECURITIES — your REAL account may be invisible."
+                )
             self._SecurityFirm = getattr(ft.SecurityFirm, security_firm,
                                           ft.SecurityFirm.FUTUSECURITIES)
+
+            # Refuse REAL with missing per-market acc_id: passing acc_id=0 to
+            # Moomoo means "default account" which can silently route to the
+            # wrong account in multi-account setups. SIMULATE is fine — it has
+            # exactly one account per env.
+            if trade_env == "REAL":
+                missing = [m for m, aid in (("HK", hk_acc_id), ("US", us_acc_id), ("CN", cn_acc_id))
+                           if aid in (0, None)]
+                if len(missing) == 3:
+                    raise RuntimeError(
+                        "[Futu] REAL mode requires at least one of "
+                        "futu_{hk,us,cn}_acc_id to be set. All are 0/missing. "
+                        "Refusing to start — would silently route to wrong account."
+                    )
+                if missing:
+                    logger.warning(
+                        f"[Futu] REAL mode: no acc_id for markets {missing}. "
+                        f"Orders for those markets will use Moomoo's default account."
+                    )
+
             self._futu_available = True
             logger.info(
                 f"[Futu] futu-api loaded. OpenD target: {host}:{port} "
@@ -217,8 +244,17 @@ class FutuBroker(BrokerInterface):
                 return {"success": False, "order_id": None,
                         "error": f"CN A-share min lot is 100 shares, got {quantity}"}
 
-        # Integer qty for HK/CN
+        # Integer qty for HK/CN (HK allows odd-lots so 1-99 is fine, but qty
+        # < 1 from Kelly fractional sizing must be rejected — int(0.5)=0 would
+        # submit a 0-share order which broker silently no-ops.
         qty_int = int(quantity) if market in ("CN", "HK") else round(quantity, 4)
+        if market in ("CN", "HK") and qty_int < 1:
+            return {
+                "success": False, "order_id": None,
+                "error": f"qty rounded to {qty_int} shares (raw qty={quantity:.4f}); "
+                         f"{market} requires integer ≥ 1. Raise risk_per_trade_pct "
+                         f"or skip this signal — current size below minimum tradeable unit."
+            }
 
         acc_id_map = {
             "CN": self._cn_acc_id,
