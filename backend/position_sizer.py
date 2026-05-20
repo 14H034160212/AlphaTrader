@@ -192,6 +192,69 @@ def sector_exposure_pct(positions: list, total_equity: float) -> dict:
     return {k: round(v / total_equity * 100, 2) for k, v in by_sector.items()}
 
 
+# ── Country / region exposure caps ────────────────────────────────────────────
+# Caps "country of underlying business" not "exchange of listing". A US-listed
+# China ADR (BABA, BIDU, etc) is still China-business risk: cluster failure on
+# China macro headlines (May 14 2026 lesson — BABA/BIDU/PDD all bought from
+# same catalyst, then all dropped together May 15 -2% to -5%).
+CHINA_ADR_TICKERS = {
+    "BABA", "BIDU", "JD", "PDD", "NTES", "TCEHY", "TCOM", "NIO", "LI",
+    "XPEV", "BILI", "IQ", "VIPS", "WB", "YMM", "ZH", "DOYU", "FUTU",
+    "TIGR", "EDU", "TAL", "ATAT", "DIDIY", "BEKE", "DASH",
+}
+# Also covers anything ending in .HK / .SH / .SZ for HK + China A
+def detect_country_bucket(symbol: str) -> str:
+    """Group by underlying-business country for concentration caps."""
+    sym = (symbol or "").upper()
+    if sym in CHINA_ADR_TICKERS:
+        return "CN_EXPOSURE"
+    if sym.endswith(".HK"):
+        return "CN_EXPOSURE"   # most HK = China business
+    if sym.endswith(".SH") or sym.endswith(".SZ"):
+        return "CN_EXPOSURE"
+    if sym.endswith(".T"):
+        return "JP_EXPOSURE"
+    if sym.endswith(".NS"):
+        return "IN_EXPOSURE"
+    if sym.endswith(".AX"):
+        return "AU_EXPOSURE"
+    return "US_EXPOSURE"
+
+
+def would_breach_region_cap(
+    symbol: str,
+    new_dollars: float,
+    positions: list,
+    total_equity: float,
+    cap_pct: float = 0.30,    # 30% max in any single non-US country/region
+) -> tuple:
+    """
+    Same idea as sector cap but groups by underlying-business country.
+    US has no cap (it's the default broad allocation).
+    Non-US (CN_EXPOSURE, JP_EXPOSURE, etc.) capped at cap_pct of equity.
+    Returns (would_breach: bool, current_pct: float, projected_pct: float, bucket: str).
+    """
+    bucket = detect_country_bucket(symbol)
+    if bucket == "US_EXPOSURE":
+        return False, 0.0, 0.0, bucket
+    if total_equity <= 0:
+        return False, 0.0, 0.0, bucket
+    current_dollars = 0.0
+    for p in positions:
+        sym = getattr(p, "symbol", None) or p.get("symbol")
+        if not sym or detect_country_bucket(sym) != bucket:
+            continue
+        mv = getattr(p, "market_value", None)
+        if mv is None:
+            qty = getattr(p, "quantity", None) or p.get("quantity", 0)
+            cur = getattr(p, "current_price", None) or p.get("current_price", 0)
+            mv = float(qty) * float(cur)
+        current_dollars += float(mv)
+    current_pct = current_dollars / total_equity
+    projected_pct = (current_dollars + new_dollars) / total_equity
+    return projected_pct > cap_pct, current_pct, projected_pct, bucket
+
+
 def would_breach_sector_cap(
     symbol: str,
     new_dollars: float,
