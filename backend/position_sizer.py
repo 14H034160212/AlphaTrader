@@ -192,6 +192,29 @@ def sector_exposure_pct(positions: list, total_equity: float) -> dict:
     return {k: round(v / total_equity * 100, 2) for k, v in by_sector.items()}
 
 
+def _extract_market_value(p) -> float:
+    """Robust market-value extraction for both ORM objects and plain dicts.
+    Previously `getattr(p, 'market_value', None)` returned None for dict
+    positions (no attribute), then the qty*price fallback also returned 0
+    because dicts don't have those attrs either. Result: sector_cap and
+    region_cap never saw any current exposure. Both caps silently bypassed."""
+    # Try attribute access first (ORM Position objects)
+    mv = getattr(p, "market_value", None)
+    if mv is not None:
+        return float(mv)
+    # Then dict access
+    if isinstance(p, dict):
+        if p.get("market_value") is not None:
+            return float(p["market_value"])
+        qty = float(p.get("quantity", 0) or 0)
+        cur = float(p.get("current_price", 0) or 0)
+        return qty * cur
+    # Fallback to qty*price on object
+    qty = float(getattr(p, "quantity", 0) or 0)
+    cur = float(getattr(p, "current_price", 0) or 0)
+    return qty * cur
+
+
 # ── Country / region exposure caps ────────────────────────────────────────────
 # Caps "country of underlying business" not "exchange of listing". A US-listed
 # China ADR (BABA, BIDU, etc) is still China-business risk: cluster failure on
@@ -241,15 +264,10 @@ def would_breach_region_cap(
         return False, 0.0, 0.0, bucket
     current_dollars = 0.0
     for p in positions:
-        sym = getattr(p, "symbol", None) or p.get("symbol")
+        sym = getattr(p, "symbol", None) or (p.get("symbol") if isinstance(p, dict) else None)
         if not sym or detect_country_bucket(sym) != bucket:
             continue
-        mv = getattr(p, "market_value", None)
-        if mv is None:
-            qty = getattr(p, "quantity", None) or p.get("quantity", 0)
-            cur = getattr(p, "current_price", None) or p.get("current_price", 0)
-            mv = float(qty) * float(cur)
-        current_dollars += float(mv)
+        current_dollars += _extract_market_value(p)
     current_pct = current_dollars / total_equity
     projected_pct = (current_dollars + new_dollars) / total_equity
     return projected_pct > cap_pct, current_pct, projected_pct, bucket
@@ -278,15 +296,10 @@ def would_breach_sector_cap(
         return False, 0.0, 0.0, sector
     current_dollars = 0.0
     for p in positions:
-        sym = getattr(p, "symbol", None) or p.get("symbol")
+        sym = getattr(p, "symbol", None) or (p.get("symbol") if isinstance(p, dict) else None)
         if not sym or get_sector(sym) != sector:
             continue
-        mv = getattr(p, "market_value", None)
-        if mv is None:
-            qty = getattr(p, "quantity", None) or p.get("quantity", 0)
-            cur = getattr(p, "current_price", None) or p.get("current_price", 0)
-            mv = float(qty) * float(cur)
-        current_dollars += float(mv)
+        current_dollars += _extract_market_value(p)
     current_pct = current_dollars / total_equity
     projected_pct = (current_dollars + new_dollars) / total_equity
     return projected_pct > cap_pct, current_pct, projected_pct, sector
