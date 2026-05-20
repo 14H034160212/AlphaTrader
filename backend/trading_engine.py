@@ -702,6 +702,26 @@ class TradingEngine:
                         ),
                     }
 
+                # Country/region cap: prevent over-concentration in China ADRs
+                # (BABA + BIDU + PDD + TCEHY classify to different sectors and
+                # all bypassed the sector cap on May 14 2026 → 38% China exposure).
+                # Default 30% max non-US underlying-business exposure.
+                region_cap_pct = float(get_setting(
+                    self.db, "max_region_exposure_pct", self.user_id, "30.0"
+                )) / 100
+                r_breach, r_cur_pct, r_proj_pct, bucket = ps.would_breach_region_cap(
+                    symbol, risk_amount, positions_for_check, total_equity, region_cap_pct,
+                )
+                if r_breach:
+                    return {
+                        "success": False, "skipped": True,
+                        "reason": (
+                            f"Region cap: {bucket} would go from {r_cur_pct*100:.1f}% "
+                            f"to {r_proj_pct*100:.1f}% (cap {region_cap_pct*100:.0f}%) — "
+                            f"diversify before adding more"
+                        ),
+                    }
+
             return self.execute_buy(symbol, quantity, current_price, True, confidence, reasoning)
 
         elif action in ("SELL", "SHORT"):
