@@ -1859,16 +1859,23 @@ def detect_catalysts_for_symbol(target_symbol: str, hours_back: int = 24) -> lis
 
     for src_sym, news_items in news_sources:
         for item in news_items:
-            title_lower = item["title"].lower()
+            # Defensive .get — geopolitical RSS occasionally returns items
+            # missing 'title' or 'time' (parser fallback shapes). Was raising
+            # KeyError mid-loop, which abandoned all remaining items in that
+            # source. Now skip the malformed item but keep scanning.
+            title = item.get("title") or ""
+            if not title:
+                continue
+            title_lower = title.lower()
             matched_keywords = [kw for kw in keywords if kw in title_lower]
             if matched_keywords:
                 strength = len(matched_keywords)
                 catalysts.append({
                     "target_symbol": target_symbol,
-                    "news_title": item["title"],
+                    "news_title": title,
                     "news_origin": src_sym,    # which symbol's feed this came from
                     "publisher": item.get("publisher", ""),
-                    "time": item["time"],
+                    "time": item.get("time", ""),
                     "matched_keywords": matched_keywords,
                     "upside_thesis": upside_thesis,
                     "strength": strength,
