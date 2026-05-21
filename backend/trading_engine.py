@@ -676,6 +676,7 @@ class TradingEngine:
             if action == "BUY" and not ps.is_core_etf(symbol):
                 cap_pct = float(get_setting(self.db, "max_sector_exposure_pct", self.user_id, "20.0")) / 100
                 positions_for_check: list = []
+                _positions_fetch_ok = False
                 if self.use_alpaca:
                     try:
                         for ap in self.alpaca.list_positions():
@@ -683,13 +684,22 @@ class TradingEngine:
                                 "symbol": ap.symbol,
                                 "market_value": float(ap.market_value),
                             })
-                    except Exception:
-                        pass
+                        _positions_fetch_ok = True
+                    except Exception as _e:
+                        # Was silently `pass` — left positions_for_check empty,
+                        # so sector + region cap saw "no existing positions"
+                        # and let EVERY buy through, even one that would push
+                        # the bucket past the cap. Fail-CLOSED instead: refuse
+                        # the trade and ask the operator to retry.
+                        logger.warning(f"[AutoTrade] Alpaca list_positions failed for cap check: {_e}")
+                        return {"success": False, "skipped": True,
+                                "reason": f"Cannot fetch current positions to verify sector/region cap: {_e}"}
                 else:
                     positions_for_check = [
                         {"symbol": p.symbol, "market_value": p.quantity * p.current_price}
                         for p in self.get_all_positions()
                     ]
+                    _positions_fetch_ok = True
                 breach, cur_pct, proj_pct, sector = ps.would_breach_sector_cap(
                     symbol, risk_amount, positions_for_check, total_equity, cap_pct,
                 )
@@ -754,8 +764,14 @@ class TradingEngine:
         if self.use_alpaca:
             try:
                 total_equity = float(self.alpaca.get_account().equity)
-            except Exception:
-                pass
+            except Exception as _e:
+                # Was silent `pass` — leaving total_equity = cash. Skews
+                # cash_pct calc to look like "100% cash" → triggers false
+                # cash-low warnings even when fully invested. Fall back to
+                # summing local positions, same logic the paper-mode branch uses.
+                logger.warning(f"[CashReserve] Alpaca equity fetch failed, summing local positions: {_e}")
+                for p in self.get_all_positions():
+                    total_equity += p.quantity * p.current_price
         else:
             for p in self.get_all_positions():
                 total_equity += p.quantity * p.current_price
@@ -955,7 +971,14 @@ class TradingEngine:
         initial_cash = float(get_setting(self.db, "initial_cash", self.user_id, "100000.0"))
         total_market_value = sum(p.quantity * p.current_price for p in positions)
         total_cost_basis = sum(abs(p.quantity) * p.avg_cost for p in positions)
-        unrealized_pnl = total_equity = cash = cash
+        # Was: `unrealized_pnl = total_equity = cash = cash` — chain assignment bug.
+        # total_equity correctly accumulates cash + market value below, but
+        # unrealized_pnl was getting initialised to `cash` (a typo from
+        # collapsing 3 lines into 1), inflating reported unrealized P&L by the
+        # entire cash balance every time the paper-mode fallback ran (e.g.
+        # whenever a transient Alpaca API failure flipped us into this branch).
+        unrealized_pnl = 0.0
+        total_equity = cash
 
         for p in positions:
             total_equity += p.quantity * p.current_price

@@ -507,7 +507,14 @@ async def background_price_refresh():
                 try:
                     watchlist = json.loads(watchlist_json)
                     symbols_to_track.update(watchlist)
-                except: pass
+                except (json.JSONDecodeError, TypeError) as _wle:
+                    # Was bare `except: pass` — corrupted watchlist setting
+                    # would silently drop all user-added symbols from tracking.
+                    logger.warning(
+                        f"[PriceRefresh] Bad watchlist JSON for user {user.id} "
+                        f"(falling back to position symbols only): {_wle}. "
+                        f"Raw: {watchlist_json[:80]!r}"
+                    )
 
                 engine = TradingEngine(db, user.id)
                 positions = engine.get_all_positions()
