@@ -1242,7 +1242,14 @@ def detect_active_macro_scenarios(hours_back: int = 6, db=None) -> list:
                 .filter(ScenarioState.muted_by_user.is_(True))
                 .all()
             }
-        except Exception:
+        except Exception as _me:
+            # Was silent `muted_ids = set()` — if DB query fails the static
+            # fallback would re-surface ALL the themes the user explicitly muted
+            # (Middle East, Iran, US tariffs). Loud warn so we notice. Caller
+            # can still proceed with empty muted_ids; better degrade than crash.
+            logger.warning(
+                f"[MacroScan] Failed to load muted scenarios (themes may resurface): {_me}"
+            )
             muted_ids = set()
 
     active = []
