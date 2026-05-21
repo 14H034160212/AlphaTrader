@@ -841,8 +841,14 @@ async def background_social_sentiment_scan():
                 wl = get_setting(db, "watchlist", user.id, "[]")
                 try:
                     all_symbols.update(json.loads(wl))
-                except:
-                    pass
+                except (json.JSONDecodeError, TypeError) as _wle:
+                    # Was bare `except: pass` — sibling of the same bug fixed
+                    # in price_refresh loop. Corrupt watchlist setting would
+                    # silently drop user-added symbols from sentiment scan too.
+                    logger.warning(
+                        f"[SocialScan] Bad watchlist JSON for user {user.id}: {_wle}. "
+                        f"Raw: {wl[:80]!r}"
+                    )
             watchlist = list(all_symbols)
 
             # Scan for extreme StockTwits sentiment
