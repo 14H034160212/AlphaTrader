@@ -4,6 +4,10 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="https://skills.sh/14H034160212/serenity-skills"><img src="https://skills.sh/b/14H034160212/serenity-skills" alt="skills.sh"></a>
+</p>
+
 # SerenityTrader Pro
 
 > **SerenityTrader Pro** (short name: **AlphaTrader**) — an autonomous AI trading platform whose stock-selection brain reasons through the **Serenity supply-chain chokepoint lens**.
