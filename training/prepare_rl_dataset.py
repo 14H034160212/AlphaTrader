@@ -1,5 +1,5 @@
 """
-Prepare RL training dataset from SerenityTrader JSONL records.
+Prepare RL training dataset from SerenityAlphaTrader JSONL records.
 
 Converts rl_training_data.jsonl into a Hugging Face dataset suitable for:
   - Reward-weighted SFT (offline RL, simpler — run first)
@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 
 SYSTEM_PROMPT = (
-    "You are SerenityTrader, an expert AI stock trading analyst. "
+    "You are SerenityAlphaTrader, an expert AI stock trading analyst. "
     "Given the market state and context, produce a structured trading signal: "
     "BUY / SELL / HOLD with confidence (0-1), target price, stop loss, "
     "recommended portfolio weight %, time horizon, and detailed reasoning. "

@@ -63,7 +63,7 @@ _MARKET_TO_IBKR_EXCHANGE: Dict[str, str] = {
 
 def _build_ibkr_contract(symbol: str):
     """
-    Build an ib_insync Stock contract from an SerenityTrader symbol.
+    Build an ib_insync Stock contract from an SerenityAlphaTrader symbol.
     Returns an ib_insync.Stock (or None if ib_insync not available).
     """
     try:
@@ -265,7 +265,7 @@ class IBKRBroker(BrokerInterface):
                 if qty == 0:
                     continue
                 contract = pos.contract
-                # Reconstruct SerenityTrader symbol from IBKR contract
+                # Reconstruct SerenityAlphaTrader symbol from IBKR contract
                 ticker = contract.symbol
                 exch = contract.exchange or contract.primaryExch or ""
                 sym = _ibkr_to_alphatrader(ticker, exch, contract.currency)
@@ -302,7 +302,7 @@ _IBKR_EXCHANGE_TO_SUFFIX: Dict[str, str] = {
 
 
 def _ibkr_to_alphatrader(ticker: str, exchange: str, currency: str) -> str:
-    """Best-effort reverse map of IBKR ticker+exchange → SerenityTrader symbol."""
+    """Best-effort reverse map of IBKR ticker+exchange → SerenityAlphaTrader symbol."""
     if currency == "USD" and exchange in ("SMART", "NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"):
         return ticker
     suffix = _IBKR_EXCHANGE_TO_SUFFIX.get(exchange, "")

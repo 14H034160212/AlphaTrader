@@ -85,12 +85,12 @@ def _load_cot_df() -> pd.DataFrame | None:
         url = _COT_URL.format(year=year)
         logger.info(f"[COT] Downloading CFTC COT data from {url}")
         resp = requests.get(url, timeout=30,
-                            headers={"User-Agent": "SerenityTrader-COT/1.0"})
+                            headers={"User-Agent": "SerenityAlphaTrader-COT/1.0"})
         if resp.status_code == 404:
             url = _COT_URL.format(year=year - 1)
             logger.info(f"[COT] Trying previous year: {url}")
             resp = requests.get(url, timeout=30,
-                                headers={"User-Agent": "SerenityTrader-COT/1.0"})
+                                headers={"User-Agent": "SerenityAlphaTrader-COT/1.0"})
         resp.raise_for_status()
 
         with zipfile.ZipFile(io.BytesIO(resp.content)) as z:

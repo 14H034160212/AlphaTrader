@@ -11,14 +11,14 @@
 #   So you run this yourself, from a normal shell, with no Claude session open on
 #   the old path. Review it first — it touches systemd and your memory dir.
 #
-# AFTER running this: reopen Claude Code in /data/qbao775/SerenityTrader.
+# AFTER running this: reopen Claude Code in /data/qbao775/SerenityAlphaTrader.
 #
 set -euo pipefail
 
 OLD=/data/qbao775/AlphaTrader
-NEW=/data/qbao775/SerenityTrader
+NEW=/data/qbao775/SerenityAlphaTrader
 OLD_MEM="$HOME/.claude/projects/-data-qbao775-AlphaTrader"
-NEW_MEM="$HOME/.claude/projects/-data-qbao775-SerenityTrader"
+NEW_MEM="$HOME/.claude/projects/-data-qbao775-SerenityAlphaTrader"
 
 echo "==> 0. sanity checks"
 [ -d "$OLD" ] || { echo "FATAL: $OLD does not exist (already migrated?)"; exit 1; }
@@ -42,7 +42,7 @@ echo "==> 4. install the renamed systemd unit"
 SVC_DIR="$HOME/.config/systemd/user"
 if [ -f "$SVC_DIR/alphatrader.service" ]; then
   sed -e "s#$OLD#$NEW#g" \
-      -e "s#Description=AlphaTrader#Description=SerenityTrader#g" \
+      -e "s#Description=AlphaTrader#Description=SerenityAlphaTrader#g" \
       "$SVC_DIR/alphatrader.service" > "$SVC_DIR/serenitytrader.service"
   systemctl --user disable alphatrader.service 2>/dev/null || true
   rm -f "$SVC_DIR/alphatrader.service"

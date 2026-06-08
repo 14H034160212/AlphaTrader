@@ -1,8 +1,8 @@
 #!/bin/bash
-# SerenityTrader 停止脚本
-# This script gracefully stops the SerenityTrader backend and the auto-restart loop in start.sh
+# SerenityAlphaTrader 停止脚本
+# This script gracefully stops the SerenityAlphaTrader backend and the auto-restart loop in start.sh
 
-echo "Stopping SerenityTrader..."
+echo "Stopping SerenityAlphaTrader..."
 
 # Kill the while loop wrapper script
 PIDS=$(pgrep -f "start.sh")
@@ -27,4 +27,4 @@ if pgrep -f "uvicorn.*main:app.*8000" > /dev/null; then
     pkill -9 -f "uvicorn.*main:app.*8000"
 fi
 
-echo "SerenityTrader has been successfully stopped."
+echo "SerenityAlphaTrader has been successfully stopped."

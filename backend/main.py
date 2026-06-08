@@ -2031,7 +2031,7 @@ def _run_daily_maintenance(db):
                 # Save summary
                 summary_path = f"/tmp/alphatrader_summary_{datetime.utcnow().strftime('%Y%m%d')}.log"
                 with open(summary_path, "w") as sf:
-                    sf.write(f"=== SerenityTrader Log Rotation Summary ({datetime.utcnow().isoformat()}) ===\n")
+                    sf.write(f"=== SerenityAlphaTrader Log Rotation Summary ({datetime.utcnow().isoformat()}) ===\n")
                     sf.write(f"Original size: {size_mb:.1f} MB | Last 500 lines preserved:\n\n")
                     sf.write("\n".join(tail_lines))
 
@@ -2613,7 +2613,7 @@ async def openclaw_webhook(request: OpenClawWebhook, db: Session = Depends(get_d
             engine = TradingEngine(db)
             summary = engine.get_portfolio_summary()
             
-            msg = f"💼 **SerenityTrader Portfolio ({summary['provider']})**\n\n"
+            msg = f"💼 **SerenityAlphaTrader Portfolio ({summary['provider']})**\n\n"
             msg += f"Total Equity: ${summary['total_equity']:,.2f}\n"
             msg += f"Cash Balance: ${summary['cash']:,.2f}\n"
             pnl_sign = "+" if summary['total_return'] >= 0 else ""
@@ -2673,7 +2673,7 @@ async def openclaw_webhook(request: OpenClawWebhook, db: Session = Depends(get_d
             
     except Exception as e:
         logger.error(f"OpenClaw webhook error: {e}")
-        return {"response": f"⚠️ SerenityTrader Error: {str(e)}"}
+        return {"response": f"⚠️ SerenityAlphaTrader Error: {str(e)}"}
 
 
 @app.get("/api/settings")
@@ -2848,7 +2848,7 @@ async def test_email(current_user: User = Depends(get_current_user), db: Session
         scenario_healths=[{"name": "中东战争 2026", "status": "failing", "avg_pct": -12.5, "days_active": 22, "per_stock_summary": "GLD -14.5% | LMT -4.6% | RTX -2.2%"}],
         global_scan_signals=[{"symbol": "EWJ", "region": "JP", "signal": "BUY", "confidence": 0.78, "reasoning": "Japan equities oversold, BOJ pivot tailwind, USD/JPY correction expected.", "timestamp": datetime.utcnow().isoformat()}],
     )
-    sent = er.send_email(sender, app_pw, recipient, "SerenityTrader — Test Email", html)
+    sent = er.send_email(sender, app_pw, recipient, "SerenityAlphaTrader — Test Email", html)
     if sent:
         return {"sent": True, "recipient": recipient}
     raise HTTPException(status_code=500, detail="Failed to send email. Check App Password and try again.")
@@ -3434,7 +3434,7 @@ async def background_email_reporter():
                         scenario_healths=email_scenario_healths,
                         global_scan_signals=email_global_signals,
                     )
-                    subject = f"SerenityTrader Daily Report — {now.strftime('%Y-%m-%d')}"
+                    subject = f"SerenityAlphaTrader Daily Report — {now.strftime('%Y-%m-%d')}"
                     sent = er.send_email(sender, app_pw, recipient, subject, html)
                     if sent:
                         last_sent_date = now.date()
@@ -3485,7 +3485,7 @@ async def background_email_reporter():
                                 date_str, hk_account, hk_positions,
                                 hk_signals, hk_trades_today,
                             )
-                            hk_subject = f"🇭🇰 SerenityTrader HK Daily — {now.strftime('%Y-%m-%d')}"
+                            hk_subject = f"🇭🇰 SerenityAlphaTrader HK Daily — {now.strftime('%Y-%m-%d')}"
                             er.send_email(sender, app_pw, recipient, hk_subject, hk_html)
                             logger.info(f"[EmailReport] HK report sent ({len(hk_positions)} positions, "
                                         f"{len(hk_trades_today)} trades, {len(hk_signals)} signals)")
@@ -4147,7 +4147,7 @@ async def background_annual_tax_report():
                         None,
                         lambda: _send_tax_email(
                             sender, app_pw, recipient,
-                            f"SerenityTrader NZ Tax Summary — FY {fy_year}",
+                            f"SerenityAlphaTrader NZ Tax Summary — FY {fy_year}",
                             html_body, csv_body, fy_year,
                         ),
                     )
@@ -4706,7 +4706,7 @@ async def background_llm_catalyst_loop():
     (see news_intelligence integration) and reaches the AI prompt via the
     existing build_catalyst_context flow.
 
-    Created 2026-05-23 after SerenityTrader missed the US-gov-takes-Intel-stake
+    Created 2026-05-23 after SerenityAlphaTrader missed the US-gov-takes-Intel-stake
     catalyst (no keyword for "government stake" in static map).
     """
     await asyncio.sleep(120)   # wait 2 min after startup

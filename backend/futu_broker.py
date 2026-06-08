@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 def _to_futu_code(symbol: str) -> str:
     """
-    Convert SerenityTrader symbol to Futu code format.
+    Convert SerenityAlphaTrader symbol to Futu code format.
       600519.SH  →  SH.600519
       000001.SZ  →  SZ.000001
       0700.HK    →  HK.00700   (pad to 5 digits)
@@ -430,7 +430,7 @@ class FutuBroker(BrokerInterface):
 
 def _futu_to_alphatrader(futu_code: str) -> str:
     """
-    Convert Futu code to SerenityTrader symbol.
+    Convert Futu code to SerenityAlphaTrader symbol.
       SH.600519  →  600519.SH
       HK.00700   →  0700.HK   (strip leading zeros for HK)
       US.AAPL    →  AAPL

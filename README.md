@@ -9,11 +9,11 @@
   <a href="https://skills.sh/14H034160212/serenity-skills"><img src="https://skills.sh/b/14H034160212/serenity-skills" alt="skills.sh installs"></a>
 </p>
 
-# SerenityTrader Pro
+# SerenityAlphaTrader Pro
 
-> **SerenityTrader Pro** (short name: **AlphaTrader**) — an autonomous AI trading platform whose stock-selection brain reasons through the **Serenity supply-chain chokepoint lens**.
+> **SerenityAlphaTrader Pro** (short name: **AlphaTrader**) — an autonomous AI trading platform whose stock-selection brain reasons through the **Serenity supply-chain chokepoint lens**.
 
-**SerenityTrader Pro** is a fully automated AI quantitative trading system powered by a Python/FastAPI backend and a pure HTML/JS frontend. It runs a hybrid LLM stack (local Qwen3.5 35B MoE + optional DeepSeek-Cloud API) with the Kronos K-line prediction model, and executes real trades across US (Alpaca) and Hong Kong (Moomoo OpenD) markets.
+**SerenityAlphaTrader Pro** is a fully automated AI quantitative trading system powered by a Python/FastAPI backend and a pure HTML/JS frontend. It runs a hybrid LLM stack (local Qwen3.5 35B MoE + optional DeepSeek-Cloud API) with the Kronos K-line prediction model, and executes real trades across US (Alpaca) and Hong Kong (Moomoo OpenD) markets.
 
 ### 🧭 Powered by the Serenity supply-chain lens
 
@@ -57,7 +57,7 @@ The trade-selection brain applies the analytical methodology of **Serenity ([@al
 
 ## 📡 Data Sources and Acquisition Channels
 
-SerenityTrader Pro utilizes multi-modal data inputs, continuously fetched in the background by automated daemon tasks:
+SerenityAlphaTrader Pro utilizes multi-modal data inputs, continuously fetched in the background by automated daemon tasks:
 
 1. **Market Data & Historical K-Lines**
    - **Channel**: Yahoo Finance (`yfinance` Python library).
@@ -398,7 +398,7 @@ mkdir -p ~/.config/systemd/user
 
 cat > ~/.config/systemd/user/alphatrader.service << 'EOF'
 [Unit]
-Description=SerenityTrader Backend Service
+Description=SerenityAlphaTrader Backend Service
 After=network.target
 
 [Service]
@@ -427,7 +427,7 @@ systemctl --user enable alphatrader
 ### 8. (Optional) Hong Kong Trading via Moomoo OpenD
 
 For HK / A-share / multi-region trading, install Moomoo OpenD on the same host
-as the backend (or on any host SerenityTrader can reach on port 11111).
+as the backend (or on any host SerenityAlphaTrader can reach on port 11111).
 
 ```bash
 # Download OpenD Linux tarball from Moomoo's official site
@@ -447,7 +447,7 @@ nohup ./OpenD > opend.console.log 2>&1 &
 # Then in another shell (or via Python socket), send to 127.0.0.1:22222:
 #   input_phone_verify_code -code=NNNNNN
 
-# Wire SerenityTrader to OpenD via the DB settings table:
+# Wire SerenityAlphaTrader to OpenD via the DB settings table:
 #   futu_enabled=true
 #   futu_host=127.0.0.1
 #   futu_port=11111
@@ -562,7 +562,7 @@ curl -s -X POST http://localhost:8000/api/settings \
 ## Project Structure
 
 ```text
-SerenityTrader/
+SerenityAlphaTrader/
 ├── start.sh                    # Startup script (includes auto-restart daemon)
 ├── stop.sh                     # Stop script
 ├── rl_training_data.jsonl      # RL training data (appended per trade)

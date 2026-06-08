@@ -255,7 +255,7 @@ def _fetch_rss_news(symbol: str, hours_back: int = 24) -> list:
     cutoff = datetime.utcnow() - timedelta(hours=hours_back)
     recent = []
     try:
-        resp = requests.get(url, timeout=10, headers={"User-Agent": "SerenityTrader/1.0"})
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "SerenityAlphaTrader/1.0"})
         if resp.status_code != 200:
             logger.debug(f"[RSS] {symbol} HTTP {resp.status_code}")
             return []
@@ -535,7 +535,7 @@ def fetch_tech_news(hours_back: int = 12) -> list:
         try:
             resp = requests.get(
                 source["url"], timeout=10,
-                headers={"User-Agent": "SerenityTrader-TechNews/1.0"}
+                headers={"User-Agent": "SerenityAlphaTrader-TechNews/1.0"}
             )
             if resp.status_code != 200:
                 logger.debug(f"[TechNews] {source['name']} HTTP {resp.status_code}")
@@ -690,7 +690,7 @@ def fetch_geopolitical_news(hours_back: int = 12) -> list:
         try:
             resp = requests.get(
                 source["url"], timeout=10,
-                headers={"User-Agent": "SerenityTrader-GeoNews/1.0"}
+                headers={"User-Agent": "SerenityAlphaTrader-GeoNews/1.0"}
             )
             if resp.status_code != 200:
                 logger.debug(f"[GeoNews] {source['name']} HTTP {resp.status_code}")
@@ -762,7 +762,7 @@ def fetch_cn_finance_news(hours_back: int = 6) -> list:
         try:
             resp = requests.get(
                 source["url"], timeout=8,
-                headers={"User-Agent": "SerenityTrader-CNFinance/1.0",
+                headers={"User-Agent": "SerenityAlphaTrader-CNFinance/1.0",
                          "Accept-Language": "zh-CN,zh;q=0.9"}
             )
             if resp.status_code != 200:
@@ -1446,7 +1446,7 @@ TRUMP_CHINA_BENEFICIARIES = {
 
 CATALYST_MAP = {
     # ── US Government Industrial Policy / CHIPS Act stake (2026-05-23 added
-    # after SerenityTrader missed the Aug 2026 US-takes-INTC-stake catalyst) ──
+    # after SerenityAlphaTrader missed the Aug 2026 US-takes-INTC-stake catalyst) ──
     # These keywords are shared across ALL semi tickers below so any future
     # gov-stake / industrial-policy event for AMD/NVDA/TSM/GFS/MU also fires.
     "INTC": {
