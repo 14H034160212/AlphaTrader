@@ -5,7 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://skills.sh/14H034160212/serenity-skills"><img src="https://skills.sh/b/14H034160212/serenity-skills" alt="skills.sh"></a>
+  <a href="https://github.com/14H034160212/serenity-skills"><img src="https://img.shields.io/badge/skills.sh-npx%20skills%20add%20serenity--skills-2b7cff?logo=githubactions&logoColor=white" alt="Install via skills.sh"></a>
+  <a href="https://skills.sh/14H034160212/serenity-skills"><img src="https://skills.sh/b/14H034160212/serenity-skills" alt="skills.sh installs"></a>
 </p>
 
 # SerenityTrader Pro
