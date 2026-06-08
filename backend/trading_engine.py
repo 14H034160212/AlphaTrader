@@ -643,13 +643,27 @@ class TradingEngine:
                 else:
                     return {"success": False, "skipped": True, "reason": "No short position to cover"}
 
+            # ── SERENITY PRIMACY (user directive 2026-06-08) ──
+            # The user trusts Serenity's judgment as PRIMARY; the platform's prior
+            # methodology gates are auxiliary. So Serenity's recommended names
+            # BYPASS the two gates that encode the old "large-cap / on-theme only"
+            # worldview Serenity rejects: the off-theme gate and the small-cap
+            # filter. Genuine risk controls (confidence floor, sector concentration
+            # cap, RL soft-veto) still apply as auxiliary safety.
+            try:
+                import serenity_lens as _sl
+                _serenity_pick = symbol in set(_sl.recommended_tickers(min_mentions=50))
+            except Exception:
+                _serenity_pick = False
+
             # ── FOCUS-THEME GATE (user directive 2026-05-27) ──
             # User-named focus sectors (chips/semis/robotics/GPU-supply) get
             # buy priority. Off-theme, non-core names need MUCH higher conviction
             # so the system stops "乱买" generic large-caps (MSFT/CRM) when the
             # user wants thematic exposure. Core ETFs (SPY/VOO) are exempt — they
             # are the stable base. Focus-theme names use the normal bar.
-            if action in ("BUY", "COVER") and not ps.is_core_etf(symbol):
+            # Serenity picks are exempt — his lens IS the user's thematic authority now.
+            if action in ("BUY", "COVER") and not ps.is_core_etf(symbol) and not _serenity_pick:
                 try:
                     # User-pinned priority symbols always pass (explicit highest-priority picks)
                     priority_setting = get_setting(self.db, "priority_symbols", self.user_id, "MU,WDC,STX,SNDK")
@@ -676,10 +690,11 @@ class TradingEngine:
                 except Exception as _fe:
                     logger.debug(f"[FocusGate] {symbol}: {_fe}")
 
-            # Large-cap preference filter (user directive 2026-05-13).
-            # Unknown/small companies need higher conviction to trade.
-            # market_cap_b from indicators if the caller injected it, else None.
-            if action == "BUY" and not ps.is_core_etf(symbol):
+            # Large-cap preference filter (user directive 2026-05-13) — SUPERSEDED
+            # for Serenity picks (2026-06-08): his thesis is overlooked upstream
+            # SMALL-caps, so this old gate must NOT veto them. Still applies to
+            # non-Serenity names (e.g. legacy manual holdings).
+            if action == "BUY" and not ps.is_core_etf(symbol) and not _serenity_pick:
                 market_cap_b = None
                 if indicators and isinstance(indicators, dict):
                     mc = indicators.get("market_cap")
