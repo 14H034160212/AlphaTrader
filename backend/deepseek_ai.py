@@ -6,6 +6,17 @@ import requests
 from datetime import datetime, timedelta
 import time
 
+# Serenity supply-chain chokepoint lens — PRIMARY decision framework
+# (user directive 2026-06-08). Imported defensively so a missing skill never
+# breaks stock analysis; if unavailable, the lens block is simply empty.
+try:
+    import serenity_lens
+except Exception:  # pragma: no cover
+    try:
+        from . import serenity_lens
+    except Exception:
+        serenity_lens = None
+
 logger = logging.getLogger(__name__)
 
 # Model names are DB-configurable so you can switch without code changes:
@@ -266,7 +277,7 @@ def _score_news_freshness(news_items: list) -> list:
     return scored
 
 
-def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context="", upcoming_events="", rl_lessons="", sector="Other", global_context=None):
+def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news, portfolio_context="", upcoming_events="", rl_lessons="", sector="Other", global_context=None, catalysts=None):
     """Use DeepSeek-R1 (Local or API) to analyze a stock and generate trading signal."""
     if ai_provider == "deepseek_api" and not api_key:
         return {
@@ -297,6 +308,61 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
             prefix = f"**[{tag}]**" if tag in ("BREAKING", "RECENT") else f"[{tag}]"
             news_lines.append(f"  - {prefix} {title} ({pub}, {age})")
         news_summary = "\n".join(news_lines) if news_lines else "No recent news"
+
+        # Catalysts block — news_intelligence.detect_catalysts_for_symbol() output.
+        # CRITICAL: this was previously dropped silently before being passed to AI,
+        # causing earnings beats and other major events to be invisible to the model.
+        cat_lines = []
+        for c in (catalysts or []):
+            level = c.get("catalyst_level", "MILD")
+            title = c.get("news_title", "")
+            kws = ", ".join(c.get("matched_keywords", []) or [])
+            thesis = c.get("upside_thesis", "")
+            cat_lines.append(f"  - **[{level}]** {title}")
+            if kws:
+                cat_lines.append(f"      keywords: {kws}")
+            if thesis:
+                cat_lines.append(f"      thesis: {thesis}")
+        catalysts_block = "\n".join(cat_lines) if cat_lines else "  (no active catalysts detected)"
+
+        # Valuation block — DCF/DDM data are KNOWN to be unreliable for many tickers
+        # (random low/high outliers from yfinance scraping). If the gap is more
+        # extreme than ±30%, hide the numbers so AI doesn't anchor on garbage.
+        cp_val = quote.get("current") or 0
+        iv_val = quote.get("intrinsic_value")
+        dcf_val = quote.get("dcf_value")
+        ddm_val = quote.get("ddm_value")
+        vgap_raw = quote.get("valuation_gap_pct") or 0
+        vgap_pct = vgap_raw * 100
+        # Tighten the sanity band for non-US tickers (HK/CN/JP/UK/etc.) — yfinance's
+        # quoteSummary fundamentals are notoriously incomplete/wrong-currency for
+        # non-US listings, so DCF on a HK name is much more likely to be garbage.
+        # 2026-05-28: 舜宇 2382.HK passed the 0.3x-3x gate at iv=$24.93 / px=$75.15
+        # (ratio 0.332) and the resulting "+67% overvalued" DCF anchor pushed Gemma4
+        # to HOLD a PE-16 leader. Bump non-US lower bound to 0.5x → hides poison
+        # DCF and tells the AI to rely on PE / technicals instead.
+        _is_non_us = isinstance(symbol, str) and "." in symbol and len(symbol.rsplit(".", 1)[-1]) >= 2
+        _lo, _hi = (0.5, 2.0) if _is_non_us else (0.3, 3.0)
+        is_sane = (
+            iv_val is not None and iv_val > 0
+            and cp_val > 0
+            and _lo * cp_val <= iv_val <= _hi * cp_val
+        )
+        if is_sane:
+            valuation_block = (
+                f"- DCF Intrinsic Value: ${dcf_val}\n"
+                f"- DDM Intrinsic Value: ${ddm_val}\n"
+                f"- Final Blended Intrinsic Value: ${iv_val}\n"
+                f"- Valuation Gap: {vgap_pct:+.2f}% (Negative = Undervalued = BUY opportunity)\n"
+                f"*Decision Rule: If Valuation Gap is significantly negative (<-10%) AND technicals are bullish, favor BUY.*\n"
+                f"*If overvalued but we don't hold it → HOLD (we cannot short).*"
+            )
+        else:
+            valuation_block = (
+                "- DCF / DDM data UNRELIABLE for this ticker (data-source outlier). "
+                "Do NOT use absolute valuation; rely on P/E, 52w range, technicals, "
+                "and catalysts instead. Default-prior is NEUTRAL on fundamentals."
+            )
         
         # Enhanced Indicators with Over-extension logic
         ind_data = indicators.copy() if indicators else {}
@@ -319,8 +385,22 @@ def analyze_stock(ai_provider, api_key, symbol, quote, indicators, history, news
             if narrative:
                 global_ctx_section = "\n" + narrative
 
+        # Serenity supply-chain chokepoint lens — the PRIMARY framework that leads
+        # the decision. Built per-symbol so it carries his actual stance + dated
+        # calls on this ticker, or hands the model his checklist for fresh names.
+        serenity_block = ""
+        if serenity_lens is not None:
+            try:
+                serenity_block = serenity_lens.build_serenity_lens_block(symbol, sector)
+            except Exception as e:
+                logger.warning("serenity_lens block failed for %s: %s", symbol, e)
+
         prompt = """You are an expert quantitative stock analyst advising a LONG-ONLY small-account trader.
 CRITICAL CONSTRAINT: This account does NOT support short selling. Never output SHORT or COVER.
+
+{serenity_lens}
+---
+*The sections below (news, strategy rules, technicals, valuation, RL feedback) are SUPPORTING evidence. Use them to pressure-test the Serenity chokepoint thesis above — not to override it.*
 
 ## NEWS PRIORITY RULES (MOST IMPORTANT)
 - **[BREAKING] and [RECENT] news ALWAYS override ongoing geopolitical narratives.**
@@ -334,12 +414,50 @@ Strategy Rules:
 2. DO NOT CHASE: Avoid buying stocks that are heavily overextended or have already experienced massive near-term rallies. Look for healthy pullbacks to support levels or moving averages within an uptrend.
 3. Only output SELL if we currently hold this stock and should take profits or cut losses.
 4. If a stock looks overvalued or overextended but we don't hold it, output HOLD — never SHORT.
+5. **LET WINNERS RUN** (user directive 2026-05-24): If we already own this stock AND it is trending up
+   (price > MA50 AND RSI between 50-75 AND no breaking bearish catalyst), output HOLD even if extended.
+   DO NOT SELL on minor pullbacks (-3% intraday is normal in an uptrend). Sell triggers should ONLY
+   be: (a) stop_loss hit (price < entry × 0.95), (b) breakdown below MA50, (c) STRONG BEARISH catalyst,
+   (d) RSI > 80 + bearish divergence. Multi-bagger stocks (SNDK-class, +500%+ run) need conviction to hold —
+   selling on every wiggle = leaving 10x gains on the table.
+6. **DISCOVERY BIAS**: This stock made it into the watchlist via dynamic momentum / news / sentiment
+   discovery — not because we hand-picked it. Treat that as a positive prior: market thinks something
+   is happening. Demand harder evidence to issue SELL/HOLD than to issue BUY on a trending name.
 
-## PORTFOLIO STYLE MANDATE (CRITICAL — User explicit directive)
-- **LARGE-CAP FIRST**: Strongly prefer well-known, large-cap tech companies: NVDA, AAPL, MSFT, AMZN, TSLA, GOOGL, META, AMD, BABA, JD, NTES, QQQ, SPY, etc.
-- **AVOID SMALL/UNKNOWN**: Small or obscure companies consistently underperform in this portfolio. Only recommend them if confidence ≥ 0.85 AND fundamentals are exceptional.
-- **IGNORE WAR SCENARIOS**: Geopolitical events (Iran-US war, sanctions, etc.) should NOT drive BUY decisions. Focus on tech fundamentals, earnings, and sector momentum.
-- **TECH SECTOR BIAS**: The portfolio target is 45% satellite in high-quality tech. When in doubt, favor blue-chip tech names over anything else.
+## ⏳ LONG-TERM HORIZON MANDATE (CRITICAL — User directive 2026-05-26)
+- **THINK LIKE A LONG-TERM INVESTOR** (Buffett/Munger/Lynch), NOT a day-trader.
+  Evaluate businesses on a 6-24 month horizon. Quality compounders are meant to
+  be HELD FOR YEARS, not flipped weekly.
+- **DO NOT CHURN QUALITY NAMES**: NVDA/AAPL/MSFT/GOOGL/TSLA/AMZN-class businesses
+  should almost always be HOLD once owned. The user explicitly complained about
+  these being bought-and-sold within a week. That destroys returns via spread +
+  slippage + missed compounding.
+- **SELL bar is VERY HIGH** — only output SELL on a held position if ONE of:
+    (a) the fundamental investment thesis is broken (not just price moved),
+    (b) a hard stop-loss is genuinely breached (real loss > stop %, not daily noise),
+    (c) there is a dramatically better opportunity AND we have no cash.
+  A stock being "up a lot" or "slightly pulled back" or "looks extended" is NOT
+  a sell reason. When in doubt on a quality holding → HOLD.
+- **Daily/weekly under-performance vs S&P is NOISE** — ignore it. Do not trade
+  to chase index tracking. Compounding happens over years.
+
+## 🎯 FOCUS SECTORS (CRITICAL — User directive 2026-05-27)
+- The user's CURRENT conviction themes are: **semiconductors / chips, GPU
+  downstream supply chain (HBM memory, optical, power, equipment, packaging),
+  physical AI / robotics**. These sectors are the TOP PRIORITY for new capital.
+- When analyzing a stock IN these sectors: apply your full financial analysis
+  (valuation, growth, technicals, catalysts) and BUY the best ones on healthy
+  setups. These are where the portfolio should be concentrated.
+- When analyzing a stock OUTSIDE these sectors (and not a core index ETF):
+  default to HOLD unless it is an exceptional, high-conviction opportunity.
+  Do NOT recommend buying generic off-theme large-caps just to "do something" —
+  the user explicitly does not want capital diluted into off-theme names.
+
+## PORTFOLIO STYLE NOTES (SUPPORTING — subordinate to the Serenity lens above)
+- **SUPERSEDED (2026-06-08): the old "large-cap first / avoid small-cap" rule is DEMOTED.** The Serenity chokepoint lens leads now, and it explicitly PREFERS overlooked upstream small/mid-cap bottlenecks within the focus themes. Do NOT reject a name merely for being small or obscure — vet it against Serenity's checklist instead.
+- **Liquidity still matters**: for genuinely thin micro-caps, require a real chokepoint thesis + a dated catalyst, and size to research depth (small starter positions), because exit liquidity is a real risk Serenity himself flags.
+- **IGNORE WAR SCENARIOS**: Geopolitical events (Iran-US war, sanctions, etc.) should NOT drive BUY decisions. Focus on supply-chain bottlenecks, tech fundamentals, earnings, and sector momentum.
+- **Mega-cap "shovel sellers" (NVDA-class)**: fine to HOLD if already owned (long-term mandate), but per the Serenity lens they are usually NOT where new capital finds the most mispricing — favor the upstream chokepoint instead.
 
 ## Stock: {symbol}
 
@@ -350,12 +468,7 @@ Strategy Rules:
 - 52W: ${wklow} - ${wkhigh}
 
 ### Quantitative & Fundamental Valuation
-- DCF Intrinsic Value: ${dcf}
-- DDM Intrinsic Value: ${ddm}
-- Final Blended Intrinsic Value: ${intrinsic}
-- Valuation Gap: {val_gap_pct:.2f}% (Negative = Undervalued = BUY opportunity)
-*Decision Rule: If Valuation Gap is significantly negative (<-10%) AND technicals are bullish, favor BUY.*
-*If overvalued but we don't hold it → HOLD (we cannot short).*
+{valuation_block}
 
 ### Market Microstructure & Flow (Smart Money Proxy)
 - Volume Price Analysis (VPA): {vpa_signal}
@@ -373,7 +486,10 @@ Strategy Rules:
 ### Lessons from Past Performance (RL Ground Truth)
 {rl_feedback}
 
-### Recent News
+### Active Catalysts (from news_intelligence engine — already filtered for relevance)
+{catalysts_block}
+
+### Recent News (raw headlines)
 {news}
 
 {events}
@@ -392,6 +508,7 @@ Respond ONLY with valid JSON (no markdown):
   "risks": ["risk1", "risk2"],
   "reasoning": "<detailed analysis 2-3 paragraphs focusing on long-only BUY opportunity or why to HOLD/SELL existing position>"
 }}""".format(
+            serenity_lens=serenity_block,
             symbol=symbol,
             current=quote.get("current", "N/A"),
             change=quote.get("change", 0),
@@ -404,10 +521,8 @@ Respond ONLY with valid JSON (no markdown):
             sector=sector,
             wklow=quote.get("fifty_two_week_low", "N/A"),
             wkhigh=quote.get("fifty_two_week_high", "N/A"),
-            dcf=quote.get("dcf_value", "N/A"),
-            ddm=quote.get("ddm_value", "N/A"),
-            intrinsic=quote.get("intrinsic_value", "N/A"),
-            val_gap_pct=quote.get("valuation_gap_pct", 0) * 100 if quote.get("valuation_gap_pct") else 0,
+            valuation_block=valuation_block,
+            catalysts_block=catalysts_block,
             vpa_signal=quote.get("vpa_signal", "N/A"),
             vpa_vol_ratio=quote.get("vpa_volume_ratio", "N/A"),
             liquidity=quote.get("liquidity", "N/A"),

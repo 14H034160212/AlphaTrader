@@ -22,6 +22,7 @@ Approach:
 Resource: ~70 GB VRAM split across the 2 GPUs reserved for training.
 Validation on 100 holdout samples ≈ 8-15 minutes.
 """
+from __future__ import annotations
 import json
 import logging
 import math
@@ -67,7 +68,7 @@ def _format_prompt(rec: dict) -> str | None:
         return None
 
     system = (
-        "You are AlphaTrader, an expert AI stock trading analyst. "
+        "You are SerenityTrader, an expert AI stock trading analyst. "
         "Given the market state and context, produce a structured trading signal: "
         "BUY / SELL / HOLD with confidence (0-1), target price, stop loss, "
         "recommended portfolio weight %, time horizon, and detailed reasoning. "

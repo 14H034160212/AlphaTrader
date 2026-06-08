@@ -27,6 +27,7 @@ MARKET_TIMEZONES: Dict[str, str] = {
     "ES": "Europe/Madrid",
     "CH": "Europe/Zurich",
     "AU": "Australia/Sydney",
+    "NZ": "Pacific/Auckland",
     "KR": "Asia/Seoul",
     "SG": "Asia/Singapore",
     "IN": "Asia/Kolkata",
@@ -68,6 +69,7 @@ MARKET_SESSIONS: Dict[str, List[Tuple[time, time]]] = {
     "ES": [(time(9, 0), time(17, 30))],
     "CH": [(time(9, 0), time(17, 30))],
     "AU": [(time(10, 0), time(16, 0))],
+    "NZ": [(time(10, 0), time(16, 45))],
     "KR": [(time(9, 0), time(15, 30))],
     "SG": [(time(9, 0), time(17, 0))],
     "IN": [(time(9, 15), time(15, 30))],
@@ -92,6 +94,7 @@ MARKET_CURRENCIES: Dict[str, str] = {
     "US": "USD", "CN": "CNY", "HK": "HKD", "JP": "JPY",
     "GB": "GBP", "DE": "EUR", "FR": "EUR", "NL": "EUR",
     "IT": "EUR", "ES": "EUR", "CH": "CHF", "AU": "AUD",
+    "NZ": "NZD",
     "KR": "KRW", "SG": "SGD", "IN": "INR", "BR": "BRL",
     "CA": "CAD", "MX": "MXN", "RU": "RUB", "ZA": "ZAR",
     "TW": "TWD", "TH": "THB", "MY": "MYR", "TR": "TRY",
@@ -109,6 +112,7 @@ MARKET_NAMES: Dict[str, str] = {
     "FR": "法国 (泛欧交易所)", "NL": "荷兰 (阿姆斯特丹)",
     "IT": "意大利 (米兰证交所)", "ES": "西班牙 (马德里)",
     "CH": "瑞士 (SIX)",       "AU": "澳大利亚 (ASX)",
+    "NZ": "新西兰 (NZX)",
     "KR": "韩国 (KRX)",        "SG": "新加坡 (SGX)",
     "IN": "印度 (NSE/BSE)",    "BR": "巴西 (B3/BOVESPA)",
     "CA": "加拿大 (TSX)",      "MX": "墨西哥 (BMV)",
@@ -146,6 +150,8 @@ _SUFFIX_TO_MARKET: Dict[str, str] = {
     "SW": "CH",
     # Australia
     "AX": "AU",
+    # New Zealand
+    "NZ": "NZ", "NZX": "NZ",
     # Korea
     "KS": "KR", "KQ": "KR",
     # Singapore
@@ -322,10 +328,48 @@ def china_lot_size(symbol: str) -> int:
     return 100
 
 
+# HK Exchange lot sizes per stock — set by HKEX, varies per ticker.
+# Source: HKEX product specs. Common defaults are 100 / 500 / 1000.
+HK_LOT_SIZES: Dict[str, int] = {
+    "0005.HK": 400,    # HSBC
+    "0388.HK": 100,    # HKEX
+    "0700.HK": 100,    # Tencent
+    "9988.HK": 100,    # Alibaba HK
+    "3690.HK": 100,    # Meituan
+    "1810.HK": 1000,   # Xiaomi
+    "9618.HK": 50,     # JD HK
+    "1024.HK": 100,    # Kuaishou
+    "1211.HK": 500,    # BYD HK
+    "9866.HK": 50,     # NIO HK
+    "2382.HK": 500,    # Sunny Optical
+    "2628.HK": 1000,   # China Life
+    "02822.HK": 100,   # CSOP A50 ETF
+    "03037.HK": 100,   # FTSE China A50 ETF
+}
+
+
+def hk_lot_size(symbol: str) -> int:
+    """HK Exchange lot size. Falls back to 100 (common default)."""
+    return HK_LOT_SIZES.get(symbol.upper(), 100)
+
+
 def round_to_lot(quantity: float, symbol: str) -> int:
-    """Round quantity down to nearest lot size for A-shares."""
-    lot = china_lot_size(symbol)
-    return max(lot, int(quantity / lot) * lot)
+    """
+    Round quantity down to nearest lot size.
+    A-shares: 100-share lot.
+    HK: per-symbol lot size from HK_LOT_SIZES.
+    Returns at least 1 lot if quantity >= 1 share, else 0.
+    """
+    if is_china_ashare(symbol):
+        lot = china_lot_size(symbol)
+    elif is_hk_stock(symbol):
+        lot = hk_lot_size(symbol)
+    else:
+        return int(quantity)
+    n_lots = int(quantity / lot)
+    if n_lots < 1:
+        return 0  # caller must reject — quantity below 1 lot
+    return n_lots * lot
 
 
 def check_china_price_limit(symbol: str, current_price: float, prev_close: float) -> Dict:

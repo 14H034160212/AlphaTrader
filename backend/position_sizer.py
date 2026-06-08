@@ -25,9 +25,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 # ── Configuration defaults ────────────────────────────────────────────────────
-KELLY_FRACTION   = 0.5    # half-Kelly (industry standard for imperfect signals)
-MAX_POSITION_PCT = 0.20   # max 20% of portfolio in any single name
-MIN_RR_RATIO     = 1.5    # minimum reward:risk to consider a trade
+# 2026-05-27: user requested aggressive mode (small account, can afford
+# concentration for upside). Raised from half-Kelly 0.5 + 20% cap.
+KELLY_FRACTION   = 0.90   # 0.75 → 0.90 (near-full Kelly, max aggression 2026-05-27)
+MAX_POSITION_PCT = 0.45   # 0.35 → 0.45 (concentrated conviction bets)
+MIN_RR_RATIO     = 1.3    # 1.5 → 1.3 (accept slightly lower R:R to act more)
 
 # ── Long-term core / satellite framework ──────────────────────────────────────
 # Core ETFs are protected from auto stop-loss and sector exposure caps. They
@@ -77,6 +79,29 @@ SYMBOL_SECTOR = {
     # China / EM (ADRs trading on US exchanges via Alpaca)
     "BIDU": "China", "BABA": "China", "JD": "China",
     "PDD": "China", "NTES": "China", "TCOM": "China",
+    "NIO": "China", "LI": "China", "XPEV": "China", "BILI": "China",
+    # HK-listed China large caps (2026-05-22 added — was defaulting to "Other")
+    "0700.HK": "China",   # Tencent
+    "9988.HK": "China",   # Alibaba HK
+    "9618.HK": "China",   # JD HK
+    "3690.HK": "China",   # Meituan
+    "1024.HK": "China",   # Kuaishou
+    "1810.HK": "China",   # Xiaomi
+    "2382.HK": "China",   # Sunny Optical
+    "1211.HK": "China",   # BYD HK
+    "9866.HK": "China",   # NIO HK
+    "0005.HK": "Financial",  # HSBC HK
+    "0388.HK": "Financial",  # HKEX
+    "2628.HK": "China",   # China Life
+    "02822.HK": "Core_ETF",  # CSOP A50 (broad index, treat as core)
+    "03037.HK": "Core_ETF",  # FTSE China A50 ETF
+    # HK-listed semiconductors (2026-05-27 — chip focus extends to HK market)
+    "0981.HK": "Semi",    # SMIC
+    "1347.HK": "Semi",    # Hua Hong
+    "0522.HK": "Semi",    # ASM Pacific
+    "1385.HK": "Semi",    # Fudan Micro
+    "0285.HK": "Semi",    # BYD Electronic
+    "3750.HK": "China",   # CATL HK
     # Crypto proxies
     "COIN": "Crypto", "MSTR": "Crypto", "IBIT": "Crypto",
     # Defense

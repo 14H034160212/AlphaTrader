@@ -42,6 +42,7 @@ _MARKET_TO_IBKR_EXCHANGE: Dict[str, str] = {
     "ES": "BM",
     "CH": "EBS",
     "AU": "ASX",
+    "NZ": "NZX",       # 2026-05-21 added: NZ — IBKR-only (Moomoo SDK has no NZ enum)
     "KR": "KSE",
     "SG": "SGX",
     "IN": "NSE",
@@ -62,7 +63,7 @@ _MARKET_TO_IBKR_EXCHANGE: Dict[str, str] = {
 
 def _build_ibkr_contract(symbol: str):
     """
-    Build an ib_insync Stock contract from an AlphaTrader symbol.
+    Build an ib_insync Stock contract from an SerenityTrader symbol.
     Returns an ib_insync.Stock (or None if ib_insync not available).
     """
     try:
@@ -264,7 +265,7 @@ class IBKRBroker(BrokerInterface):
                 if qty == 0:
                     continue
                 contract = pos.contract
-                # Reconstruct AlphaTrader symbol from IBKR contract
+                # Reconstruct SerenityTrader symbol from IBKR contract
                 ticker = contract.symbol
                 exch = contract.exchange or contract.primaryExch or ""
                 sym = _ibkr_to_alphatrader(ticker, exch, contract.currency)
@@ -301,7 +302,7 @@ _IBKR_EXCHANGE_TO_SUFFIX: Dict[str, str] = {
 
 
 def _ibkr_to_alphatrader(ticker: str, exchange: str, currency: str) -> str:
-    """Best-effort reverse map of IBKR ticker+exchange → AlphaTrader symbol."""
+    """Best-effort reverse map of IBKR ticker+exchange → SerenityTrader symbol."""
     if currency == "USD" and exchange in ("SMART", "NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"):
         return ticker
     suffix = _IBKR_EXCHANGE_TO_SUFFIX.get(exchange, "")

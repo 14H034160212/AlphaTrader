@@ -105,7 +105,10 @@ async def lifespan(app: FastAPI):
     task16 = asyncio.create_task(background_deposit_handler())
     task17 = asyncio.create_task(background_annual_tax_report())
     task18 = asyncio.create_task(background_rl_pipeline())
-    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan + deposit_handler + annual_tax_report + rl_policy_trainer")
+    task19 = asyncio.create_task(background_llm_shootout_loop())
+    task20 = asyncio.create_task(background_llm_catalyst_loop())
+    task21 = asyncio.create_task(background_dynamic_watchlist_loop())
+    logger.info("Background tasks started: price_refresh + auto_trade_loop + event_scan + news_scan + social_sentiment + blog_monitor + kronos_gpu + daily_digest + pending_trade_executor + email_reporter + email_reply_checker + stop_loss_monitor + global_market_scan + dca_core_etf + one_shot_rebalance + hk_ipo_scan + deposit_handler + annual_tax_report + rl_policy_trainer + llm_shootout + llm_catalyst + dynamic_watchlist")
     yield
     task1.cancel()
     task2.cancel()
@@ -125,6 +128,9 @@ async def lifespan(app: FastAPI):
     task16.cancel()
     task17.cancel()
     task18.cancel()
+    task19.cancel()
+    task20.cancel()
+    task21.cancel()
     logger.info("Shutting down trading platform")
 
 
@@ -522,18 +528,49 @@ async def background_price_refresh():
 
             all_symbols = list(symbols_to_track)
 
+            # Prioritize the names that actually drive trades — pinned/priority,
+            # held positions, then the chip/focus thematic universe — so the
+            # PRICE_FETCH_CAP below never starves them. The old hard `[:20]` slice
+            # over a stable-ordered set meant ~180/200 watchlist names (incl.
+            # ASML/VRT/NTAP/WDC/STX) NEVER got a price → were skipped every
+            # auto-trade cycle (`if not quote: continue`) → never analyzed,
+            # never traded. That alone disabled the whole chip strategy. 2026-05-28.
+            try:
+                import dynamic_watchlist as _dw
+                _pri, _held = [], []
+                for _u in users:
+                    _pri += [s.strip() for s in get_setting(db, "priority_symbols", _u.id, "").split(",") if s.strip()]
+                    _held += [p.symbol for p in TradingEngine(db, _u.id).get_all_positions()]
+                _thematic = [s for t in _dw.THEMATIC_UNIVERSES.values() for s in t]
+                _front, _seen = [], set()
+                for _grp in (_pri, _held, _thematic, all_symbols):
+                    for _s in _grp:
+                        if _s in symbols_to_track and _s not in _seen:
+                            _front.append(_s); _seen.add(_s)
+                all_symbols = _front
+            except Exception as _pe:
+                logger.warning(f"[PriceRefresh] prioritization failed, using raw order: {_pe}")
+
             # Fetch prices in executor (non-blocking yfinance calls) - staggered to avoid rate limits
             loop = asyncio.get_event_loop()
             new_prices = {}
-            for sym in all_symbols[:20]:
+            # Cap covers the full chip universe + held + core ETFs. get_stock_quote
+            # is itself 5-min cached, so the light 0.5s stagger is enough to stay
+            # under Yahoo's rate limit on the .history endpoint.
+            PRICE_FETCH_CAP = 250   # was 20 — covers the full ~206 watchlist with headroom (nothing silently dropped)
+            fetched = 0
+            for sym in all_symbols[:PRICE_FETCH_CAP]:
                 try:
                     q = await loop.run_in_executor(None, md.get_stock_quote, sym)
                     if q:
                         new_prices[sym] = q["current"]
                         price_cache[sym] = q
+                        fetched += 1
                 except Exception as e:
                     logger.error(f"Error fetching {sym}: {e}")
-                await asyncio.sleep(2)  # Stagger requests to avoid Yahoo Finance rate limit
+                await asyncio.sleep(0.5)  # light stagger; quote is 5-min cached
+            logger.info(f"[PriceRefresh] cached {fetched}/{min(len(all_symbols), PRICE_FETCH_CAP)} symbols "
+                        f"(watchlist total {len(all_symbols)})")
 
             # Update position prices for each user
             if new_prices:
@@ -617,6 +654,57 @@ async def background_auto_trade_loop():
                 if engine.use_alpaca:
                     n = engine.sync_positions_from_alpaca()
                     logger.info(f"[AutoTrade] Synced {n} positions from Alpaca for {user.username}")
+
+                # ── SCAN PRIORITIZATION (2026-05-27 fix) ──
+                # With 200 watchlist symbols × ~60s each, a full cycle takes hours,
+                # so names at the tail (MU/SNDK/AMD) rarely got analyzed → missed
+                # the semi rally. Re-order so high-priority names scan FIRST:
+                #   1. held positions (need sell monitoring)
+                #   2. today's biggest movers (catch momentum / breakouts)
+                #   3. thematic names (user's chip/semi/robotics directive)
+                #   4. everyone else
+                priority_syms = []   # defined here so the BUY-filter bypass below
+                                     # never hits a NameError if the try block fails
+                try:
+                    held_syms = set()
+                    if engine.use_alpaca:
+                        try:
+                            # Only count MEANINGFUL holdings (>= $1 market value).
+                            # 16 of 20 "positions" were dust (<$1 fractional leftovers
+                            # like NVDA/AMAT/LRCX after exits); they were front-loaded
+                            # ahead of real chip names and wasted scan budget. 2026-05-28.
+                            held_syms = {p.symbol for p in engine.alpaca.list_positions()
+                                         if float(p.qty) > 0 and float(p.market_value) >= 1.0}
+                        except Exception:
+                            pass
+
+                    # Today's movers from price cache (abs % change)
+                    def _abs_chg(s):
+                        q = price_cache.get(s) or {}
+                        return abs(q.get("change_pct", 0) or 0)
+                    movers = sorted([s for s in watchlist if _abs_chg(s) >= 4.0],
+                                    key=_abs_chg, reverse=True)
+
+                    # ABSOLUTE TOP priority: user-pinned priority_symbols (2026-05-27:
+                    # memory/storage giants MU/WDC/STX/SNDK — user said 优先级最高).
+                    priority_setting = get_setting(db, "priority_symbols", user.id, "MU,WDC,STX,SNDK")
+                    priority_syms = [s.strip() for s in priority_setting.split(",") if s.strip()]
+
+                    # Thematic priority names (chips/semis/robotics/GPU supply)
+                    import dynamic_watchlist as _dw
+                    thematic_pri = [s for t in _dw.THEMATIC_UNIVERSES.values() for s in t]
+
+                    front = []
+                    for grp in (priority_syms, list(held_syms), movers, thematic_pri):
+                        for s in grp:
+                            if s in watchlist and s not in front:
+                                front.append(s)
+                    rest = [s for s in watchlist if s not in front]
+                    watchlist = front + rest
+                    logger.info(f"[AutoTrade] scan priority: {len(priority_syms)} pinned ({priority_syms}) + "
+                                f"{len(held_syms)} held + {len(movers)} movers (top: {movers[:3]}) + thematic")
+                except Exception as _pe:
+                    logger.warning(f"[AutoTrade] scan prioritization failed: {_pe}")
 
                 # ── Market Regime Filter: skip BUY signals when SPY is below its 20-day MA ──
                 spy_bear_market = False
@@ -760,13 +848,20 @@ async def background_auto_trade_loop():
                             gap_pct = quote.get("change_pct", 0)
                             action  = signal.get("signal")
                             skip_reason = None
+                            # User-pinned priority names (storage/chip giants MU/WDC/STX/SNDK)
+                            # are pre-vetted "buy the few best" picks (2026-05-27 directive:
+                            # 优先级最高, 买能一直上涨的股票). They bypass the momentum-based
+                            # gap filter AND the bear-market filter — the AI confidence gate
+                            # (0.80) + Kelly sizing still govern the actual entry. The cooldown
+                            # ban (post-stop-loss) is NOT bypassed: it remains a real safety.
+                            is_priority = symbol in priority_syms
 
                             # Gap Filter: skip BUY if stock already up >3% today
-                            if action == "BUY" and gap_pct > 3.0:
+                            if action == "BUY" and gap_pct > 3.0 and not is_priority:
                                 skip_reason = f"gap filter ({gap_pct:.1f}% up today)"
 
                             # Bear Market Filter: suppress BUY when SPY < MA20
-                            elif action == "BUY" and spy_bear_market:
+                            elif action == "BUY" and spy_bear_market and not is_priority:
                                 skip_reason = "bear market filter (SPY below MA20)"
 
                             # Cooldown Filter: skip BUY within 3 days of a losing sell on this symbol
@@ -783,6 +878,10 @@ async def background_auto_trade_loop():
                                     # Approximation: check if there's still an open position with lower avg or use reasoning
                                     if recent_loss.reasoning and "[STOP-LOSS]" in recent_loss.reasoning:
                                         skip_reason = f"cooldown: stop-loss triggered on {recent_loss.timestamp.date()}, 3-day ban"
+
+                            if is_priority and action == "BUY" and gap_pct > 3.0 and not skip_reason:
+                                logger.info(f"[AutoTrade] {symbol} is PINNED priority — bypassing "
+                                            f"gap filter ({gap_pct:.1f}% up today); AI conf gate still applies")
 
                             if skip_reason:
                                 logger.warning(f"[AutoTrade] {symbol} {action} skipped — {skip_reason}")
@@ -812,6 +911,14 @@ async def background_auto_trade_loop():
                                 if auto_result.get("success"):
                                     logger.info(f"Auto-trade for {user.username} - {symbol}: {auto_result}")
                                     await broadcast({"type": "auto_trade", "user": user.username, "symbol": symbol, "result": auto_result})
+                                else:
+                                    # Was silently swallowed — a BUY/SELL that passed every
+                                    # pre-filter but got rejected inside auto_trade (sizing,
+                                    # concentration cap, buying-power, focus gate, RL veto…)
+                                    # left NO log, so we could not tell why chip names never
+                                    # executed. Surface it. 2026-05-28.
+                                    _why = auto_result.get("reason") or auto_result.get("error") or auto_result
+                                    logger.warning(f"[AutoTrade] {symbol} {action} NOT executed (conf {confidence:.0%}): {_why}")
                     except Exception as inner_e:
                         logger.error(f"Error auto-trading {symbol} for {user.username}: {inner_e}")
 
@@ -1924,7 +2031,7 @@ def _run_daily_maintenance(db):
                 # Save summary
                 summary_path = f"/tmp/alphatrader_summary_{datetime.utcnow().strftime('%Y%m%d')}.log"
                 with open(summary_path, "w") as sf:
-                    sf.write(f"=== AlphaTrader Log Rotation Summary ({datetime.utcnow().isoformat()}) ===\n")
+                    sf.write(f"=== SerenityTrader Log Rotation Summary ({datetime.utcnow().isoformat()}) ===\n")
                     sf.write(f"Original size: {size_mb:.1f} MB | Last 500 lines preserved:\n\n")
                     sf.write("\n".join(tail_lines))
 
@@ -2506,7 +2613,7 @@ async def openclaw_webhook(request: OpenClawWebhook, db: Session = Depends(get_d
             engine = TradingEngine(db)
             summary = engine.get_portfolio_summary()
             
-            msg = f"💼 **AlphaTrader Portfolio ({summary['provider']})**\n\n"
+            msg = f"💼 **SerenityTrader Portfolio ({summary['provider']})**\n\n"
             msg += f"Total Equity: ${summary['total_equity']:,.2f}\n"
             msg += f"Cash Balance: ${summary['cash']:,.2f}\n"
             pnl_sign = "+" if summary['total_return'] >= 0 else ""
@@ -2566,7 +2673,7 @@ async def openclaw_webhook(request: OpenClawWebhook, db: Session = Depends(get_d
             
     except Exception as e:
         logger.error(f"OpenClaw webhook error: {e}")
-        return {"response": f"⚠️ AlphaTrader Error: {str(e)}"}
+        return {"response": f"⚠️ SerenityTrader Error: {str(e)}"}
 
 
 @app.get("/api/settings")
@@ -2741,7 +2848,7 @@ async def test_email(current_user: User = Depends(get_current_user), db: Session
         scenario_healths=[{"name": "中东战争 2026", "status": "failing", "avg_pct": -12.5, "days_active": 22, "per_stock_summary": "GLD -14.5% | LMT -4.6% | RTX -2.2%"}],
         global_scan_signals=[{"symbol": "EWJ", "region": "JP", "signal": "BUY", "confidence": 0.78, "reasoning": "Japan equities oversold, BOJ pivot tailwind, USD/JPY correction expected.", "timestamp": datetime.utcnow().isoformat()}],
     )
-    sent = er.send_email(sender, app_pw, recipient, "AlphaTrader — Test Email", html)
+    sent = er.send_email(sender, app_pw, recipient, "SerenityTrader — Test Email", html)
     if sent:
         return {"sent": True, "recipient": recipient}
     raise HTTPException(status_code=500, detail="Failed to send email. Check App Password and try again.")
@@ -3327,7 +3434,7 @@ async def background_email_reporter():
                         scenario_healths=email_scenario_healths,
                         global_scan_signals=email_global_signals,
                     )
-                    subject = f"AlphaTrader Daily Report — {now.strftime('%Y-%m-%d')}"
+                    subject = f"SerenityTrader Daily Report — {now.strftime('%Y-%m-%d')}"
                     sent = er.send_email(sender, app_pw, recipient, subject, html)
                     if sent:
                         last_sent_date = now.date()
@@ -3378,7 +3485,7 @@ async def background_email_reporter():
                                 date_str, hk_account, hk_positions,
                                 hk_signals, hk_trades_today,
                             )
-                            hk_subject = f"🇭🇰 AlphaTrader HK Daily — {now.strftime('%Y-%m-%d')}"
+                            hk_subject = f"🇭🇰 SerenityTrader HK Daily — {now.strftime('%Y-%m-%d')}"
                             er.send_email(sender, app_pw, recipient, hk_subject, hk_html)
                             logger.info(f"[EmailReport] HK report sent ({len(hk_positions)} positions, "
                                         f"{len(hk_trades_today)} trades, {len(hk_signals)} signals)")
@@ -3769,12 +3876,37 @@ async def background_global_market_scan():
         await asyncio.sleep(1200)  # Run every 20 minutes
 
 
+def _load_position_highs() -> dict:
+    """High-water-mark per symbol for trailing stops. Persisted to JSON."""
+    import json as _json
+    try:
+        with open("/data/qbao775/AlphaTrader/.position_highs.json") as f:
+            return _json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def _save_position_highs(highs: dict) -> None:
+    import json as _json
+    try:
+        with open("/data/qbao775/AlphaTrader/.position_highs.json", "w") as f:
+            _json.dump(highs, f)
+    except Exception:
+        pass
+
+
 async def background_stop_loss_monitor():
     """
-    Task 11 — Stop-loss monitor.
-    Runs every 5 minutes. Checks all live Alpaca positions for unrealized loss
-    exceeding the stop_loss_pct threshold (default -5%). Sells the full position
-    immediately when triggered. Also syncs local DB after each check.
+    Task 11 — Trailing stop-loss monitor (long-term-investor mode, 2026-05-26).
+
+    Runs every 5 minutes. Uses a TRAILING stop from each position's high-water
+    mark (peak price since purchase) rather than a fixed entry-based stop. This
+    lets winners run while locking in gains:
+      • trailing_stop_pct (default 15%): sell if price drops 15% below its peak
+      • catastrophic floor (default 20% from ENTRY): hard exit regardless of peak
+      • core ETFs (SPY/VOO/QQQ) never auto-stopped
+    The wide 15% trailing band (vs old 5% fixed) stops the over-trading the user
+    flagged — quality names ride normal volatility, only exit on real breakdowns.
     """
     await asyncio.sleep(180)  # 3 min startup delay
     while True:
@@ -3792,6 +3924,9 @@ async def background_stop_loss_monitor():
                         continue
 
                     stop_loss_pct = float(get_setting(db, "stop_loss_pct", user.id, "5.0"))
+                    trailing_stop_pct = float(get_setting(db, "trailing_stop_pct", user.id, "15.0"))
+                    catastrophic_pct = float(get_setting(db, "catastrophic_stop_pct", user.id, "20.0"))
+                    position_highs = _load_position_highs()
 
                     # Always sync DB with Alpaca reality
                     engine.sync_positions_from_alpaca()
@@ -3828,23 +3963,25 @@ async def background_stop_loss_monitor():
                         if ps.is_core_etf(symbol):
                             continue
 
-                        # Compute ATR-adaptive threshold per symbol. Wider stops
-                        # for volatile stocks, tighter for low-vol ones. Falls
-                        # back to fixed stop_loss_pct setting if ATR unavailable.
-                        adaptive_threshold = stop_loss_pct
-                        try:
-                            indicators = md.get_technical_indicators(symbol)
-                            atr = (indicators or {}).get("atr14", 0) or 0
-                            avg_entry = float(ap.avg_entry_price)
-                            if atr > 0 and avg_entry > 0:
-                                # 2.5×ATR translated into a % of entry, clamped
-                                # to [stop_loss_pct, 15%] so we never give up >15%.
-                                atr_pct = (2.5 * atr / avg_entry) * 100
-                                adaptive_threshold = max(stop_loss_pct, min(atr_pct, 15.0))
-                        except Exception as _atr_err:
-                            logger.debug(f"[StopLoss] {symbol} ATR fetch error: {_atr_err}")
+                        # ── TRAILING STOP from high-water mark (2026-05-26) ──
+                        # Update peak, then trigger if price fell trailing_stop_pct
+                        # below it. Two independent exits:
+                        #   1. trailing: price < peak × (1 - trailing_stop_pct/100)
+                        #   2. catastrophic: loss from entry < -catastrophic_pct
+                        avg_entry = float(ap.avg_entry_price)
+                        prev_peak = position_highs.get(symbol, avg_entry)
+                        peak = max(prev_peak, curr_price, avg_entry)
+                        position_highs[symbol] = peak   # persist updated peak
 
-                        if loss_pct < -adaptive_threshold:
+                        drawdown_from_peak = (curr_price - peak) / peak * 100 if peak > 0 else 0
+                        trailing_triggered = drawdown_from_peak < -trailing_stop_pct
+                        catastrophic_triggered = loss_pct < -catastrophic_pct
+
+                        if trailing_triggered or catastrophic_triggered:
+                            trigger_kind = ("CATASTROPHIC" if catastrophic_triggered
+                                            else "TRAILING")
+                            adaptive_threshold = (catastrophic_pct if catastrophic_triggered
+                                                  else trailing_stop_pct)
                             # Skip if an open sell order already covers this position
                             if symbol in pending_sells:
                                 logger.info(
@@ -3858,18 +3995,21 @@ async def background_stop_loss_monitor():
                                 continue
 
                             logger.warning(
-                                f"[StopLoss] {symbol} TRIGGERED: {loss_pct:.2f}% "
-                                f"(threshold -{adaptive_threshold:.2f}% [ATR-adaptive]) — "
-                                f"selling {qty_available:.4f} available shares @ ${curr_price:.2f}"
+                                f"[StopLoss] {symbol} {trigger_kind} TRIGGERED: "
+                                f"price ${curr_price:.2f}, peak ${peak:.2f} "
+                                f"(drawdown {drawdown_from_peak:.1f}% from peak, "
+                                f"{loss_pct:.1f}% from entry) — "
+                                f"selling {qty_available:.4f} shares"
                             )
                             result = engine.execute_sell(
                                 symbol, qty_available, curr_price,
                                 ai_triggered=True,
                                 confidence=1.0,
                                 reasoning=(
-                                    f"[STOP-LOSS] Unrealized loss {loss_pct:.2f}% exceeded "
-                                    f"-{adaptive_threshold:.2f}% ATR-adaptive threshold. "
-                                    f"Auto-liquidating to protect capital."
+                                    f"[{trigger_kind} STOP] {symbol} fell {drawdown_from_peak:.1f}% "
+                                    f"from peak ${peak:.2f} (entry P&L {loss_pct:.1f}%). "
+                                    f"Trailing stop {trailing_stop_pct:.0f}% / catastrophic "
+                                    f"{catastrophic_pct:.0f}%. Protecting capital + locked gains."
                                 ),
                             )
                             if result.get("success"):
@@ -3883,6 +4023,9 @@ async def background_stop_loss_monitor():
                                 })
                             else:
                                 logger.error(f"[StopLoss] {symbol} sell failed: {result}")
+
+                    # Persist updated high-water marks for trailing stops
+                    _save_position_highs(position_highs)
             finally:
                 db.close()
         except Exception as e:
@@ -4004,7 +4147,7 @@ async def background_annual_tax_report():
                         None,
                         lambda: _send_tax_email(
                             sender, app_pw, recipient,
-                            f"AlphaTrader NZ Tax Summary — FY {fy_year}",
+                            f"SerenityTrader NZ Tax Summary — FY {fy_year}",
                             html_body, csv_body, fy_year,
                         ),
                     )
@@ -4463,13 +4606,178 @@ async def background_rl_pipeline():
     while True:
         try:
             import rl_pipeline as _pipe
-            report = await asyncio.get_event_loop().run_in_executor(None, _pipe.run_cycle)
+            # 14-day holdout (instead of default 7) — temporarily widened
+            # because the 5/15→5/20 broken-AI period contaminated last week.
+            # Revert to 7 once 1 week of clean signals accumulates.
+            report = await asyncio.get_event_loop().run_in_executor(None, lambda: _pipe.run_cycle(holdout_days=14))
             status = report.get("status", "unknown")
             decision = (report.get("decision") or {}).get("decision", "-")
             logger.info(f"[RL Pipeline] cycle complete: status={status}  decision={decision}")
         except Exception as e:
             logger.error(f"[RL Pipeline] Error: {e}", exc_info=True)
         await asyncio.sleep(21600)   # one cycle every 6 hours (4× per day)
+
+
+async def background_llm_shootout_loop():
+    """
+    Task 19 — Daily LLM backend shootout + auto-promotion.
+
+    Replaces the static `ollama_model` setting with an evidence-driven choice.
+    Every 24h:
+      1. Pull rolling 7d holdout from rl_training_data.jsonl
+      2. Run each candidate model via the SAME production prompt path
+      3. Compare directional_accuracy + mean_realised_reward
+      4. If winner beats current `ollama_model` by ≥5pp dir_acc, auto-update
+         the `ollama_model` and `ollama_host` DB settings
+      5. Persist full report to rl_models/llm_shootout/*.json
+
+    Born from 2026-05-21 incident: production silently used qwen3.5:35b
+    pointing at a dead daemon for 5 days, no auto-detection. Now host
+    reachability is verified each cycle and bad config self-corrects.
+    """
+    await asyncio.sleep(900)   # wait 15 min after startup for warm cache
+    while True:
+        try:
+            import rl_llm_shootout as _shoot
+            from database import SessionLocal
+            db = SessionLocal()
+            try:
+                report = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: _shoot.run_shootout(db_session=db, auto_promote=True)
+                )
+            finally:
+                db.close()
+            winner = report.get("winner")
+            promoted = report.get("promoted", False)
+            logger.info(f"[LLM Shootout] winner={winner} promoted={promoted}")
+            try:
+                await broadcast({"type":"llm_shootout","report":report})
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"[LLM Shootout] Error: {e}", exc_info=True)
+        await asyncio.sleep(86400)   # one cycle every 24h
+
+
+async def background_dynamic_watchlist_loop():
+    """
+    Task 21 — Dynamic watchlist discovery (every 6h).
+
+    Replaces hand-curated watchlist with market-driven discovery:
+      • US top movers (yfinance day_gainers / most_actives)
+      • News mention frequency
+      • Social sentiment surge
+      • Sector peer expansion
+      • Stale-prune (no signals in 14d, not held, not always-keep)
+
+    Created 2026-05-24 after user feedback "watchlist 不应该写死". The earlier
+    keyword-maintenance anti-pattern (CATALYST_MAP) had a sibling: hand-curated
+    symbol list. Both are now data-driven.
+    """
+    await asyncio.sleep(300)   # 5 min after startup
+    while True:
+        try:
+            import dynamic_watchlist as _dw
+            from database import SessionLocal
+            db = SessionLocal()
+            try:
+                report = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: _dw.run_discovery_cycle(db_session=db)
+                )
+            finally:
+                db.close()
+            logger.info(
+                f"[DynamicWL] cycle complete: "
+                f"{report.get('before_count')} → {report.get('after_count')} symbols  "
+                f"(+{report.get('added_count')} -{report.get('pruned_count')})"
+            )
+        except Exception as e:
+            logger.error(f"[DynamicWL] Error: {e}", exc_info=True)
+        await asyncio.sleep(6 * 3600)   # every 6h
+
+
+async def background_llm_catalyst_loop():
+    """
+    Task 20 — LLM-driven catalyst extraction (every 30 min).
+
+    Replaces static CATALYST_MAP keyword-matching for novel events. For each
+    watchlist symbol, pulls fresh news + classifies headlines via LLM, caches
+    results. Output is consumed by detect_catalysts_for_symbol() merge path
+    (see news_intelligence integration) and reaches the AI prompt via the
+    existing build_catalyst_context flow.
+
+    Created 2026-05-23 after SerenityTrader missed the US-gov-takes-Intel-stake
+    catalyst (no keyword for "government stake" in static map).
+    """
+    await asyncio.sleep(120)   # wait 2 min after startup
+    while True:
+        try:
+            import llm_catalyst_extractor as _lce
+            import json as _json
+            from database import SessionLocal
+            db = SessionLocal()
+            try:
+                wl_row = db.query(Settings).filter(Settings.key=="watchlist").first()
+                watchlist = _json.loads(wl_row.value or "[]") if wl_row else []
+            finally:
+                db.close()
+
+            # ── SECTOR-WIDE catalyst capture first (user 2026-05-27: capture
+            # all GPU/chip market dynamics). Maps broad semi/AI news → focus
+            # stocks before the per-ticker pass. ──
+            try:
+                import dynamic_watchlist as _dw2
+                focus_setting = ""
+                _db2 = SessionLocal()
+                try:
+                    _fs = _db2.query(Settings).filter(Settings.key=="focus_themes").first()
+                    focus_setting = _fs.value if _fs else "core_semiconductors,gpu_downstream_supply,physical_ai_robotics"
+                finally:
+                    _db2.close()
+                focus_syms = []
+                for t in focus_setting.split(","):
+                    focus_syms.extend(_dw2.THEMATIC_UNIVERSES.get(t.strip(), []))
+                focus_syms = list(dict.fromkeys(focus_syms))
+                if focus_syms:
+                    sector_cats = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: _lce.extract_sector_catalysts(focus_syms, hours_back=12)
+                    )
+                    for sym, cats in (sector_cats or {}).items():
+                        for c in cats:
+                            logger.info(
+                                f"[LLM SectorCatalyst] {sym} {c.get('catalyst_level')} "
+                                f"{c.get('llm_direction','?')} ({c.get('llm_confidence',0):.2f}): "
+                                f"{c.get('news_title','')[:90]}"
+                            )
+            except Exception as _se:
+                logger.warning(f"[LLM SectorCatalyst] failed: {_se}")
+
+            total_catalysts = 0
+            for sym in watchlist:
+                try:
+                    cats = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda s=sym: _lce.extract_catalysts_for_symbol(s, hours_back=24)
+                    )
+                    if cats:
+                        total_catalysts += len(cats)
+                        # Log only STRONG / MEDIUM catalysts for noise reduction
+                        for c in cats:
+                            if c.get("catalyst_level") in ("STRONG", "MEDIUM"):
+                                logger.info(
+                                    f"[LLM Catalyst] {sym} {c['catalyst_level']} "
+                                    f"{c.get('llm_direction','?')} ({c.get('llm_confidence',0):.2f}): "
+                                    f"{c.get('news_title','')[:100]}"
+                                )
+                except Exception as e:
+                    logger.debug(f"[LLM Catalyst] {sym}: {e}")
+
+            stats = _lce.cache_stats()
+            logger.info(f"[LLM Catalyst] cycle done: {total_catalysts} catalysts across {len(watchlist)} symbols; "
+                        f"cache: {stats['total_classifications']} total / {stats['catalyst_count']} catalysts")
+        except Exception as e:
+            logger.error(f"[LLM Catalyst] Error: {e}", exc_info=True)
+
+        await asyncio.sleep(900)   # every 15 min (sharper chip-news reaction, user 5/27)
 
 
 if __name__ == "__main__":

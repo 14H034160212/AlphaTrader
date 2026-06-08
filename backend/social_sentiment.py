@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-HEADERS = {"User-Agent": "AlphaTrader/1.0 (stock research tool)"}
+HEADERS = {"User-Agent": "SerenityTrader/1.0 (stock research tool)"}
 STOCKTWITS_URL = "https://api.stocktwits.com/api/2/streams/symbol/{symbol}.json"
 REDDIT_SEARCH_URL = "https://www.reddit.com/r/{sub}/search.json"
 

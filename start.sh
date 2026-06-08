@@ -1,5 +1,5 @@
 #!/bin/bash
-# AlphaTrader 启动脚本（含自动重启保活）
+# SerenityTrader 启动脚本（含自动重启保活）
 
 BACKEND_DIR="/data/qbao775/AlphaTrader/backend"
 LOG_FILE="/tmp/alphatrader.log"
@@ -17,7 +17,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-echo "[$(date)] AlphaTrader 守护进程启动" >> "$LOG_FILE"
+echo "[$(date)] SerenityTrader 守护进程启动" >> "$LOG_FILE"
 
 while true; do
     echo "[$(date)] 启动服务器..." >> "$LOG_FILE"

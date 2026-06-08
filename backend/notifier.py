@@ -16,7 +16,7 @@ Configuration (store in DB settings via API or set_setting):
 
 Gmail App Password setup:
   1. Go to myaccount.google.com → Security → 2-Step Verification (must be on)
-  2. Search "App passwords" → Create one for "AlphaTrader"
+  2. Search "App passwords" → Create one for "SerenityTrader"
   3. Copy the 16-char password → paste into notify_email_password
 """
 import sys
@@ -72,7 +72,7 @@ def _send_email(sender: str, password: str, recipient: str, subject: str, body: 
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = f"AlphaTrader <{sender}>"
+        msg["From"] = f"SerenityTrader <{sender}>"
         msg["To"] = recipient
 
         # Plain text version
@@ -148,7 +148,7 @@ def notify_trade(db, symbol: str, side: str, quantity: float, price: float,
     trigger_label = {"auto": "AI Auto-Trade", "blog_alert": "Blog Alert", "pre_event": "Pre-Event"}.get(trigger, trigger)
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
-    subject = f"{emoji} AlphaTrader: {side} {symbol} @ ${price:.2f}"
+    subject = f"{emoji} SerenityTrader: {side} {symbol} @ ${price:.2f}"
 
     body = f"""
 {emoji} AUTO TRADE EXECUTED — {trigger_label}
@@ -163,7 +163,7 @@ Total:     ${total:.2f}
 AI Reasoning:
 {reasoning[:600]}
 {'='*50}
-AlphaTrader Autonomous Trading Platform
+SerenityTrader Autonomous Trading Platform
 """.strip()
 
     slack_blocks = [
@@ -205,7 +205,7 @@ Impact:
 SELL / AVOID: {', '.join(sell_stocks) if sell_stocks else 'None'}
 CONSIDER:     {', '.join(watch_stocks) if watch_stocks else 'None'}
 {'='*50}
-AlphaTrader Blog Monitor — First-party source detected
+SerenityTrader Blog Monitor — First-party source detected
 """.strip()
 
     sell_str = " | ".join(f"`{s}`" for s in sell_stocks) if sell_stocks else "None"
@@ -252,7 +252,7 @@ Description:
 AVOID / SELL: {', '.join(stocks_to_avoid) if stocks_to_avoid else 'None'}
 CONSIDER:     {', '.join(beneficiaries) if beneficiaries else 'None'}
 {'='*50}
-AlphaTrader Macro Intelligence System
+SerenityTrader Macro Intelligence System
 """.strip()
 
     avoid_str = " | ".join(f"`{s}`" for s in stocks_to_avoid) if stocks_to_avoid else "None"
@@ -301,7 +301,7 @@ Note: Extreme retail sentiment can signal:
   BULLISH: crowded trade (potential reversal risk)
   BEARISH: capitulation (potential contrarian buy)
 {'='*50}
-AlphaTrader Social Sentiment Monitor
+SerenityTrader Social Sentiment Monitor
 """.strip()
 
     slack_text = f"{emoji} {symbol}: {sentiment} ({score:+.2f}) — {bullish}↑ {bearish}↓ on StockTwits"
@@ -327,10 +327,10 @@ def notify_daily_summary(db, session_type: str, portfolio: dict,
     nzt_str = now_nzt.strftime("%Y-%m-%d %H:%M NZT")
 
     if session_type == "pre_market":
-        title = "📊 AlphaTrader 开市前日报"
+        title = "📊 SerenityTrader 开市前日报"
         subtitle = "美股今日开市，以下是市场概况与今日计划"
     else:
-        title = "📋 AlphaTrader 收市后日报"
+        title = "📋 SerenityTrader 收市后日报"
         subtitle = "美股今日收市，以下是今日交易汇总"
 
     subject = f"{title} — {now_utc.strftime('%Y-%m-%d')}"
@@ -425,7 +425,7 @@ def notify_daily_summary(db, session_type: str, portfolio: dict,
 {'  ' + chr(10).join(sent_lines)}
 
 {'='*50}
-AlphaTrader 自主AI交易平台
+SerenityTrader 自主AI交易平台
 下一封: {'收市后日报 (NZT 10:15 AM)' if session_type == 'pre_market' else '明日开市前日报 (NZT 03:25 AM)'}
 """.strip()
 

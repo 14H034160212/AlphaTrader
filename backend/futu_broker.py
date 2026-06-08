@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 def _to_futu_code(symbol: str) -> str:
     """
-    Convert AlphaTrader symbol to Futu code format.
+    Convert SerenityTrader symbol to Futu code format.
       600519.SH  →  SH.600519
       000001.SZ  →  SZ.000001
       0700.HK    →  HK.00700   (pad to 5 digits)
@@ -84,6 +84,7 @@ class FutuBroker(BrokerInterface):
         hk_acc_id: int = 0,
         us_acc_id: int = 0,
         security_firm: str = "FUTUSECURITIES",
+        trade_password: str = "",      # Moomoo trading password (required for REAL HK/CN unlock_trade)
     ):
         self.host = host
         self.port = port
@@ -92,6 +93,7 @@ class FutuBroker(BrokerInterface):
         self._hk_acc_id = hk_acc_id
         self._us_acc_id = us_acc_id
         self._security_firm_name = security_firm
+        self._trade_password = trade_password
 
         self._futu_available = False
         self._TrdEnv = None
@@ -155,7 +157,11 @@ class FutuBroker(BrokerInterface):
 
     @property
     def supported_markets(self) -> List[str]:
-        return ["CN", "HK", "US"]
+        # 2026-05-21: extended from [CN,HK,US] after probing actual Moomoo AU
+        # OpenD which returned live accounts for HK/US/AU. JP/CN/SG require
+        # extra Moomoo-side KYC activation but the SDK enums + code path
+        # already work — once the user enables them, no further code change.
+        return ["CN", "HK", "US", "AU", "JP", "SG"]
 
     def is_connected(self) -> bool:
         if not self._futu_available:
@@ -182,6 +188,9 @@ class FutuBroker(BrokerInterface):
             "CN": ft.TrdMarket.CN,
             "HK": ft.TrdMarket.HK,
             "US": ft.TrdMarket.US,
+            "AU": ft.TrdMarket.AU,
+            "JP": ft.TrdMarket.JP,
+            "SG": ft.TrdMarket.SG,
         }.get(market, ft.TrdMarket.US)
         return ft.OpenSecTradeContext(
             filter_trdmarket=market_enum,
@@ -236,25 +245,66 @@ class FutuBroker(BrokerInterface):
         market = _futu_market(symbol)
         trd_side = self._TrdSide.BUY if side == "BUY" else self._TrdSide.SELL
 
-        # Minimum lot size for CN A-shares
-        if is_china_ashare(symbol):
-            from market_calendar import round_to_lot
-            quantity = float(round_to_lot(quantity, symbol))
-            if quantity < 100:
-                return {"success": False, "order_id": None,
-                        "error": f"CN A-share min lot is 100 shares, got {quantity}"}
+        # Lot-size enforcement for CN A-shares + HK.
+        # HK lot size queried LIVE from Moomoo snapshot — the static HK_LOT_SIZES
+        # table was wrong for ETFs (02822=200, 03037=500 not 100). 2026-05-22.
+        # Also caps qty to available local-currency cash to avoid "Insufficient
+        # Buying Power" rejections (broker rejects after submit, costs latency).
+        if market in ("CN", "HK"):
+            from market_calendar import china_lot_size, hk_lot_size
+            live_cash_local = None
+            if market == "CN":
+                lot = china_lot_size(symbol)
+            else:
+                # Try Moomoo live snapshot first (correct lot_size), fall back to static
+                lot = hk_lot_size(symbol)
+                try:
+                    with ft.OpenQuoteContext(host=self.host, port=self.port) as qctx:
+                        ret, snap = qctx.get_market_snapshot([futu_code])
+                        if ret == ft.RET_OK and not snap.empty:
+                            live_lot = int(snap.iloc[0].get("lot_size", lot) or lot)
+                            if live_lot > 0:
+                                lot = live_lot
+                except Exception as _e:
+                    logger.debug(f"[Futu] live lot_size query failed for {symbol}: {_e}")
+                # Pre-check local cash: query Moomoo HK cash directly so we can
+                # cap the order to what's actually affordable in HKD.
+                try:
+                    cur_ccy = ft.Currency.HKD if market == "HK" else ft.Currency.CNH
+                    with self._trade_ctx(market) as _aectx:
+                        a_ret, a_info = _aectx.accinfo_query(
+                            trd_env=self._TrdEnv, refresh_cache=True, currency=cur_ccy
+                        )
+                        if a_ret == ft.RET_OK and not a_info.empty:
+                            live_cash_local = float(a_info.iloc[0].get("cash", 0) or 0)
+                except Exception as _e:
+                    logger.debug(f"[Futu] live cash query failed for {symbol}: {_e}")
 
-        # Integer qty for HK/CN (HK allows odd-lots so 1-99 is fine, but qty
-        # < 1 from Kelly fractional sizing must be rejected — int(0.5)=0 would
-        # submit a 0-share order which broker silently no-ops.
-        qty_int = int(quantity) if market in ("CN", "HK") else round(quantity, 4)
-        if market in ("CN", "HK") and qty_int < 1:
-            return {
-                "success": False, "order_id": None,
-                "error": f"qty rounded to {qty_int} shares (raw qty={quantity:.4f}); "
-                         f"{market} requires integer ≥ 1. Raise risk_per_trade_pct "
-                         f"or skip this signal — current size below minimum tradeable unit."
-            }
+            n_lots = int(quantity / lot)
+            qty_int = n_lots * lot
+
+            # Cash cap (HK only — broker's accinfo gave us local-cur cash above)
+            if live_cash_local is not None and qty_int > 0 and price > 0:
+                max_lots_by_cash = int((live_cash_local * 0.97) / (lot * price))  # 3% buffer for fees
+                if max_lots_by_cash < n_lots:
+                    old = qty_int
+                    n_lots = max_lots_by_cash
+                    qty_int = n_lots * lot
+                    logger.info(
+                        f"[Futu] {symbol} cash-cap: lowered {old} → {qty_int} shares "
+                        f"(cash {live_cash_local:.0f} {market} cur, lot {lot}, price {price})"
+                    )
+
+            if qty_int < lot:
+                return {
+                    "success": False, "order_id": None,
+                    "error": (f"qty {quantity:.2f} → {qty_int} shares (< 1 lot of {lot}); "
+                              f"{market} {symbol}: cash {live_cash_local} insufficient or "
+                              f"position too small. Deposit more {('HKD' if market=='HK' else 'CNY')}, "
+                              f"or raise weight.")
+                }
+        else:
+            qty_int = round(quantity, 4)
 
         acc_id_map = {
             "CN": self._cn_acc_id,
@@ -265,6 +315,21 @@ class FutuBroker(BrokerInterface):
 
         try:
             with self._trade_ctx(market) as ctx:
+                # Moomoo HK/CN REAL trading requires unlock_trade() with trading
+                # password before each session. 2026-05-22: without this the
+                # broker rejects with "Trade is not unlocked." for ALL HK orders.
+                # SIMULATE env doesn't need unlock.
+                if self._TrdEnv == ft.TrdEnv.REAL:
+                    pwd = self._trade_password
+                    if pwd:
+                        unlock_ret, unlock_data = ctx.unlock_trade(pwd)
+                        if unlock_ret != ft.RET_OK:
+                            logger.error(f"[Futu] unlock_trade failed: {unlock_data}")
+                            return {"success": False, "order_id": None,
+                                    "error": f"unlock_trade failed: {unlock_data}"}
+                    else:
+                        logger.warning("[Futu] no trade_password set (futu_unlock_password); REAL HK/CN orders will be rejected")
+
                 # For CN/HK market orders, use AUCTION_LIMIT or MARKET type
                 order_type = self._OrderType.MARKET
                 # Futu CN market orders use price=0 + MARKET order type
@@ -365,7 +430,7 @@ class FutuBroker(BrokerInterface):
 
 def _futu_to_alphatrader(futu_code: str) -> str:
     """
-    Convert Futu code to AlphaTrader symbol.
+    Convert Futu code to SerenityTrader symbol.
       SH.600519  →  600519.SH
       HK.00700   →  0700.HK   (strip leading zeros for HK)
       US.AAPL    →  AAPL
@@ -405,4 +470,5 @@ def create_futu_broker_from_settings(settings: dict) -> FutuBroker:
         hk_acc_id=int(settings.get("futu_hk_acc_id", "0") or 0),
         us_acc_id=int(settings.get("futu_us_acc_id", "0") or 0),
         security_firm=settings.get("futu_security_firm", "FUTUSECURITIES"),
+        trade_password=settings.get("futu_unlock_password", ""),
     )

@@ -255,7 +255,7 @@ def _fetch_rss_news(symbol: str, hours_back: int = 24) -> list:
     cutoff = datetime.utcnow() - timedelta(hours=hours_back)
     recent = []
     try:
-        resp = requests.get(url, timeout=10, headers={"User-Agent": "AlphaTrader/1.0"})
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "SerenityTrader/1.0"})
         if resp.status_code != 200:
             logger.debug(f"[RSS] {symbol} HTTP {resp.status_code}")
             return []
@@ -535,7 +535,7 @@ def fetch_tech_news(hours_back: int = 12) -> list:
         try:
             resp = requests.get(
                 source["url"], timeout=10,
-                headers={"User-Agent": "AlphaTrader-TechNews/1.0"}
+                headers={"User-Agent": "SerenityTrader-TechNews/1.0"}
             )
             if resp.status_code != 200:
                 logger.debug(f"[TechNews] {source['name']} HTTP {resp.status_code}")
@@ -690,7 +690,7 @@ def fetch_geopolitical_news(hours_back: int = 12) -> list:
         try:
             resp = requests.get(
                 source["url"], timeout=10,
-                headers={"User-Agent": "AlphaTrader-GeoNews/1.0"}
+                headers={"User-Agent": "SerenityTrader-GeoNews/1.0"}
             )
             if resp.status_code != 200:
                 logger.debug(f"[GeoNews] {source['name']} HTTP {resp.status_code}")
@@ -762,7 +762,7 @@ def fetch_cn_finance_news(hours_back: int = 6) -> list:
         try:
             resp = requests.get(
                 source["url"], timeout=8,
-                headers={"User-Agent": "AlphaTrader-CNFinance/1.0",
+                headers={"User-Agent": "SerenityTrader-CNFinance/1.0",
                          "Accept-Language": "zh-CN,zh;q=0.9"}
             )
             if resp.status_code != 200:
@@ -943,7 +943,26 @@ SYMBOL_SECTOR_MAP = {
     "NVDA": "Semiconductors", "AMD": "Semiconductors", "AVGO": "Semiconductors", "INTC": "Semiconductors",
     "MSFT": "Software", "AAPL": "Tech", "GOOGL": "Tech", "AMZN": "Retail", "META": "Social Media",
     "TSLA": "EV", "BYD": "EV",
-    "SPY": "Index", "QQQ": "Index", "IWM": "Index"
+    "SPY": "Index", "QQQ": "Index", "IWM": "Index",
+    # ── HK-listed China large caps (2026-05-22 added — was all defaulting to "Other") ──
+    "0700.HK": "Tech",       # Tencent
+    "9988.HK": "Tech",       # Alibaba HK
+    "9618.HK": "Tech",       # JD HK
+    "3690.HK": "Tech",       # Meituan
+    "1024.HK": "Tech",       # Kuaishou
+    "1810.HK": "Tech",       # Xiaomi
+    "2382.HK": "Semiconductors", # Sunny Optical
+    "1211.HK": "EV",         # BYD
+    "9866.HK": "EV",         # NIO HK
+    "0005.HK": "Financial",  # HSBC HK
+    "0388.HK": "Financial",  # HKEX
+    "2628.HK": "Financial",  # China Life
+    "02822.HK": "Index",     # CSOP A50
+    "03037.HK": "Index",     # FTSE China A50 ETF
+    # ── Chinese ADRs in US (also missing) ──
+    "BABA": "Tech", "BIDU": "Tech", "JD": "Tech", "PDD": "Tech",
+    "NTES": "Tech", "TCOM": "Consumer", "NIO": "EV", "LI": "EV",
+    "XPEV": "EV", "BILI": "Communication", "IQ": "Communication",
 }
 
 def get_symbol_sector(symbol: str) -> str:
@@ -1426,6 +1445,31 @@ TRUMP_CHINA_BENEFICIARIES = {
 
 
 CATALYST_MAP = {
+    # ── US Government Industrial Policy / CHIPS Act stake (2026-05-23 added
+    # after SerenityTrader missed the Aug 2026 US-takes-INTC-stake catalyst) ──
+    # These keywords are shared across ALL semi tickers below so any future
+    # gov-stake / industrial-policy event for AMD/NVDA/TSM/GFS/MU also fires.
+    "INTC": {
+        "catalyst_keywords": [
+            "government stake", "us government", "sovereign stake", "treasury stake",
+            "chips act", "chips and science", "10% stake", "equity stake",
+            "trump intel", "biden intel", "industrial policy", "national security",
+            "us takes stake", "us acquires", "intel foundry", "foundry deal",
+            "ohio fab", "arizona fab", "samsung intel", "tsm intel",
+            "beats estimates", "record revenue", "ai pc", "panther lake",
+            "lunar lake", "18a", "intel 18a", "gaudi", "data center",
+            "ceo", "lip-bu tan", "spin off", "restructuring",
+        ],
+        "upside_thesis": "INTC US govt stake + CHIPS Act + foundry comeback; 18a process node yield + Lip-Bu Tan turnaround",
+    },
+    "GFS": {
+        "catalyst_keywords": [
+            "government stake", "chips act", "us government", "sovereign stake",
+            "industrial policy", "national security", "foundry",
+            "globalfoundries", "us takes stake",
+        ],
+        "upside_thesis": "GFS US govt support via CHIPS Act + domestic foundry mandate",
+    },
     "AMD": {
         "catalyst_keywords": [
             "major contract", "partnership", "ai chip deal", "chip deployment",
@@ -1438,8 +1482,10 @@ CATALYST_MAP = {
             "china export", "export license", "cleared for china",
             "china approval", "ai chip sales to china", "lifts ban",
             "export controls eased",
+            # US government industrial policy — added 2026-05-23
+            "government stake", "us government", "chips act", "industrial policy",
         ],
-        "upside_thesis": "AMD MI300/MI350 AI GPU adoption by hyperscalers; server CPU share gains vs Intel; China-export thaw",
+        "upside_thesis": "AMD MI300/MI350 AI GPU adoption by hyperscalers; server CPU share gains vs Intel; China-export thaw; CHIPS Act eligibility",
     },
     "META": {
         "catalyst_keywords": [
@@ -1813,10 +1859,28 @@ def detect_catalysts_for_symbol(target_symbol: str, hours_back: int = 24) -> lis
     """
     Check if there is positive catalyst news for `target_symbol`.
     Returns list of detected catalysts with strength scoring.
-    
+
+    Two-source merge (2026-05-23):
+      1. LLM-classified catalysts from llm_catalyst_extractor (preferred —
+         catches novel events the static keyword map misses, e.g. "US gov
+         takes 10% stake in INTC")
+      2. Static keyword-matched catalysts from CATALYST_MAP (legacy fallback —
+         still useful for high-precision exact-phrase matches)
+
+    Deduped by news_title so the same headline isn't reported twice if both
+    pipelines match it.
+
     Unlike detect_threats_for_symbol(), this looks for BULLISH signals
     such as large contracts, partnerships, earnings beats, product launches.
     """
+    # ── LLM-driven extraction (covers novel event types) ──
+    llm_catalysts = []
+    try:
+        import llm_catalyst_extractor as _lce
+        llm_catalysts = _lce.extract_catalysts_for_symbol(target_symbol, hours_back=hours_back)
+    except Exception as e:
+        logger.debug(f"[CatalystMap] LLM extractor failed for {target_symbol}: {e}; "
+                     f"falling back to static-keyword map only")
     config = CATALYST_MAP.get(target_symbol)
     is_macro_beneficiary = target_symbol in TRUMP_CHINA_BENEFICIARIES
 
@@ -1896,6 +1960,19 @@ def detect_catalysts_for_symbol(target_symbol: str, hours_back: int = 24) -> lis
                 f"[CatalystMap] 🚀 CATALYST DETECTED: {target_symbol} — \"{c['news_title'][:60]}\" "
                 f"(keywords: {c['matched_keywords']}) → Level: {c['catalyst_level']}"
             )
+
+    # ── Merge in LLM-extracted catalysts (dedup by news_title) ──
+    if llm_catalysts:
+        existing_titles = {c.get("news_title","").strip().lower() for c in catalysts}
+        for c in llm_catalysts:
+            t = c.get("news_title","").strip().lower()
+            if t and t not in existing_titles:
+                catalysts.append(c)
+                existing_titles.add(t)
+                logger.info(
+                    f"[CatalystMap+LLM] 🤖 {target_symbol} — \"{c['news_title'][:60]}\" "
+                    f"→ {c['catalyst_level']} {c.get('llm_direction','?')} (conf {c.get('llm_confidence',0):.2f})"
+                )
 
     return catalysts
 

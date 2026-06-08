@@ -107,7 +107,7 @@ curl -X POST http://localhost:8888/api/trade/manual \
 
 ## 6. 常见陷阱
 
-- **clientId 冲突**：如果同账户其他客户端（TWS GUI、其它脚本）用了 clientId=10，AlphaTrader 会断连。换个数字即可。
+- **clientId 冲突**：如果同账户其他客户端（TWS GUI、其它脚本）用了 clientId=10，SerenityTrader 会断连。换个数字即可。
 - **Live vs Paper 端口搞错**：`4001` live / `4002` paper（Gateway），`7496` live / `7497` paper（TWS）。
 - **周末重启**：IBC 默认配置每周日强制 logout，需在 `config.ini` 设置 `IbAutoClosedown=no` 才能 7×24 跑。
 - **港股交易时段**：HK 早盘 09:30-12:00 + 午盘 13:00-16:00 (HKT)。在收盘前最后 10 分钟不要主动下单。
