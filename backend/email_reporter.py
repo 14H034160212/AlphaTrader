@@ -1,5 +1,5 @@
 """
-Daily email reporter for AlphaTrader.
+Daily email reporter for SerenityTrader.
 - Sends a daily portfolio + AI signal report via Gmail SMTP
 - Uses IMAP IDLE for real-time push notification when user replies
   (server notifies immediately; no polling delay)
@@ -21,7 +21,7 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 IMAP_HOST = "imap.gmail.com"
 IMAP_PORT = 993
-REPORT_SUBJECT_PREFIX = "AlphaTrader Daily Report"
+REPORT_SUBJECT_PREFIX = "SerenityTrader Daily Report"
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +365,7 @@ def generate_report_html(
 
   <!-- Header -->
   <div style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);padding:28px 32px;color:#fff;">
-    <div style="font-size:22px;font-weight:700;letter-spacing:1px;">📈 AlphaTrader Daily Report</div>
+    <div style="font-size:22px;font-weight:700;letter-spacing:1px;">📈 SerenityTrader Daily Report</div>
     <div style="margin-top:6px;color:#a0b4c8;font-size:14px;">{date_str} · 美东时间收盘后汇报</div>
   </div>
 
@@ -551,7 +551,7 @@ def generate_report_html(
 
   <!-- Footer -->
   <div style="background:#f8f9fa;padding:16px 32px;text-align:center;color:#aaa;font-size:11px;border-top:1px solid #eee;">
-    AlphaTrader Pro · 本报告由 AI 自动生成，不构成投资建议 · 请独立判断风险
+    SerenityTrader Pro · 本报告由 AI 自动生成，不构成投资建议 · 请独立判断风险
   </div>
 
 </div>
@@ -709,9 +709,9 @@ def send_email(sender: str, app_password: str, recipient: str, subject: str, htm
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = f"AlphaTrader <{sender}>"
+        msg["From"] = f"SerenityTrader <{sender}>"
         msg["To"] = recipient
-        msg["X-Mailer"] = "AlphaTrader-Pro"
+        msg["X-Mailer"] = "SerenityTrader-Pro"
         msg.attach(MIMEText(html, "html", "utf-8"))
 
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
@@ -764,13 +764,13 @@ def _extract_body(msg) -> str:
 
 def _fetch_new_replies(mail: imaplib.IMAP4_SSL) -> list[dict]:
     """
-    After IDLE notifies of new mail, fetch any unread AlphaTrader reply messages.
+    After IDLE notifies of new mail, fetch any unread SerenityTrader reply messages.
     Returns list of {subject, body, date} dicts.
     """
     replies = []
     try:
-        # Search for unseen replies with AlphaTrader in subject
-        status, data = mail.search(None, '(UNSEEN SUBJECT "AlphaTrader")')
+        # Search for unseen replies with SerenityTrader in subject
+        status, data = mail.search(None, '(UNSEEN SUBJECT "SerenityTrader")')
         if status != "OK" or not data[0]:
             return []
         for uid in data[0].split():
@@ -866,7 +866,7 @@ async def process_reply_with_ai(reply_body: str, db, settings: dict) -> dict:
     try:
         import deepseek_ai as _ai_mod
 
-        prompt = f"""You are the control system for an automated stock trading platform called AlphaTrader.
+        prompt = f"""You are the control system for an automated stock trading platform called SerenityTrader.
 The user has replied to their daily report with the following instruction:
 
 ---

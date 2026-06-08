@@ -327,7 +327,7 @@ def to_csv_bundle(summary: dict) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
 
-    w.writerow([f"AlphaTrader NZ Tax Summary — FY {summary['fy_ending_year']}"])
+    w.writerow([f"SerenityTrader NZ Tax Summary — FY {summary['fy_ending_year']}"])
     w.writerow([f"Period: {summary['fy_start']} to {summary['fy_end']}"])
     w.writerow([f"Generated: {summary['generated_at']}"])
     w.writerow([])
@@ -384,7 +384,7 @@ def to_html(summary: dict) -> str:
     s = summary["summary"]
     return f"""
 <html><body style="font-family:Arial,sans-serif;color:#2c3e50;">
-  <h2>AlphaTrader NZ Tax Summary — FY {summary['fy_ending_year']}</h2>
+  <h2>SerenityTrader NZ Tax Summary — FY {summary['fy_ending_year']}</h2>
   <p style="color:#7f8c8d;">Period: {summary['fy_start']} → {summary['fy_end']}<br>
   Generated: {summary['generated_at']} UTC</p>
 

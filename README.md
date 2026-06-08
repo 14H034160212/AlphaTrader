@@ -1,6 +1,14 @@
-# AlphaTrader Pro
+# SerenityTrader Pro
 
-**AlphaTrader Pro** is a fully automated AI quantitative trading system powered by a Python/FastAPI backend and a pure HTML/JS frontend. It runs a hybrid LLM stack (local Qwen3.5 35B MoE + optional DeepSeek-Cloud API) with the Kronos K-line prediction model, and executes real trades across US (Alpaca) and Hong Kong (Moomoo OpenD) markets.
+> **SerenityTrader Pro** (formerly *AlphaTrader Pro*) — an autonomous AI trading platform whose stock-selection brain reasons through the **Serenity supply-chain chokepoint lens**.
+
+**SerenityTrader Pro** is a fully automated AI quantitative trading system powered by a Python/FastAPI backend and a pure HTML/JS frontend. It runs a hybrid LLM stack (local Qwen3.5 35B MoE + optional DeepSeek-Cloud API) with the Kronos K-line prediction model, and executes real trades across US (Alpaca) and Hong Kong (Moomoo OpenD) markets.
+
+### 🧭 Powered by the Serenity supply-chain lens
+
+The trade-selection brain applies the analytical methodology of **Serenity ([@aleabitoreddit](https://x.com/aleabitoreddit))** — a public X trader and AI/semiconductor *supply-chain* analyst who traces hyperscaler capex into the overlooked upstream bottlenecks (optical/CPO, InP substrates, memory/HBM, AI power/grid). His lens is packaged as two installable agent skills under [`.claude/skills/`](.claude/skills/): `serenity-aleabitoreddit` (per-ticker theses + track record, distilled from 5,857 tweets) and `serenity-chokepoint-analysis` (the six-step chokepoint framework).
+
+> ⚠️ **Decision-support only — not financial advice.** The Serenity lens shapes *which questions the brain asks*; it never auto-trades on copied signals. Serenity's self-reported returns are unverified and carry survivorship/selection bias; his names are volatile micro/small-caps. See the skill's risk framing.
 
 ## What's new (May 2026)
 
@@ -36,7 +44,7 @@
 
 ## 📡 Data Sources and Acquisition Channels
 
-AlphaTrader Pro utilizes multi-modal data inputs, continuously fetched in the background by automated daemon tasks:
+SerenityTrader Pro utilizes multi-modal data inputs, continuously fetched in the background by automated daemon tasks:
 
 1. **Market Data & Historical K-Lines**
    - **Channel**: Yahoo Finance (`yfinance` Python library).
@@ -377,7 +385,7 @@ mkdir -p ~/.config/systemd/user
 
 cat > ~/.config/systemd/user/alphatrader.service << 'EOF'
 [Unit]
-Description=AlphaTrader Backend Service
+Description=SerenityTrader Backend Service
 After=network.target
 
 [Service]
@@ -406,7 +414,7 @@ systemctl --user enable alphatrader
 ### 8. (Optional) Hong Kong Trading via Moomoo OpenD
 
 For HK / A-share / multi-region trading, install Moomoo OpenD on the same host
-as the backend (or on any host AlphaTrader can reach on port 11111).
+as the backend (or on any host SerenityTrader can reach on port 11111).
 
 ```bash
 # Download OpenD Linux tarball from Moomoo's official site
@@ -426,7 +434,7 @@ nohup ./OpenD > opend.console.log 2>&1 &
 # Then in another shell (or via Python socket), send to 127.0.0.1:22222:
 #   input_phone_verify_code -code=NNNNNN
 
-# Wire AlphaTrader to OpenD via the DB settings table:
+# Wire SerenityTrader to OpenD via the DB settings table:
 #   futu_enabled=true
 #   futu_host=127.0.0.1
 #   futu_port=11111
@@ -541,7 +549,7 @@ curl -s -X POST http://localhost:8000/api/settings \
 ## Project Structure
 
 ```text
-AlphaTrader/
+SerenityTrader/
 ├── start.sh                    # Startup script (includes auto-restart daemon)
 ├── stop.sh                     # Stop script
 ├── rl_training_data.jsonl      # RL training data (appended per trade)

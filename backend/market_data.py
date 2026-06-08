@@ -380,6 +380,60 @@ def get_global_popular_stocks(region: str = None) -> list:
     return list(dict.fromkeys(all_stocks))  # deduplicate while preserving order
 
 
+def _moomoo_hk_quote(symbol: str) -> dict | None:
+    """
+    Fallback HK quote via Moomoo OpenD snapshot — used when yfinance can't
+    resolve the ticker (esp. HK ETFs like 02822.HK / 03037.HK that yfinance
+    returns 'Not Found' for).
+    """
+    try:
+        import futu as ft
+        from market_calendar import detect_market, get_currency
+        from futu_broker import _to_futu_code
+        if detect_market(symbol) != "HK":
+            return None
+        ctx = ft.OpenQuoteContext(host="127.0.0.1", port=11111)
+        try:
+            ret, data = ctx.get_market_snapshot([_to_futu_code(symbol)])
+            if ret != ft.RET_OK or data is None or data.empty:
+                return None
+            row = data.iloc[0]
+            cur = float(row.get("last_price", 0) or 0)
+            prev = float(row.get("prev_close_price", cur) or cur)
+            if cur <= 0:
+                return None
+            return {
+                "symbol": symbol,
+                "name": symbol,
+                "current": round(cur, 3),
+                "open": round(float(row.get("open_price", cur)), 3),
+                "high": round(float(row.get("high_price", cur)), 3),
+                "low": round(float(row.get("low_price", cur)), 3),
+                "volume": int(row.get("volume", 0) or 0),
+                "change": round(cur - prev, 3),
+                "change_pct": round((cur-prev)/prev*100, 3) if prev else 0,
+                "market_cap": None,
+                "pe_ratio": None,
+                "fifty_two_week_high": float(row.get("highest52weeks_price", cur)) if "highest52weeks_price" in row else None,
+                "fifty_two_week_low":  float(row.get("lowest52weeks_price",  cur)) if "lowest52weeks_price"  in row else None,
+                "sector": "",
+                "currency": "HKD",
+                "exchange": "HKEX",
+                "market": "HK",
+                "lot_size": int(row.get("lot_size", 100) or 100),  # ← real-time from Moomoo
+                "timestamp": datetime.utcnow().isoformat(),
+                # No fundamentals — DCF gate in deepseek_ai will recognize and skip
+                "dcf_value": None, "ddm_value": None,
+                "intrinsic_value": None, "valuation_gap_pct": None,
+                "source": "moomoo",
+            }
+        finally:
+            ctx.close()
+    except Exception as e:
+        logger.debug(f"[Moomoo HK quote] {symbol} failed: {e}")
+        return None
+
+
 def get_stock_quote(symbol: str) -> dict:
     """Fetch current quote for a stock (all markets). Cached for 5 min."""
     cache_key = ("quote", symbol)
@@ -396,7 +450,11 @@ def get_stock_quote(symbol: str) -> dict:
         info = ticker.info
         hist = ticker.history(period="20d")
         if hist.empty:
-            return None
+            # yfinance couldn't resolve — try Moomoo for HK
+            mq = _moomoo_hk_quote(symbol)
+            if mq:
+                _cache.set(cache_key, mq, QUOTE_TTL)
+            return mq
 
         current = float(hist["Close"].iloc[-1])
         prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else current
@@ -464,6 +522,11 @@ def get_stock_quote(symbol: str) -> dict:
         _cache.set(cache_key, result, QUOTE_TTL)
         return result
     except Exception as e:
+        logger.warning(f"yfinance failed for {symbol}: {e} — trying Moomoo HK fallback")
+        mq = _moomoo_hk_quote(symbol)
+        if mq:
+            _cache.set(cache_key, mq, QUOTE_TTL)
+            return mq
         logger.error(f"Error fetching stock {symbol}: {e}")
         return None
 

@@ -12,6 +12,6 @@ print(f"Live Cash Balance: ${summ['cash']}")
 print(f"Total Equity: ${summ['total_equity']}")
 
 if float(summ['cash']) > 0:
-    print("✅ Live Connection Verified! AlphaTrader is armed and dangerous.")
+    print("✅ Live Connection Verified! SerenityTrader is armed and dangerous.")
 else:
     print("⚠️ Connection returned 0 balance. Please check if keys are correct and account is funded.")

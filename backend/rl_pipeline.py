@@ -1,7 +1,7 @@
 """
 RL Pipeline Orchestrator
 ========================
-End-to-end MLOps cycle for AlphaTrader's RL models.  Runs daily as Task 19.
+End-to-end MLOps cycle for SerenityTrader's RL models.  Runs daily as Task 19.
 
 Cycle (one tick):
   1.  Back-fill rewards on the JSONL via update_trade_outcomes()
@@ -394,7 +394,32 @@ def trigger_lora_training_if_needed(records: list) -> str | None:
             return f"Dataset preparation failed: {e}"
 
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = "1,2"
+    # Dynamic GPU selection — pick the two GPUs with the most free memory
+    # right now. Avoids hard-coding GPU 1,2 which collided with another
+    # user's job 2026-05-21. Fallback to 1,2 if nvidia-smi unavailable.
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
+            text=True, timeout=5,
+        ).strip().splitlines()
+        gpus = []
+        for line in out:
+            idx, free = [x.strip() for x in line.split(",")]
+            gpus.append((int(idx), int(free)))
+        # Need ≥60GB free per GPU for Qwen3.5-35B bf16 split across 2 GPUs
+        gpus = sorted([g for g in gpus if g[1] >= 60000], key=lambda x: -x[1])
+        if len(gpus) >= 2:
+            chosen = f"{gpus[0][0]},{gpus[1][0]}"
+            env["CUDA_VISIBLE_DEVICES"] = chosen
+            logger.info(f"[Pipeline] LoRA trainer GPU dynamic pick: {chosen} "
+                        f"(free: {gpus[0][1]}MiB + {gpus[1][1]}MiB)")
+        else:
+            logger.warning(f"[Pipeline] No 2 GPUs with ≥60GB free; LoRA training will likely OOM. "
+                           f"Skipping spawn this cycle.")
+            return f"LoRA training skipped: insufficient free GPU memory (need 2× ≥60GB, available: {gpus})"
+    except Exception as e:
+        logger.warning(f"[Pipeline] GPU query failed ({e}), falling back to GPU 1,2")
+        env["CUDA_VISIBLE_DEVICES"] = "1,2"
     env["PYTHONUNBUFFERED"]     = "1"
     log_path = "/tmp/rl_lora_auto.log"
     # Hold the log fd open for the lifetime of the child via pass_fds so the

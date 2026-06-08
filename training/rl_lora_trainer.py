@@ -1,8 +1,8 @@
 """
-AlphaTrader RL LoRA Trainer (Path 2)
+SerenityTrader RL LoRA Trainer (Path 2)
 =====================================
 Fine-tunes Qwen3.5-35B-A3B (MoE) with LoRA adapters using reward-weighted SFT
-on AlphaTrader's real trading P&L data.
+on SerenityTrader's real trading P&L data.
 
 Model: Qwen/Qwen3.5-35B-A3B
   - MoE architecture: 35B total params, only ~3B active per token (8 routed + 1 shared expert)
@@ -402,7 +402,7 @@ def train(args):
 # ──────────────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="AlphaTrader RL LoRA Trainer")
+    parser = argparse.ArgumentParser(description="SerenityTrader RL LoRA Trainer")
     parser.add_argument("--model_name_or_path",  default="Qwen/Qwen3.5-35B-A3B",
                         help="HuggingFace model ID (default: Qwen/Qwen3.5-35B-A3B)")
     parser.add_argument("--dataset_dir",         default="./rl_sft_dataset")

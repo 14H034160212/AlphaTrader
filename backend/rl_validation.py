@@ -39,7 +39,10 @@ REGISTRY_FILE  = os.path.join(MODELS_DIR, "registry.json")
 # Promotion thresholds
 DIR_ACC_PROMOTE_THRESHOLD = 2.0   # percentage points improvement → auto-promote
 DIR_ACC_SHADOW_THRESHOLD  = 0.0   # if >0 but < promote → shadow mode
-MIN_HOLDOUT_SAMPLES       = 50
+MIN_HOLDOUT_SAMPLES       = 30   # was 50. Lowered 2026-05-21 because broken-AI
+                                  # 5/15→5/20 left only ~25 fresh records in rolling
+                                  # 7d window. Reach back into pre-break data via
+                                  # widened holdout_days=14 (see background_rl_pipeline).
 
 
 def _ensure_dirs():

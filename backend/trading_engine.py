@@ -129,7 +129,21 @@ class TradingEngine:
                 return self._ibkr, "IBKR"
             return None, "Paper"
 
-        # All other international markets → IBKR or Paper
+        # AU / JP / SG → Moomoo (Futu) if connected AND user has activated that
+        # market in their Moomoo account, else IBKR or Paper.
+        # 2026-05-21: Moomoo AU OpenD probe confirmed live AU account exists
+        # under the same acc_id as HK/US. JP/SG require additional Moomoo-side
+        # market-permission activation (KYC) but the code path works once
+        # activated.
+        if market in ("AU", "JP", "SG"):
+            if self._futu and self._futu.is_connected():
+                return self._futu, "Futu"
+            if self._ibkr and self._ibkr.is_connected():
+                return self._ibkr, "IBKR"
+            return None, "Paper"
+
+        # All other international markets (GB/DE/FR/NL/IT/ES/CH/KR/IN/...)
+        # → IBKR only (Moomoo doesn't carry these)
         if self._ibkr and self._ibkr.is_connected():
             return self._ibkr, "IBKR"
         return None, "Paper"
@@ -596,7 +610,28 @@ class TradingEngine:
         else:
             risk_amount = total_equity * (risk_per_trade_pct / 100)
 
-        quantity = round(risk_amount / current_price, 4)
+        # Currency conversion: portfolio/risk_amount are USD-denominated, but
+        # current_price for foreign markets is in local currency. Without this,
+        # we under-size by the FX rate (e.g. 02822.HK in HKD got 58 shares
+        # instead of 457). 2026-05-22.
+        _sym_ccy = get_currency(symbol)
+        if _sym_ccy != "USD":
+            _USD_TO_LOCAL = {  # approximate fixed rates — fine for sizing, not for accounting
+                "HKD": 7.80, "CNY": 7.20, "JPY": 150.0, "EUR": 0.92,
+                "GBP": 0.79, "AUD": 1.55, "NZD": 1.68, "KRW": 1350.0,
+                "SGD": 1.34, "INR": 84.0, "CAD": 1.37, "CHF": 0.88, "TWD": 32.0,
+            }
+            fx = _USD_TO_LOCAL.get(_sym_ccy)
+            if fx:
+                risk_amount_local = risk_amount * fx
+                logger.info(f"[FX] {symbol} risk USD${risk_amount:.0f} × {fx} {_sym_ccy}/USD = {_sym_ccy}{risk_amount_local:.0f}")
+                quantity = round(risk_amount_local / current_price, 4)
+            else:
+                # Unknown currency — fall back to direct division and log warning
+                logger.warning(f"[FX] No conversion rate for {_sym_ccy}; quantity sizing may be wrong for {symbol}")
+                quantity = round(risk_amount / current_price, 4)
+        else:
+            quantity = round(risk_amount / current_price, 4)
 
         if action in ("BUY", "COVER"):
             if quantity < 0.001:
@@ -607,6 +642,39 @@ class TradingEngine:
                     quantity = min(quantity, abs(pos.quantity))
                 else:
                     return {"success": False, "skipped": True, "reason": "No short position to cover"}
+
+            # ── FOCUS-THEME GATE (user directive 2026-05-27) ──
+            # User-named focus sectors (chips/semis/robotics/GPU-supply) get
+            # buy priority. Off-theme, non-core names need MUCH higher conviction
+            # so the system stops "乱买" generic large-caps (MSFT/CRM) when the
+            # user wants thematic exposure. Core ETFs (SPY/VOO) are exempt — they
+            # are the stable base. Focus-theme names use the normal bar.
+            if action in ("BUY", "COVER") and not ps.is_core_etf(symbol):
+                try:
+                    # User-pinned priority symbols always pass (explicit highest-priority picks)
+                    priority_setting = get_setting(self.db, "priority_symbols", self.user_id, "MU,WDC,STX,SNDK")
+                    priority_syms = {s.strip() for s in priority_setting.split(",") if s.strip()}
+                    focus_setting = get_setting(self.db, "focus_themes", self.user_id,
+                                                "physical_ai_robotics,gpu_downstream_supply")
+                    focus_themes = [t.strip() for t in focus_setting.split(",") if t.strip()]
+                    if focus_themes and symbol not in priority_syms:
+                        import dynamic_watchlist as _dw
+                        focus_syms = set()
+                        for t in focus_themes:
+                            focus_syms.update(_dw.THEMATIC_UNIVERSES.get(t, []))
+                        if symbol not in focus_syms:
+                            off_theme_min = float(get_setting(
+                                self.db, "off_theme_min_confidence", self.user_id, "0.90"))
+                            if confidence < off_theme_min:
+                                return {
+                                    "success": False, "skipped": True,
+                                    "reason": (f"Off-theme: {symbol} not in focus sectors "
+                                               f"{focus_themes}; confidence {confidence:.0%} < "
+                                               f"{off_theme_min:.0%} required for off-theme buys. "
+                                               f"Capital reserved for focus-theme names.")
+                                }
+                except Exception as _fe:
+                    logger.debug(f"[FocusGate] {symbol}: {_fe}")
 
             # Large-cap preference filter (user directive 2026-05-13).
             # Unknown/small companies need higher conviction to trade.
@@ -748,6 +816,34 @@ class TradingEngine:
                 pos = self.get_position(symbol)
                 if not pos or pos.quantity <= 0:
                     return {"success": False, "skipped": True, "reason": f"No long position in {symbol} to sell"}
+
+                # ── Minimum-holding-period gate (2026-05-26: user reported
+                # over-trading of quality names — NVDA/AAPL/TSLA churned within
+                # a week). Block SELL within MIN_HOLD_DAYS of the last BUY UNLESS
+                # the stop-loss is genuinely breached (real loss, not daily noise).
+                # This enforces the long-term-horizon directive. ──
+                min_hold_days = int(get_setting(self.db, "min_hold_days", self.user_id, "5"))
+                if min_hold_days > 0:
+                    from datetime import datetime, timedelta
+                    last_buy = (self.db.query(Trade)
+                                .filter(Trade.user_id == self.user_id,
+                                        Trade.symbol == symbol,
+                                        Trade.side == "BUY")
+                                .order_by(Trade.timestamp.desc()).first())
+                    if last_buy:
+                        held_days = (datetime.utcnow() - last_buy.timestamp).total_seconds() / 86400
+                        # Stop-loss override: only a REAL breach (price < entry × (1 - stop%))
+                        stop_pct = float(get_setting(self.db, "stop_loss_pct", self.user_id, "5.0")) / 100
+                        entry = float(last_buy.price or current_price)
+                        real_stop_breach = current_price < entry * (1 - stop_pct)
+                        if held_days < min_hold_days and not real_stop_breach:
+                            return {
+                                "success": False, "skipped": True,
+                                "reason": (f"Min-hold gate: held {symbol} only {held_days:.1f}d "
+                                           f"(< {min_hold_days}d), price ${current_price:.2f} vs entry "
+                                           f"${entry:.2f} not below stop. Long-term hold — not selling on noise.")
+                            }
+
                 quantity = min(quantity, pos.quantity)
             return self.execute_sell(symbol, quantity, current_price, True, confidence, reasoning)
 
