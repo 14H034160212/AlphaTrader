@@ -29,7 +29,11 @@ while true; do
     health=$(curl -s -m 8 -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/api/tags" 2>/dev/null)
     if [ "$health" != "200" ]; then
         echo "[$(date)] health check failed (HTTP $health), restarting daemon" >> "$LOG"
-        pkill -u "$(whoami)" -f "ollama serve" 2>/dev/null
+        # Kill ONLY the process bound to $PORT (11435) — NOT every user
+        # "ollama serve" (the old `pkill -f "ollama serve"` also took down the
+        # 11434/11436/11438/11439 instances). Target just the PID on $PORT.
+        bad_pid=$(ss -ltnp 2>/dev/null | grep ":$PORT " | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+        [ -n "$bad_pid" ] && kill "$bad_pid" 2>/dev/null
         sleep 3
     fi
 
