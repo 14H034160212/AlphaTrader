@@ -1,12 +1,20 @@
+<p align="center">
+  <a href="https://x.com/aleabitoreddit">
+    <img src="assets/serenity-avatar.jpg" alt="Serenity (@aleabitoreddit)" width="112" height="112">
+  </a>
+</p>
+
 # SerenityTrader Pro
 
-> **SerenityTrader Pro** (formerly *AlphaTrader Pro*) — an autonomous AI trading platform whose stock-selection brain reasons through the **Serenity supply-chain chokepoint lens**.
+> **SerenityTrader Pro** (short name: **AlphaTrader**) — an autonomous AI trading platform whose stock-selection brain reasons through the **Serenity supply-chain chokepoint lens**.
 
 **SerenityTrader Pro** is a fully automated AI quantitative trading system powered by a Python/FastAPI backend and a pure HTML/JS frontend. It runs a hybrid LLM stack (local Qwen3.5 35B MoE + optional DeepSeek-Cloud API) with the Kronos K-line prediction model, and executes real trades across US (Alpaca) and Hong Kong (Moomoo OpenD) markets.
 
 ### 🧭 Powered by the Serenity supply-chain lens
 
-The trade-selection brain applies the analytical methodology of **Serenity ([@aleabitoreddit](https://x.com/aleabitoreddit))** — a public X trader and AI/semiconductor *supply-chain* analyst who traces hyperscaler capex into the overlooked upstream bottlenecks (optical/CPO, InP substrates, memory/HBM, AI power/grid). His lens is packaged as two installable agent skills under [`.claude/skills/`](.claude/skills/): `serenity-aleabitoreddit` (per-ticker theses + track record, distilled from 5,857 tweets) and `serenity-chokepoint-analysis` (the six-step chokepoint framework).
+The trade-selection brain applies the analytical methodology of **Serenity ([@aleabitoreddit](https://x.com/aleabitoreddit))** — a public X trader and AI/semiconductor *supply-chain* analyst who traces hyperscaler capex into the overlooked upstream bottlenecks (optical/CPO, InP substrates, memory/HBM, AI power/grid). His lens is packaged as two installable agent skills under [`.claude/skills/`](.claude/skills/): `serenity-aleabitoreddit` (per-ticker theses + track record, distilled from 5,857 tweets) and `serenity-chokepoint-analysis` (the six-step chokepoint framework). Both are also published standalone at [`14H034160212/serenity-skills`](https://github.com/14H034160212/serenity-skills) — install with `npx skills add 14H034160212/serenity-skills`.
+
+> **Attribution.** The `serenity-aleabitoreddit` skill is redistributed from the upstream research artifact [`yan-labs/serenity-aleabitoreddit`](https://github.com/yan-labs/serenity-aleabitoreddit) ([skills.sh](https://skills.sh/yan-labs/serenity-aleabitoreddit)), which independently distilled the public work of Serenity ([@aleabitoreddit](https://x.com/aleabitoreddit)). All credit for the underlying research and tweet corpus belongs to them; this project is an independent, unaffiliated redistribution. `serenity-chokepoint-analysis` is original work by [@14H034160212](https://github.com/14H034160212).
 
 > ⚠️ **Decision-support only — not financial advice.** The Serenity lens shapes *which questions the brain asks*; it never auto-trades on copied signals. Serenity's self-reported returns are unverified and carry survivorship/selection bias; his names are volatile micro/small-caps. See the skill's risk framing.
 
