@@ -206,6 +206,21 @@ def build_serenity_lens_block(symbol, sector="Other"):
     return header + stance_block + checklist_block + decision_guidance
 
 
+def recommended_tickers(min_mentions=50):
+    """Serenity's recurring conviction universe — his 'recommended' names.
+
+    Returns tickers he mentions at least `min_mentions` times, highest-conviction
+    first. Used to drive the watchlist so the engine analyses ONLY Serenity's
+    names (user directive 2026-06-08) rather than self-discovering others.
+    Note: this is his coverage universe; the per-stock Serenity lens still
+    decides BUY vs HOLD (e.g. it stays skeptical of mega-cap 'shovel sellers'
+    like NVDA even though he mentions them often).
+    """
+    return [t for t, info in sorted(_UNIVERSE.items(),
+                                    key=lambda kv: -kv[1]["mentions"])
+            if info["mentions"] >= min_mentions]
+
+
 def universe_size():
     """Number of distinct tickers in Serenity's loaded universe (for diagnostics)."""
     return len(_UNIVERSE)

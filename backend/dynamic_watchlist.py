@@ -41,6 +41,13 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+# ── Serenity-only mode (user directive 2026-06-08) ──────────────────────────
+# When Settings.watchlist_source == "serenity" (the default), the watchlist is
+# built SOLELY from Serenity's recommended universe + current holdings — no
+# momentum/news/sentiment self-discovery of other names. Set watchlist_source
+# to "dynamic" to restore the old market-driven discovery below.
+SERENITY_MIN_MENTIONS      = 50         # >=50 mentions ≈ his 57 recurring conviction names
+
 # ── Discovery thresholds ────────────────────────────────────────────────────
 MAX_WATCHLIST_SIZE         = 200        # raised 5/26 from 150 to give room for
                                          # thematic discoveries (Physical AI + GPU
@@ -525,6 +532,30 @@ def run_discovery_cycle(db_session=None) -> dict:
     try:
         current = _load_current_watchlist(db)
         held = get_held_symbols(db)
+
+        # ── Serenity-only mode (user directive 2026-06-08) ──
+        # Build the watchlist purely from Serenity's recommended universe plus
+        # current holdings (held stay so the engine can still HOLD/SELL/stop-loss
+        # them). Skip ALL self-discovery of other names.
+        from database import get_setting
+        if get_setting(db, "watchlist_source", 1, "serenity") == "serenity":
+            try:
+                import serenity_lens
+                rec = serenity_lens.recommended_tickers(min_mentions=SERENITY_MIN_MENTIONS)
+            except Exception as e:
+                logger.warning("serenity recommended_tickers failed: %s", e)
+                rec = []
+            # held first (must monitor), then Serenity's conviction names
+            wl = list(dict.fromkeys(list(held) + rec))
+            if len(wl) > MAX_WATCHLIST_SIZE:
+                wl = wl[:MAX_WATCHLIST_SIZE]
+            added_now = [s for s in wl if s not in current]
+            pruned = [s for s in current if s not in wl]
+            if added_now or pruned:
+                _persist_watchlist(db, wl)
+            return {"mode": "serenity", "watchlist_size": len(wl),
+                    "serenity_names": len(rec), "held": len(held),
+                    "added": added_now, "pruned": pruned}
 
         # ── Collect additions from all sources ──
         adds: set[str] = set()
