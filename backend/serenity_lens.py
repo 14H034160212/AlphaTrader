@@ -81,9 +81,37 @@ def _extract_checklist():
     return "\n".join(lines[start:end]).strip()
 
 
-# Cache the static pieces at import time.
-_UNIVERSE = _load_universe()
-_CHECKLIST = _extract_checklist()
+# Hot-reloadable cache: re-read the data files whenever their mtime changes, so a
+# background refresh (refresh_serenity_data.sh pulling yan-labs latest) is picked
+# up by the RUNNING engine with no restart. Falls back to last-good on read error.
+_cache = {"universe": None, "uni_mtime": None, "checklist": None, "chk_mtime": None}
+
+
+def _mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+def _get_universe():
+    m = _mtime(_UNIVERSE_PATH)
+    if _cache["universe"] is None or m != _cache["uni_mtime"]:
+        loaded = _load_universe()
+        if loaded or _cache["universe"] is None:
+            _cache["universe"] = loaded
+            _cache["uni_mtime"] = m
+    return _cache["universe"]
+
+
+def _get_checklist():
+    m = _mtime(_METHODOLOGY_PATH)
+    if _cache["checklist"] is None or m != _cache["chk_mtime"]:
+        loaded = _extract_checklist()
+        if loaded or _cache["checklist"] is None:
+            _cache["checklist"] = loaded
+            _cache["chk_mtime"] = m
+    return _cache["checklist"]
 
 
 def _ticker_track_record(symbol, limit=6):
@@ -112,7 +140,8 @@ def get_ticker_stance(symbol):
     sym = (symbol or "").upper()
     # Strip exchange suffix for HK/CN names (e.g. 2382.HK) — his universe is US.
     base = sym.split(".")[0]
-    info = _UNIVERSE.get(sym) or _UNIVERSE.get(base)
+    universe = _get_universe()
+    info = universe.get(sym) or universe.get(base)
     if not info:
         return {"in_universe": False, "tier": "NOT-COVERED", "mentions": 0,
                 "first": None, "last": None, "calls": []}
@@ -184,10 +213,11 @@ def build_serenity_lens_block(symbol, sector="Other"):
         )
 
     checklist_block = ""
-    if _CHECKLIST:
+    _checklist = _get_checklist()
+    if _checklist:
         checklist_block = (
             "\n### Serenity's checklist (apply to this name; more 'yes' = stronger chokepoint fit)\n"
-            + _CHECKLIST + "\n"
+            + _checklist + "\n"
         )
 
     decision_guidance = (
@@ -216,11 +246,11 @@ def recommended_tickers(min_mentions=50):
     decides BUY vs HOLD (e.g. it stays skeptical of mega-cap 'shovel sellers'
     like NVDA even though he mentions them often).
     """
-    return [t for t, info in sorted(_UNIVERSE.items(),
+    return [t for t, info in sorted(_get_universe().items(),
                                     key=lambda kv: -kv[1]["mentions"])
             if info["mentions"] >= min_mentions]
 
 
 def universe_size():
     """Number of distinct tickers in Serenity's loaded universe (for diagnostics)."""
-    return len(_UNIVERSE)
+    return len(_get_universe())
