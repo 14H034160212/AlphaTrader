@@ -38,7 +38,9 @@ sync_into() {
     rsync -a --delete "$UP/serenity-aleabitoreddit/references/" "$dst/references/"
     rsync -a --delete "$UP/serenity-aleabitoreddit/analysis/"   "$dst/analysis/"
     cp -f "$UP/serenity-aleabitoreddit/SKILL.md" "$dst/SKILL.md"
-    rsync -a --delete "$UP/data/" "$dst/data/"
+    # exclude sync_state.json — it's a heartbeat that changes constantly and
+    # would cause meaningless pushes every run; we only want real data changes.
+    rsync -a --delete --exclude=sync_state.json "$UP/data/" "$dst/data/"
     [ -d "$UP/assets" ] && rsync -a "$UP/assets/" "$dst/assets/"
 }
 
