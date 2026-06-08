@@ -4,7 +4,7 @@
 #
 # Why we need this: 2026-05-15 → 2026-05-20 the qwen3.5 daemon died silently,
 # DB still pointed at it (ollama_host=11435 / ollama_model=qwen3.5:35b),
-# SerenityTrader generated 761 fake HOLD signals over 5 days. No alert.
+# SerenityAlphaTrader generated 761 fake HOLD signals over 5 days. No alert.
 # See feedback-just-execute-dont-ask.md and silent-bypass plan item #7.
 
 LOG=/tmp/ollama_qwen35.log

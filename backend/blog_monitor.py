@@ -24,7 +24,7 @@ from typing import List, Dict, Optional
 logger = logging.getLogger(__name__)
 
 HEADERS = {
-    "User-Agent": "SerenityTrader/1.0 (financial research bot)",
+    "User-Agent": "SerenityAlphaTrader/1.0 (financial research bot)",
     "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml, */*",
 }
 

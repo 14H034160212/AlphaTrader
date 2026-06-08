@@ -68,7 +68,7 @@ def _format_prompt(rec: dict) -> str | None:
         return None
 
     system = (
-        "You are SerenityTrader, an expert AI stock trading analyst. "
+        "You are SerenityAlphaTrader, an expert AI stock trading analyst. "
         "Given the market state and context, produce a structured trading signal: "
         "BUY / SELL / HOLD with confidence (0-1), target price, stop loss, "
         "recommended portfolio weight %, time horizon, and detailed reasoning. "

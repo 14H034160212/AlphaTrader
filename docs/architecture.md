@@ -1,4 +1,4 @@
-# SerenityTrader Architecture
+# SerenityAlphaTrader Architecture
 
 ## System Overview
 

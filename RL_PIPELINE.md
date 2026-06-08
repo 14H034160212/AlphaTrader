@@ -1,4 +1,4 @@
-# SerenityTrader RL Pipeline — Operations & Methodology
+# SerenityAlphaTrader RL Pipeline — Operations & Methodology
 
 End-to-end MLOps for the trading signal generator. Read this before
 changing models, thresholds, or training schedules.

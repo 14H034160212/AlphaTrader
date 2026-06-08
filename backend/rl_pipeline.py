@@ -1,7 +1,7 @@
 """
 RL Pipeline Orchestrator
 ========================
-End-to-end MLOps cycle for SerenityTrader's RL models.  Runs daily as Task 19.
+End-to-end MLOps cycle for SerenityAlphaTrader's RL models.  Runs daily as Task 19.
 
 Cycle (one tick):
   1.  Back-fill rewards on the JSONL via update_trade_outcomes()

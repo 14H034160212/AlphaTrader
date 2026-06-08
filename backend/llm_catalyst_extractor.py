@@ -21,7 +21,7 @@ For each symbol:
   4. Convert to the same dict shape detect_catalysts_for_symbol returns.
   5. Cache + return.
 
-Created 2026-05-23 after SerenityTrader missed the US-gov-takes-Intel-stake
+Created 2026-05-23 after SerenityAlphaTrader missed the US-gov-takes-Intel-stake
 catalyst because "government stake" wasn't in any static keyword list.
 """
 from __future__ import annotations

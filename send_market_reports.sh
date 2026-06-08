@@ -183,7 +183,7 @@ def build_us_report():
     <tr style='background:#f0f0f0'><th>时间 UTC</th><th>操作</th><th>标的</th><th>数量</th><th>价格</th></tr>
     {trade_rows or "<tr><td colspan=5>无成交</td></tr>"}
     </table>
-    <p style='color:#888; font-size:11px'>SerenityTrader US-only daily report · {now.isoformat()} UTC</p>
+    <p style='color:#888; font-size:11px'>SerenityAlphaTrader US-only daily report · {now.isoformat()} UTC</p>
     </body></html>"""
     return html, equity, day_pnl
 
@@ -249,7 +249,7 @@ def build_hk_report():
     <tr style='background:#f0f0f0'><th>时间</th><th>标的</th><th>信号</th><th>置信</th></tr>
     {sigs_html or "<tr><td colspan=4>无信号</td></tr>"}
     </table>
-    <p style='color:#888; font-size:11px'>SerenityTrader HK-only daily report</p>
+    <p style='color:#888; font-size:11px'>SerenityAlphaTrader HK-only daily report</p>
     </body></html>"""
     return html
 
@@ -321,7 +321,7 @@ def build_cn_report():
     <tr style='background:#f0f0f0'><th>时间</th><th>标的</th><th>信号</th><th>置信</th></tr>
     {sigs_html or "<tr><td colspan=4>无信号</td></tr>"}
     </table>
-    <p style='color:#888; font-size:11px'>SerenityTrader China-only daily report</p>
+    <p style='color:#888; font-size:11px'>SerenityAlphaTrader China-only daily report</p>
     </body></html>"""
     return html
 
@@ -335,11 +335,11 @@ if newly_enabled:
                    f"<p>检测到以下市场的 broker 访问刚刚开通：</p><ul>")
     for m in newly_enabled:
         banner_html += f"<li><b>{m}</b></li>"
-    banner_html += ("</ul><p>SerenityTrader 将在下一轮 background_dynamic_watchlist_loop "
+    banner_html += ("</ul><p>SerenityAlphaTrader 将在下一轮 background_dynamic_watchlist_loop "
                     "（最长 6h）开始自动扫描新市场标的。</p>"
                     "<p>如果是 Moomoo CN（Stock Connect），auto_trade_loop 也会立刻"
                     "开始路由 A 股订单。</p></body></html>")
-    send(f"🎉 [SerenityTrader] 新市场访问开通: {', '.join(newly_enabled)}", banner_html)
+    send(f"🎉 [SerenityAlphaTrader] 新市场访问开通: {', '.join(newly_enabled)}", banner_html)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -347,14 +347,14 @@ if newly_enabled:
 # ──────────────────────────────────────────────────────────────────────────
 us_html, us_eq, us_pnl = build_us_report()
 us_color = "📈" if us_pnl >= 0 else "📉"
-send(f"🇺🇸 [SerenityTrader US] {now.strftime('%m-%d')} {us_color} Equity ${us_eq:.0f}, {us_pnl:+.0f}", us_html)
+send(f"🇺🇸 [SerenityAlphaTrader US] {now.strftime('%m-%d')} {us_color} Equity ${us_eq:.0f}, {us_pnl:+.0f}", us_html)
 
 hk_html = build_hk_report()
-send(f"🇭🇰 [SerenityTrader HK] {now.strftime('%m-%d')} 港股日报", hk_html)
+send(f"🇭🇰 [SerenityAlphaTrader HK] {now.strftime('%m-%d')} 港股日报", hk_html)
 
 cn_html = build_cn_report()
 cn_marker = "✅" if cur_caps.get("moomoo_CN") else "⏳A股待开"
-send(f"🇨🇳 [SerenityTrader CN] {now.strftime('%m-%d')} {cn_marker}", cn_html)
+send(f"🇨🇳 [SerenityAlphaTrader CN] {now.strftime('%m-%d')} {cn_marker}", cn_html)
 
 print(f"\n[{datetime.datetime.utcnow().isoformat()}] All 3 market reports sent.")
 EOF

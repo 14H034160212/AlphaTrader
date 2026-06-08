@@ -75,7 +75,7 @@ filled_hk = [t for t in hk_trades if t.broker == "Futu"]
 status_emoji = "✅" if filled_hk else ("⚠️" if max_buy_02822 == 0 else "❌")
 
 # Build email
-subject = f"[SerenityTrader] {status_emoji} HK Monday Opening Check — {len(filled_hk)} real fills"
+subject = f"[SerenityAlphaTrader] {status_emoji} HK Monday Opening Check — {len(filled_hk)} real fills"
 
 body = [f"<h2>HK Monday Opening Check — {now_utc.isoformat()} UTC</h2>"]
 body.append(f"<p><b>Real HK Futu trades (last 24h): {len(filled_hk)}</b></p>")
@@ -146,12 +146,12 @@ with open(STATE_F, "w") as f:
                "ts": now_utc.isoformat()}, f)
 
 if unlocked_now:
-    subject = f"🎉 [SerenityTrader] HK BUYING POWER UNLOCKED — max_cash_buy={int(cur_max_buy)} shares"
+    subject = f"🎉 [SerenityAlphaTrader] HK BUYING POWER UNLOCKED — max_cash_buy={int(cur_max_buy)} shares"
     body.insert(0, "<h1 style='color:#28a745'>🎉 HK trading just unlocked!</h1>"
-                   "<p>max_cash_buy went from 0 to positive. SerenityTrader will place "
+                   "<p>max_cash_buy went from 0 to positive. SerenityAlphaTrader will place "
                    "its first HK order on the next auto_trade_loop cycle (≤15 min).</p>")
 elif cash_jumped:
-    subject = f"💰 [SerenityTrader] HK cash changed: HK${prev_cash:.0f} → HK${cur_cash:.0f}"
+    subject = f"💰 [SerenityAlphaTrader] HK cash changed: HK${prev_cash:.0f} → HK${cur_cash:.0f}"
 
 if not should_email:
     print(f"  (no state change — max_buy={cur_max_buy}, cash={cur_cash} — skip email)")
