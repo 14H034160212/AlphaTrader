@@ -18,6 +18,8 @@ Data sources (read once, cached):
   .claude/skills/serenity-aleabitoreddit/references/track-record.md — dated calls
 """
 import os
+import re
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,12 @@ logger = logging.getLogger(__name__)
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _SKILL_DIR = os.path.join(_REPO_ROOT, ".claude", "skills", "serenity-aleabitoreddit")
 _UNIVERSE_PATH = os.path.join(_SKILL_DIR, "data", "ticker_stats.txt")
+_TWEETS_PATH = os.path.join(_SKILL_DIR, "data", "aleabitoreddit_tweets.json")
+# Recency half-life (days) for time-decayed conviction scoring: a mention this
+# many days before his latest tweet counts half as much. 30d → strongly favors
+# what he's pushing NOW (user directive 2026-06-10: latest tweets = top priority,
+# priority decays with age).
+_RECENCY_HALFLIFE_DAYS = 30.0
 _METHODOLOGY_PATH = os.path.join(_SKILL_DIR, "references", "methodology.md")
 _TRACK_RECORD_PATH = os.path.join(_SKILL_DIR, "references", "track-record.md")
 
@@ -229,6 +237,11 @@ def build_serenity_lens_block(symbol, sector="Other"):
         "crowded/frontrun → the lens is skeptical of NEW capital; HOLD if owned, "
         "don't chase. (Still honor the LONG-TERM HOLD mandate for quality names already owned.)\n"
         "- If it fails the chokepoint test and isn't in a focus theme → default HOLD.\n"
+        "- **LAGGARD PREFERENCE (user 2026-06-10):** within the NVDA/CPO supply chain, "
+        "PREFER names trading well BELOW their 52-week high (the un-run laggard the surge "
+        "rotates to next) over names already near 52w highs (already surged — don't chase). "
+        "Use the 52w-range and MA200 distance in the data above: far from high + intact "
+        "chokepoint thesis = higher-priority BUY; near 52w high + already +100% = HOLD/skip.\n"
         "- ALWAYS confirm current price/fundamentals yourself; his theses decay and "
         "his small-caps are volatile (20%+ days, dilution/single-customer/binary risk).\n"
     )
@@ -236,19 +249,98 @@ def build_serenity_lens_block(symbol, sector="Other"):
     return header + stance_block + checklist_block + decision_guidance
 
 
-def recommended_tickers(min_mentions=50):
-    """Serenity's recurring conviction universe — his 'recommended' names.
+_TICK_RE = re.compile(r"\$([A-Za-z]{1,6})\b")
+_recency_cache = {"scores": None, "mtime": None}
 
-    Returns tickers he mentions at least `min_mentions` times, highest-conviction
-    first. Used to drive the watchlist so the engine analyses ONLY Serenity's
-    names (user directive 2026-06-08) rather than self-discovering others.
-    Note: this is his coverage universe; the per-stock Serenity lens still
-    decides BUY vs HOLD (e.g. it stays skeptical of mega-cap 'shovel sellers'
-    like NVDA even though he mentions them often).
+
+def _compute_recency_scores():
+    """Time-decayed mention score per ticker from the tweet archive.
+
+    weight(tweet) = 0.5 ** (age_days / HALFLIFE), where age is measured from the
+    LATEST tweet in the archive (so scoring is stable as long as data is stable,
+    and 'recent' means recent relative to the freshest data we have). Summed per
+    $ticker across tweet text + quoted text. → his CURRENT focus floats to top.
     """
-    return [t for t, info in sorted(_get_universe().items(),
-                                    key=lambda kv: -kv[1]["mentions"])
-            if info["mentions"] >= min_mentions]
+    import datetime as _dt
+    text = _read(_TWEETS_PATH)
+    if not text:
+        return {}
+    try:
+        tweets = json.loads(text)
+    except Exception as e:
+        logger.warning("serenity_lens: tweet archive parse failed: %s", e)
+        return {}
+
+    def _ts(t):
+        iso = t.get("createdAtISO") or ""
+        try:
+            return _dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    stamps = [s for s in (_ts(t) for t in tweets if isinstance(t, dict)) if s]
+    if not stamps:
+        return {}
+    ref = max(stamps)  # anchor recency to the freshest tweet
+    scores = {}
+    for t in tweets:
+        if not isinstance(t, dict):
+            continue
+        ts = _ts(t)
+        if not ts:
+            continue
+        age_days = (ref - ts).total_seconds() / 86400.0
+        w = 0.5 ** (age_days / _RECENCY_HALFLIFE_DAYS)
+        txt = (t.get("text", "") or "") + " " + ((t.get("quotedTweet") or {}).get("text", "") or "")
+        for m in set(_TICK_RE.findall(txt)):
+            scores[m.upper()] = scores.get(m.upper(), 0.0) + w
+    return scores
+
+
+def _get_recency_scores():
+    m = _mtime(_TWEETS_PATH)
+    if _recency_cache["scores"] is None or m != _recency_cache["mtime"]:
+        computed = _compute_recency_scores()
+        if computed or _recency_cache["scores"] is None:
+            _recency_cache["scores"] = computed
+            _recency_cache["mtime"] = m
+    return _recency_cache["scores"]
+
+
+def recommended_tickers(top_n=45, min_score=0.5):
+    """Serenity's CURRENT conviction names, ranked by RECENCY-decayed mentions.
+
+    User directive 2026-06-10: prioritise what he is pushing in his LATEST tweets;
+    priority decays with tweet age (30-day half-life). Returns up to `top_n`
+    tickers whose recency score >= `min_score`, highest-conviction-now first.
+    Drives the watchlist so the engine focuses on his current thesis (e.g. the
+    CPO/optics chain — SIVE/AAOI/LITE/SOI/JBL — rather than stale all-time names).
+    The per-stock lens still decides BUY/HOLD and surfaces 'do-not-chase' calls.
+    Falls back to all-time mention count if the tweet archive is unavailable.
+    """
+    scores = _get_recency_scores()
+    if not scores:  # fallback: all-time mentions
+        return [t for t, info in sorted(_get_universe().items(),
+                                        key=lambda kv: -kv[1]["mentions"])
+                if info["mentions"] >= 50][:top_n]
+    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+    return [t for t, s in ranked if s >= min_score][:top_n]
+
+
+# NVDA-downstream quality names NOT in Serenity's optics-focused coverage, but
+# that fit the user's "NVDA-downstream laggard" thesis (2026-06-10). SECONDARY
+# priority — appended AFTER Serenity's own picks so his analysis stays #1.
+NVDA_DOWNSTREAM_EXTRAS = [
+    "VRT",   # Vertiv — power/cooling, NVDA co-designed, $15B backlog, relatively un-run
+    "FN",    # Fabrinet — NVDA optical-module assembly (picks-and-shovels)
+    "SMCI",  # Supermicro — NVDA rack/server systems
+]
+
+
+def nvda_downstream_extras():
+    """Secondary candidate pool: NVDA-downstream laggards outside Serenity's
+    coverage. Lower priority than recommended_tickers() — Serenity stays #1."""
+    return list(NVDA_DOWNSTREAM_EXTRAS)
 
 
 def universe_size():

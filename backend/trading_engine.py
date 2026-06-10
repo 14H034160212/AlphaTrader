@@ -652,7 +652,7 @@ class TradingEngine:
             # cap, RL soft-veto) still apply as auxiliary safety.
             try:
                 import serenity_lens as _sl
-                _serenity_pick = symbol in set(_sl.recommended_tickers(min_mentions=50))
+                _serenity_pick = symbol in set(_sl.recommended_tickers())
             except Exception:
                 _serenity_pick = False
 
