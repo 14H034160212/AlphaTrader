@@ -541,12 +541,14 @@ def run_discovery_cycle(db_session=None) -> dict:
         if get_setting(db, "watchlist_source", 1, "serenity") == "serenity":
             try:
                 import serenity_lens
-                rec = serenity_lens.recommended_tickers(min_mentions=SERENITY_MIN_MENTIONS)
+                rec = serenity_lens.recommended_tickers()        # Serenity #1 priority (recency-decayed)
+                extras = serenity_lens.nvda_downstream_extras()  # NVDA-downstream laggards, SECONDARY
             except Exception as e:
                 logger.warning("serenity recommended_tickers failed: %s", e)
-                rec = []
-            # held first (must monitor), then Serenity's conviction names
-            wl = list(dict.fromkeys(list(held) + rec))
+                rec = []; extras = []
+            # held first (must monitor) → Serenity's conviction names (PRIMARY) →
+            # NVDA-downstream laggard extras (SECONDARY, after Serenity's own picks)
+            wl = list(dict.fromkeys(list(held) + rec + extras))
             if len(wl) > MAX_WATCHLIST_SIZE:
                 wl = wl[:MAX_WATCHLIST_SIZE]
             added_now = [s for s in wl if s not in current]
