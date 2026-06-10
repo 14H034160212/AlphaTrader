@@ -27,8 +27,10 @@ logger = logging.getLogger(__name__)
 # ── Configuration defaults ────────────────────────────────────────────────────
 # 2026-05-27: user requested aggressive mode (small account, can afford
 # concentration for upside). Raised from half-Kelly 0.5 + 20% cap.
-KELLY_FRACTION   = 0.90   # 0.75 → 0.90 (near-full Kelly, max aggression 2026-05-27)
-MAX_POSITION_PCT = 0.45   # 0.35 → 0.45 (concentrated conviction bets)
+KELLY_FRACTION   = 0.50   # 0.90 → 0.50 (2026-06-10: Serenity-aligned — diversify
+                          #   across his chokepoint basket, not 2 max-Kelly bets)
+MAX_POSITION_PCT = 0.12   # 0.45 → 0.12 (no single name > 12% → ~8-name basket;
+                          #   Serenity explicitly warns "don't over-concentrate small caps")
 MIN_RR_RATIO     = 1.3    # 1.5 → 1.3 (accept slightly lower R:R to act more)
 
 # ── Long-term core / satellite framework ──────────────────────────────────────

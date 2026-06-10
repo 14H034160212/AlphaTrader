@@ -70,11 +70,13 @@ def _load_holdout(jsonl_path: str, days: int = 7, min_reward_abs: float = 0.5) -
                 reward = r.get("reward_3d")
                 if not isinstance(reward, (int,float)) or not math.isfinite(reward):
                     continue
-                if abs(reward) < min_reward_abs:
-                    continue
-                # 3) Has non-HOLD action so reward signal is meaningful
-                if r.get("action") == "HOLD":
-                    continue
+                # NOTE (2026-06-10 fix): we deliberately DO NOT filter out HOLD
+                # actions or small-|reward| rows anymore. The old filters made the
+                # holdout "big-move BUY/SELL only", which unfairly punished any
+                # model that (correctly) said HOLD on a calm name — driving the
+                # bogus ~16% directional_accuracy. A representative holdout (all
+                # actions, all reward magnitudes) is required to fairly score the
+                # 3-way BUY/SELL/HOLD decision against the realised forward move.
                 # 4) Not a row contaminated by the broken-AI period
                 rs = r.get("reasoning_summary") or ""
                 if "Cannot connect" in rs or "分析出错" in rs:
@@ -164,20 +166,23 @@ def _run_one_model(
             if decision == "SHORT": decision = "SELL"
 
             reward = rec["reward_3d"]
-            if decision == "HOLD":
-                if abs(reward) < 1.0:
-                    correct += 1
-                # HOLD didn't act
-            elif decision == "BUY":
+            # Fair 3-way ground truth from the realised 3-day forward move:
+            #   reward > +BAND → BUY was optimal; < -BAND → SELL; else HOLD optimal.
+            # Symmetric: HOLD gets credit when the move was small, exactly as BUY
+            # gets credit when it rose. (Old metric only credited HOLD for small
+            # moves on a big-move-only holdout → unfairly ~16%.)
+            BAND = 0.5
+            if reward > BAND:
+                truth = "BUY"
+            elif reward < -BAND:
+                truth = "SELL"
+            else:
+                truth = "HOLD"
+            if decision == truth:
+                correct += 1
+            if decision in ("BUY", "SELL"):
                 acted += 1
-                realised_sum += reward
-                if reward > 0:
-                    correct += 1
-            elif decision == "SELL":
-                acted += 1
-                realised_sum += -reward
-                if reward < 0:
-                    correct += 1
+                realised_sum += reward if decision == "BUY" else -reward
 
             if (i+1) % 10 == 0:
                 logger.info(f"[Shootout] {candidate_name} {i+1}/{len(holdout)} "
