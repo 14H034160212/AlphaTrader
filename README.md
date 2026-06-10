@@ -48,10 +48,66 @@ The trade-selection brain applies the analytical methodology of **Serenity ([@al
 - **Macro Scenario Lifecycle**: DB-backed scenarios with ACTIVE/DECLINING/RESOLVED/EXPIRED states. AI Layer 4 auto-generates new scenarios from news. Per-scenario `muted_by_user` flag respects user preferences across restarts.
 - **Two-Path RL Feedback Loop**:
   - **Path 1 (XGBoost)** — short, fast: every 6 hours, train a candidate from `rl_training_data.jsonl`, A/B against current production by directional accuracy + RMSE, promote/shadow/reject.
-  - **Path 2 (LoRA fine-tune)** — long, accurate: every ~5000 new labeled records, train Qwen3.5-35B QLoRA adapter on `training/rl_sft_dataset`, validate vs holdout, optionally hot-swap into vLLM serving.
+  - **Path 2 (Online LoRA fine-tune)** — daily incremental: every day, rebuild `training/rl_sft_dataset` from the latest labeled signals and **warm-start continue-training a QLoRA adapter on `google/gemma-4-31B-it` (the live brain — see "Model selection & online RL" below)**, validate vs holdout, and auto-promote into vLLM serving when it beats production.
 - **Daily Email Reports**: Separate emails for US (Alpaca, kitchen-sink) and HK (Moomoo, glance-friendly). Each summarizes account, positions, today's trades, top BUY/SELL signals.
 - **Reply-to-Email AI**: User can reply to the daily report; LLM parses and applies setting changes (auto-trade toggle, watchlist add/remove, confidence threshold).
 - **JWT Multi-User**: Secure authentication with isolated positions, settings, and trade records per user. **SECRET_KEY MUST be supplied via `backend/.env`** — no hardcoded fallback.
+
+---
+
+## 🧠 Model selection & online RL
+
+### How the live decision model is chosen (the shootout)
+
+The live trading brain is **not hand-picked** — it wins an automated, backtested
+competition. `backend/rl_llm_shootout.py`:
+
+1. Discovers candidate local models across both Ollama daemons (system `:11434`
+   and the user-space `:11435`), e.g. `gemma4:31b`, `deepseek-r1:32b`, `llama3:70b`.
+2. Runs the **exact production `analyze_stock` prompt** for each candidate over a
+   **rolling 7-day holdout of already-reward-labeled signals**.
+3. Scores each on **directional accuracy + mean realised reward**.
+4. If the winner beats the incumbent `ollama_model` by **≥ 5 percentage points**,
+   it **auto-promotes** (updates the `ollama_model` setting). A shootout report is
+   written to `rl_models/llm_shootout/`.
+
+**Why `gemma-4-31B-it` (`gemma4:31b`) is live (promoted 2026-05-27):** it won the
+shootout on rolling-holdout directional accuracy, beating `deepseek-r1:32b` (now the
+fallback) — while returning clean JSON on the production prompt and making sound
+calls (e.g. correctly *holding* parabolic names instead of chasing). It runs locally
+on Ollama `:11435` (Q4 for fast inference) with full-precision HF weights available
+for fine-tuning.
+
+### Online RL — trains and serves the SAME model that trades
+
+Earlier the LoRA pipeline fine-tuned `Qwen3.5-35B` while the live brain was
+`gemma-4-31B` — so RL never improved the model that actually traded. That mismatch
+is now closed: **online RL targets `google/gemma-4-31B-it`, the live brain.**
+
+```
+brain logs a signal on every watchlist name  ──►  reward_1d/3d/7d labeled after the fact
+        (independent of whether a trade filled — paper forward-return reward)
+                                   │
+            daily cron rebuilds training/rl_sft_dataset from the latest labeled records
+                                   │
+        warm-start continue-train gemma-4-31B QLoRA adapter (attention-targeted, reward-weighted SFT)
+                                   │
+              validate vs holdout  ──►  decide_lora_promotion (≥5pp dir-acc AND reward↑)
+                                   │ pass
+        serve gemma-4-31B + adapter via vLLM (--enable-lora)  ──►  set `lora_inference_url`
+                                   │
+   deepseek_ai._call_ollama auto-routes live decisions to the vLLM adapter (no code change)
+```
+
+- **Daily incremental, not per-step.** True per-step online RL on a 31B LLM is
+  unstable; the practical form here is a daily warm-start continue-train on the
+  newest labeled batch, mixed with historical replay (full `rl_sft_dataset`).
+- **Validation gate prevents catastrophic forgetting.** A new adapter only goes
+  live if it beats the current production model on the holdout (`rl_lora_validator.py`
+  → `decide_lora_promotion`). Otherwise it is shadowed/rejected.
+- **Reward is forward price-return on signals, not realised account P&L** (the
+  account is small and trades rarely), so RL learns "which calls predicted good
+  moves," not direct P&L. It is a drift-tracking refinement, **not** a profit switch.
 
 ---
 
