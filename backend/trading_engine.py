@@ -815,6 +815,29 @@ class TradingEngine:
                         ),
                     }
 
+            # ── CASH-RESERVE FLOOR (2026-06-11: user disclosed this is living
+            # money — survival-first). Never let a BUY push cash below
+            # cash_reserve_pct of equity. Shrink the order to fit; skip if the
+            # remainder is too small. SELLs are never blocked by this.
+            try:
+                rs = self.get_cash_reserve_status()
+                deployable = rs["cash"] - rs["target_cash"]
+                cost = quantity * current_price
+                if cost > deployable:
+                    if deployable < max(10.0, current_price * 0.01):
+                        return {
+                            "success": False, "skipped": True,
+                            "reason": (f"Cash floor: only ${max(0, deployable):.2f} deployable above the "
+                                       f"{rs['target_cash']:.0f} reserve ({rs['cash_pct']:.0f}% cash now) — "
+                                       f"preserving living-money buffer.")
+                        }
+                    new_qty = round(deployable / current_price, 4)
+                    logger.info(f"[CashFloor] {symbol} BUY shrunk {quantity}→{new_qty} "
+                                f"to keep ${rs['target_cash']:.0f} reserve")
+                    quantity = new_qty
+            except Exception as _cf:
+                logger.warning(f"[CashFloor] check failed for {symbol}: {_cf}")
+
             return self.execute_buy(symbol, quantity, current_price, True, confidence, reasoning)
 
         elif action in ("SELL", "SHORT"):
