@@ -815,6 +815,31 @@ class TradingEngine:
                         ),
                     }
 
+            # ── CUMULATIVE PER-NAME CAP (2026-06-12). kelly caps each TRADE at
+            # MAX_POSITION_PCT, but repeated adds to the same name stacked past
+            # it (TSEM reached 37% via three buys). Cap the TOTAL position:
+            # existing market value + this order ≤ equity × MAX_POSITION_PCT.
+            try:
+                _ex = self.get_position(symbol)
+                if _ex and _ex.quantity > 0:
+                    _eq = float(self.alpaca.get_account().equity) if self.use_alpaca else None
+                    if _eq:
+                        allowed_total = _eq * ps.MAX_POSITION_PCT
+                        existing_mv = _ex.quantity * current_price
+                        room = allowed_total - existing_mv
+                        cost = quantity * current_price
+                        if room <= max(10.0, current_price * 0.01):
+                            return {"success": False, "skipped": True,
+                                    "reason": (f"Position cap: {symbol} already ${existing_mv:.0f} "
+                                               f"(cap ${allowed_total:.0f} = {ps.MAX_POSITION_PCT*100:.0f}%) — no room to add")}
+                        if cost > room:
+                            new_qty = round(room / current_price, 4)
+                            logger.info(f"[PosCap] {symbol} add shrunk {quantity}→{new_qty} "
+                                        f"(existing ${existing_mv:.0f} + add ≤ {ps.MAX_POSITION_PCT*100:.0f}%)")
+                            quantity = new_qty
+            except Exception as _pc:
+                logger.warning(f"[PosCap] check failed for {symbol}: {_pc}")
+
             # ── CASH-RESERVE FLOOR (2026-06-11: user disclosed this is living
             # money — survival-first). Never let a BUY push cash below
             # cash_reserve_pct of equity. Shrink the order to fit; skip if the
