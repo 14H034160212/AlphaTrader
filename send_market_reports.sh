@@ -122,15 +122,10 @@ def save_caps(caps):
         json.dump(caps, f, indent=2)
 
 
-cur_caps = snapshot_capabilities()
-prev_caps = load_previous_caps()
+# US-only mode (2026-06-16): skip the Moomoo/IBKR capability probe — it's slow,
+# can hang on OpenD, and is irrelevant now that trading is US/Alpaca-only.
+cur_caps = {}
 newly_enabled = []
-for k, v in cur_caps.items():
-    if v and not prev_caps.get(k):
-        newly_enabled.append(k)
-save_caps(cur_caps)
-print(f"Capability state: {cur_caps}")
-print(f"Newly enabled: {newly_enabled}")
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -327,36 +322,14 @@ def build_cn_report():
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 5. NEW MARKET BANNER (if anything was newly enabled)
 # ──────────────────────────────────────────────────────────────────────────
-if newly_enabled:
-    banner_html = (f"<html><body style='font-family:sans-serif'>"
-                   f"<h2 style='color:#28a745'>🎉 新市场访问已开通！</h2>"
-                   f"<p>检测到以下市场的 broker 访问刚刚开通：</p><ul>")
-    for m in newly_enabled:
-        banner_html += f"<li><b>{m}</b></li>"
-    banner_html += ("</ul><p>SerenityAlphaTrader 将在下一轮 background_dynamic_watchlist_loop "
-                    "（最长 6h）开始自动扫描新市场标的。</p>"
-                    "<p>如果是 Moomoo CN（Stock Connect），auto_trade_loop 也会立刻"
-                    "开始路由 A 股订单。</p></body></html>")
-    send(f"🎉 [SerenityAlphaTrader] 新市场访问开通: {', '.join(newly_enabled)}", banner_html)
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# 6. SEND ALL 3 REPORTS
+# SEND US REPORT ONLY (user 2026-06-16: HK account emptied, US-only focus)
 # ──────────────────────────────────────────────────────────────────────────
 us_html, us_eq, us_pnl = build_us_report()
 us_color = "📈" if us_pnl >= 0 else "📉"
 send(f"🇺🇸 [SerenityAlphaTrader US] {now.strftime('%m-%d')} {us_color} Equity ${us_eq:.0f}, {us_pnl:+.0f}", us_html)
 
-hk_html = build_hk_report()
-send(f"🇭🇰 [SerenityAlphaTrader HK] {now.strftime('%m-%d')} 港股日报", hk_html)
-
-cn_html = build_cn_report()
-cn_marker = "✅" if cur_caps.get("moomoo_CN") else "⏳A股待开"
-send(f"🇨🇳 [SerenityAlphaTrader CN] {now.strftime('%m-%d')} {cn_marker}", cn_html)
-
-print(f"\n[{datetime.datetime.utcnow().isoformat()}] All 3 market reports sent.")
+print(f"\n[{datetime.datetime.utcnow().isoformat()}] US report sent (HK/CN reports disabled).")
 EOF
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Market reports END" >> "$LOG"
