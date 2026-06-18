@@ -28,6 +28,9 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _SKILL_DIR = os.path.join(_REPO_ROOT, ".claude", "skills", "serenity-aleabitoreddit")
 _UNIVERSE_PATH = os.path.join(_SKILL_DIR, "data", "ticker_stats.txt")
 _TWEETS_PATH = os.path.join(_SKILL_DIR, "data", "aleabitoreddit_tweets.json")
+# Fresh CURRENT-focus tickers scraped daily from semiconstocks.com tracker
+# (refresh_serenity_intel.py) — supplements the frozen 2026-06-08 tweet archive.
+_FOCUS_PATH = os.path.join(_SKILL_DIR, "data", "serenity_current_focus.json")
 # Recency half-life (days) for time-decayed conviction scoring: a mention this
 # many days before his latest tweet counts half as much. 30d → strongly favors
 # what he's pushing NOW (user directive 2026-06-10: latest tweets = top priority,
@@ -307,6 +310,22 @@ def _get_recency_scores():
     return _recency_cache["scores"]
 
 
+_focus_cache = {"focus": None, "mtime": None}
+
+
+def _get_current_focus():
+    """Fresh current-focus tickers from the daily semiconstocks scrape (or [])."""
+    m = _mtime(_FOCUS_PATH)
+    if _focus_cache["focus"] is None or m != _focus_cache["mtime"]:
+        try:
+            with open(_FOCUS_PATH) as f:
+                _focus_cache["focus"] = json.load(f).get("top_focus", []) or []
+        except Exception:
+            _focus_cache["focus"] = []
+        _focus_cache["mtime"] = m
+    return _focus_cache["focus"]
+
+
 def recommended_tickers(top_n=45, min_score=0.5):
     """Serenity's CURRENT conviction names, ranked by RECENCY-decayed mentions.
 
@@ -318,13 +337,18 @@ def recommended_tickers(top_n=45, min_score=0.5):
     The per-stock lens still decides BUY/HOLD and surfaces 'do-not-chase' calls.
     Falls back to all-time mention count if the tweet archive is unavailable.
     """
+    # Fresh current-focus (daily semiconstocks scrape) goes FIRST — it reflects
+    # what Serenity is pushing NOW, fresher than the frozen 2026-06-08 archive.
+    focus = _get_current_focus()
     scores = _get_recency_scores()
     if not scores:  # fallback: all-time mentions
-        return [t for t, info in sorted(_get_universe().items(),
-                                        key=lambda kv: -kv[1]["mentions"])
-                if info["mentions"] >= 50][:top_n]
-    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
-    return [t for t, s in ranked if s >= min_score][:top_n]
+        archive = [t for t, info in sorted(_get_universe().items(),
+                                           key=lambda kv: -kv[1]["mentions"])
+                   if info["mentions"] >= 50]
+    else:
+        archive = [t for t, s in sorted(scores.items(), key=lambda kv: -kv[1]) if s >= min_score]
+    # merge: fresh focus first, then archive-recency, deduped
+    return list(dict.fromkeys(focus + archive))[:top_n]
 
 
 # NVDA-downstream quality names NOT in Serenity's optics-focused coverage, but
