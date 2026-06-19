@@ -181,7 +181,12 @@ class TradingEngine:
         if self.use_alpaca:
             try:
                 account = self.alpaca.get_account()
-                return float(account.buying_power)
+                # CRITICAL (2026-06-19): return real settled CASH, never
+                # buying_power. buying_power includes 4x margin (~$16k on a $4.7k
+                # account); using it as "cash" made the cash-reserve floor think
+                # ~$13k was deployable and let the engine buy on MARGIN — a
+                # catastrophe on living money. Real cash → no-margin by construction.
+                return float(account.cash)
             except Exception as e:
                 logger.error(f"Alpaca get_account error: {e}")
                 return 0.0
@@ -310,6 +315,27 @@ class TradingEngine:
         cash = self.get_cash_balance()
         position = self.get_position(symbol)
         is_cover = position and position.quantity < 0
+
+        # ── HARD cash-reserve floor at the single buy chokepoint (2026-06-19) ──
+        # Every buy path funnels through execute_buy: auto_trade, deposit_handler,
+        # and rebalance all call it. The cash-floor + position-cap guards used to
+        # live ONLY in auto_trade, so the deposit/rebalance paths bypassed them
+        # and bought on MARGIN. Enforcing it HERE means no path can ever deploy
+        # past real cash minus the reserve floor. is_cover (closing a short) is
+        # risk-reducing and exempt.
+        if not is_cover and self.use_alpaca:
+            try:
+                rs = self.get_cash_reserve_status()
+                deployable = rs["cash"] - rs["target_cash"]
+                if total_cost > deployable:
+                    return {"success": False, "skipped": True,
+                            "reason": (f"Cash-floor: cost ${total_cost:.2f} > deployable "
+                                       f"${deployable:.2f} (cash ${rs['cash']:.2f} − reserve "
+                                       f"${rs['target_cash']:.2f}). No margin on living money.")}
+            except Exception as _e:
+                logger.warning(f"[CashFloor] guard check failed, blocking buy to be safe: {_e}")
+                return {"success": False, "skipped": True,
+                        "reason": f"Cash-floor guard errored ({_e}); blocked to avoid margin."}
 
         broker, broker_name = self._get_broker_for_symbol(symbol)
         currency = get_currency(symbol)
