@@ -40,7 +40,7 @@ sync_into() {
     cp -f "$UP/serenity-aleabitoreddit/SKILL.md" "$dst/SKILL.md"
     # exclude sync_state.json — it's a heartbeat that changes constantly and
     # would cause meaningless pushes every run; we only want real data changes.
-    rsync -a --delete --exclude=sync_state.json "$UP/data/" "$dst/data/"
+    rsync -a --delete --exclude=sync_state.json --exclude=serenity_current_focus.json "$UP/data/" "$dst/data/"
     [ -d "$UP/assets" ] && rsync -a "$UP/assets/" "$dst/assets/"
 }
 
