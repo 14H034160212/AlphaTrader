@@ -28,6 +28,10 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _SKILL_DIR = os.path.join(_REPO_ROOT, ".claude", "skills", "serenity-aleabitoreddit")
 _UNIVERSE_PATH = os.path.join(_SKILL_DIR, "data", "ticker_stats.txt")
 _TWEETS_PATH = os.path.join(_SKILL_DIR, "data", "aleabitoreddit_tweets.json")
+# LIVE tweets pulled directly from @aleabitoreddit via Agent Reach
+# (fetch_serenity_tweets.sh, cron every 6h) — unfreezes the 2026-06-08 archive.
+# Merged into recency scoring so his FRESHEST tweet becomes the decay anchor.
+_LIVE_TWEETS_PATH = os.path.join(_SKILL_DIR, "data", "serenity_latest_tweets.json")
 # Fresh CURRENT-focus tickers scraped daily from semiconstocks.com tracker
 # (refresh_serenity_intel.py) — supplements the frozen 2026-06-08 tweet archive.
 _FOCUS_PATH = os.path.join(_SKILL_DIR, "data", "serenity_current_focus.json")
@@ -265,13 +269,20 @@ def _compute_recency_scores():
     $ticker across tweet text + quoted text. → his CURRENT focus floats to top.
     """
     import datetime as _dt
-    text = _read(_TWEETS_PATH)
-    if not text:
-        return {}
-    try:
-        tweets = json.loads(text)
-    except Exception as e:
-        logger.warning("serenity_lens: tweet archive parse failed: %s", e)
+    tweets = []
+    # archive (frozen 2026-06-08) + LIVE tweets (cron-refreshed). The live file's
+    # fresh timestamps become the recency anchor, so his latest picks dominate.
+    for path in (_TWEETS_PATH, _LIVE_TWEETS_PATH):
+        txt = _read(path)
+        if not txt:
+            continue
+        try:
+            t = json.loads(txt)
+            if isinstance(t, list):
+                tweets.extend(t)
+        except Exception as e:
+            logger.warning("serenity_lens: tweet parse failed (%s): %s", path, e)
+    if not tweets:
         return {}
 
     def _ts(t):
@@ -301,7 +312,7 @@ def _compute_recency_scores():
 
 
 def _get_recency_scores():
-    m = _mtime(_TWEETS_PATH)
+    m = (_mtime(_TWEETS_PATH), _mtime(_LIVE_TWEETS_PATH))
     if _recency_cache["scores"] is None or m != _recency_cache["mtime"]:
         computed = _compute_recency_scores()
         if computed or _recency_cache["scores"] is None:
