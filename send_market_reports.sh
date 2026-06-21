@@ -162,11 +162,19 @@ def build_us_report():
         net_dep = 0
     real_pl = equity - net_dep if net_dep else 0
     real_pct = (equity/net_dep-1)*100 if net_dep else 0
+    realized = real_pl - unrealized        # past closed trades (real_total = unrealized + realized)
     rc = "#28a745" if real_pl>=0 else "#dc3545"
+    uc = "#28a745" if unrealized>=0 else "#dc3545"
+    zc = "#28a745" if realized>=0 else "#dc3545"
+    dc = "#28a745" if day_pnl>=0 else "#dc3545"
     banner = (f"<div style='background:#f8f9fa;border-left:4px solid {lev_c};padding:10px;margin:8px 0'>"
               f"<b>状态:</b> <span style='color:{lev_c}'>{lev}</span> · 体制 <b>{regime}</b>(现金保底 {floor}%) · 自动交易 <b>{auto}</b><br>"
-              f"<b>真实累计收益</b>(扣除入金 ${net_dep:.0f}): <span style='color:{rc}'><b>${real_pl:+.0f} ({real_pct:+.1f}%)</b></span>"
-              f"<span style='color:#888;font-size:11px'> ← 这才是真赚/亏,入金不算收益</span></div>")
+              f"<b>真实累计收益</b>(净值 ${equity:.0f} − 入金 ${net_dep:.0f}): "
+              f"<span style='color:{rc}'><b>${real_pl:+.0f} ({real_pct:+.2f}%)</b></span>"
+              f"<span style='color:#888;font-size:11px'> ← 真赚/亏,入金不算</span><br>"
+              f"<span style='font-size:13px'>= 持仓浮盈 <span style='color:{uc}'><b>${unrealized:+.0f}</b></span>"
+              f" + 已实现(过往平仓)<span style='color:{zc}'><b>${realized:+.0f}</b></span>"
+              f" · 今日 <span style='color:{dc}'><b>${day_pnl:+.0f}</b></span></span></div>")
 
     rows = ""
     for p in sorted([p for p in pos if float(p['qty'])>0.001], key=lambda x: -float(x.get('market_value',0))):
