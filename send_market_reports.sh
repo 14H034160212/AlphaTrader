@@ -175,6 +175,26 @@ def build_us_report():
         c = "#28a745" if pnl>=0 else "#dc3545"
         rows += f"<tr><td>{p['symbol']}</td><td>{p['qty']}</td><td>${p['avg_entry_price']}</td><td>${p['current_price']}</td><td>${mv:.2f}</td><td style='color:{c}'>${pnl:+.2f} ({pct:+.1f}%)</td></tr>"
 
+    # ── smart-money / political holdings (supplementary signal, secondary to Serenity) ──
+    sm_html = ""
+    try:
+        import os as _os
+        smp = _os.path.join(_os.path.dirname(__file__), ".claude","skills",
+                            "serenity-aleabitoreddit","data","smart_money_signals.json")
+        sm = json.load(open(smp))
+        held = {p['symbol'] for p in pos if float(p.get('qty',0))>0.001}
+        chips = []
+        for t in sm.get("tickers", [])[:10]:
+            tag = " ✅持有" if t in held else (" 🟢Serenity" if t in sm.get("overlap_with_serenity",[]) else "")
+            chips.append(f"{t}{tag}")
+        sm_html = (f"<h3>🐳 聪明钱 / 政客动向 <span style='font-size:11px;color:#888'>"
+                   f"(滞后披露·仅参考·不盖过 Serenity)</span></h3>"
+                   f"<p style='font-size:13px'>{' · '.join(chips)}</p>"
+                   f"<p style='font-size:11px;color:#888'>与 Serenity 焦点重叠: "
+                   f"<b>{', '.join(sm.get('overlap_with_serenity',[])) or '无'}</b> · 更新 {sm.get('fetched_at','?')[:10]}</p>")
+    except Exception:
+        sm_html = ""
+
     trade_rows = ""
     for o in sorted(fills, key=lambda x: x['filled_at']):
         side = o['side'].upper()
@@ -202,6 +222,7 @@ def build_us_report():
     <tr style='background:#f0f0f0'><th>时间 UTC</th><th>操作</th><th>标的</th><th>数量</th><th>价格</th></tr>
     {trade_rows or "<tr><td colspan=5>无成交</td></tr>"}
     </table>
+    {sm_html}
     <p style='color:#888; font-size:11px'>SerenityAlphaTrader US-only daily report · {now.isoformat()} UTC</p>
     </body></html>"""
     return html, equity, day_pnl
