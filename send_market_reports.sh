@@ -145,6 +145,29 @@ def build_us_report():
     pnl_color = "#28a745" if day_pnl >= 0 else "#dc3545"
     unrealized = sum(float(p.get('unrealized_pl',0)) for p in pos if float(p.get('qty',0))>0.001)
 
+    # ── Status banner: leverage, regime, REAL return net of deposits ──
+    cash = float(acc.get('cash',0)); cash_pct = cash/equity*100 if equity else 0
+    if cash < -1:
+        lev = f"⚠️ 用保证金 ${-cash:.0f}(借款)"; lev_c = "#dc3545"
+    else:
+        lev = f"✅ 无杠杆 · 现金 {cash_pct:.0f}%"; lev_c = "#28a745"
+    regime = get_setting(db,"market_regime",1,"?"); floor = get_setting(db,"cash_reserve_pct",1,"?")
+    auto = "开" if get_setting(db,"auto_trade_enabled",1,"false")=="true" else "关"
+    # real cumulative return = equity − net cash deposits (so deposits aren't counted as gains)
+    try:
+        acts = requests.get("https://api.alpaca.markets/v2/account/activities?activity_types=CSD,CSW,JNLC&page_size=100",
+                            headers=H, timeout=10).json()
+        net_dep = sum(float(a.get('net_amount',0)) for a in acts)
+    except Exception:
+        net_dep = 0
+    real_pl = equity - net_dep if net_dep else 0
+    real_pct = (equity/net_dep-1)*100 if net_dep else 0
+    rc = "#28a745" if real_pl>=0 else "#dc3545"
+    banner = (f"<div style='background:#f8f9fa;border-left:4px solid {lev_c};padding:10px;margin:8px 0'>"
+              f"<b>状态:</b> <span style='color:{lev_c}'>{lev}</span> · 体制 <b>{regime}</b>(现金保底 {floor}%) · 自动交易 <b>{auto}</b><br>"
+              f"<b>真实累计收益</b>(扣除入金 ${net_dep:.0f}): <span style='color:{rc}'><b>${real_pl:+.0f} ({real_pct:+.1f}%)</b></span>"
+              f"<span style='color:#888;font-size:11px'> ← 这才是真赚/亏,入金不算收益</span></div>")
+
     rows = ""
     for p in sorted([p for p in pos if float(p['qty'])>0.001], key=lambda x: -float(x.get('market_value',0))):
         mv = float(p.get('market_value',0)); pnl = float(p.get('unrealized_pl',0))
@@ -160,6 +183,7 @@ def build_us_report():
 
     html = f"""<html><body style='font-family:sans-serif; max-width:800px; margin:auto'>
     <h2>🇺🇸 美股报告 — {now.strftime('%Y-%m-%d')}</h2>
+    {banner}
     <table border=1 cellpadding=5 style='border-collapse:collapse; width:100%'>
     <tr><td>Equity</td><td><b>${equity:.2f}</b></td>
         <td>今日 P&L</td><td style='color:{pnl_color}'><b>${day_pnl:+.2f}</b></td>
