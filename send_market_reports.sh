@@ -195,11 +195,18 @@ def build_us_report():
         for t in sm.get("tickers", [])[:10]:
             tag = " ✅持有" if t in held else (" 🟢Serenity" if t in sm.get("overlap_with_serenity",[]) else "")
             chips.append(f"{t}{tag}")
-        sm_html = (f"<h3>🐳 聪明钱 / 政客动向 <span style='font-size:11px;color:#888'>"
+        infl = sm.get("influencer_tweets", [])
+        infl_html = ""
+        if infl:
+            items = "".join(f"<li><b>@{t['who']}</b>: {t['text']}</li>" for t in infl[:5])
+            infl_html = (f"<p style='font-size:12px;margin:4px 0'><b>🗣️ 影响力人物(市场相关)：</b></p>"
+                         f"<ul style='font-size:12px;margin:2px 0;color:#444'>{items}</ul>")
+        sm_html = (f"<h3>🐳 聪明钱 / 政客 / 影响力人物 <span style='font-size:11px;color:#888'>"
                    f"(滞后披露·仅参考·不盖过 Serenity)</span></h3>"
                    f"<p style='font-size:13px'>{' · '.join(chips)}</p>"
                    f"<p style='font-size:11px;color:#888'>与 Serenity 焦点重叠: "
-                   f"<b>{', '.join(sm.get('overlap_with_serenity',[])) or '无'}</b> · 更新 {sm.get('fetched_at','?')[:10]}</p>")
+                   f"<b>{', '.join(sm.get('overlap_with_serenity',[])) or '无'}</b> · 更新 {sm.get('fetched_at','?')[:10]}</p>"
+                   f"{infl_html}")
     except Exception:
         sm_html = ""
 
