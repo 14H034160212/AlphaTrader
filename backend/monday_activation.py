@@ -47,6 +47,25 @@ def main():
     pending_sells = [o for o in open_orders if o["side"] == "sell" and o["symbol"] in DELEVERAGE]
     log(f"cash ${cash:.0f} ({cash/eq*100:.0f}% of ${eq:.0f}) | pending de-leverage sells: {len(pending_sells)}")
 
+    # PERMANENTLY disable margin at the BROKER level once cash is positive (user
+    # request 2026-06-22). Runs EVERY invocation (independent of auto_trade state)
+    # so a one-time failure self-heals next run. max_margin_multiplier=1 →
+    # buying_power = cash, borrowing impossible. no_shorting=True → long-only.
+    # Only when cash>=0: setting multiplier=1 while still leveraged could force a
+    # liquidation.
+    if cash >= 0 and not pending_sells:
+        try:
+            cur = requests.get(f"{A}/v2/account/configurations", headers=H, timeout=15).json()
+            if cur.get("max_margin_multiplier") != "1" or not cur.get("no_shorting"):
+                cfg = requests.patch(f"{A}/v2/account/configurations", headers=H, timeout=15,
+                                     json={"max_margin_multiplier": "1", "no_shorting": True}).json()
+                log(f"🔒 margin DISABLED at broker: max_margin_multiplier={cfg.get('max_margin_multiplier')}, "
+                    f"no_shorting={cfg.get('no_shorting')}")
+            else:
+                log("margin already disabled (multiplier=1, no_shorting)")
+        except Exception as e:
+            log(f"⚠️ could not set cash-only config (will retry next run): {e}")
+
     # already running? idempotent no-op
     if get_setting(db, "auto_trade_enabled", 1, "false") == "true":
         log("auto_trade already ON; nothing to do")
@@ -61,8 +80,8 @@ def main():
         except Exception as e:
             log(f"regime recompute failed (non-fatal): {e}")
         set_setting(db, "auto_trade_enabled", "true", 1)
-        log("✅ DE-LEVERAGE CONFIRMED, MARGIN CLEAR → auto_trade ENABLED. Engine now "
-            "operates autonomously (regime exposure + Serenity lens + 12% cap + stops, no margin).")
+        log("✅ DE-LEVERAGE CONFIRMED, MARGIN CLEAR → cash-only locked → auto_trade ENABLED. "
+            "Engine operates autonomously (regime exposure + Serenity lens + 12% cap + stops, no margin).")
         return
 
     # Case 2: sells still working → wait (do not enable yet)
