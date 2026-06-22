@@ -17,10 +17,10 @@ exec >>"$LOG" 2>&1
 echo "==== $(date -u +%FT%TZ) smart-money fetch start ===="
 
 OUT=/data/qbao775/AlphaTrader/.claude/skills/serenity-aleabitoreddit/data/smart_money_signals.json
-source /data/qbao775/miniconda3/etc/profile.d/conda.sh
-conda activate agentreach
-export PATH="/data/qbao775/miniconda3/bin:$PATH"
-cd /data/qbao775/AlphaTrader
+# cron-robust: absolute PATH (node+mcporter live in miniconda/bin); no conda-activate.
+export PATH="/data/qbao775/miniconda3/bin:/usr/bin:/bin"
+PY=/data/qbao775/miniconda3/envs/agentreach/bin/python
+cd /data/qbao775/AlphaTrader  # mcporter reads exa config from ./config/mcporter.json
 
 q() { timeout 90 mcporter call exa.web_search_exa query="$1" numResults=3 2>/dev/null | grep -ivE "ExperimentalWarning|trace-warnings"; }
 
@@ -34,7 +34,7 @@ RAW=$(mktemp)
   q "most bought stocks US Congress 2026 Capitol Trades Trump"
 } > "$RAW"
 
-python3 - "$RAW" "$OUT" <<'PY'
+"$PY" - "$RAW" "$OUT" <<'PY'
 import sys, re, json, datetime, os
 raw = open(sys.argv[1]).read(); dst = sys.argv[2]
 
