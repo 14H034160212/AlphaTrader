@@ -16,14 +16,16 @@ echo "==== $(date -u +%FT%TZ) tweets fetch start ===="
 OUT=/data/qbao775/AlphaTrader/.claude/skills/serenity-aleabitoreddit/data/serenity_latest_tweets.yaml
 N=${1:-25}
 
-source /data/qbao775/miniconda3/etc/profile.d/conda.sh
-conda activate agentreach
-export PATH="/data/qbao775/miniconda3/bin:$PATH"
+# cron-robust: absolute paths, no conda-activate (which fails in cron's minimal env).
+# `twitter` is a uv tool in ~/.local/bin; node + agentreach python from miniconda.
+export PATH="/home/qbao775/.local/bin:/data/qbao775/miniconda3/bin:/usr/bin:/bin"
+PY=/data/qbao775/miniconda3/envs/agentreach/bin/python
+TWITTER=/home/qbao775/.local/bin/twitter
 # burner-account twitter auth (chmod 600)
 source /home/qbao775/.agent-reach/twitter.env
 
 TMP=$(mktemp) || exit 1
-if timeout 120 twitter search "from:aleabitoreddit" -n "$N" 2>/dev/null \
+if timeout 120 "$TWITTER" search "from:aleabitoreddit" -n "$N" 2>/dev/null \
       | grep -ivE "ExperimentalWarning|trace-warnings" > "$TMP" \
    && grep -q "ok: true" "$TMP"; then
     mv "$TMP" "$OUT"
@@ -31,7 +33,7 @@ if timeout 120 twitter search "from:aleabitoreddit" -n "$N" 2>/dev/null \
     # (createdAtISO / text / quotedTweet.text) so the lens can recency-score his
     # LIVE tweets — making the freshest tweet the recency anchor.
     JSON_OUT="${OUT%.yaml}.json"
-    python3 - "$OUT" "$JSON_OUT" <<'PY'
+    "$PY" - "$OUT" "$JSON_OUT" <<'PY'
 import sys, yaml, json, datetime
 src, dst = sys.argv[1], sys.argv[2]
 d = yaml.safe_load(open(src)) or {}
