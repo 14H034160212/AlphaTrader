@@ -32,6 +32,18 @@ RAW=$(mktemp)
   echo "### CONGRESS/POLITICAL"
   q "Nancy Pelosi recent stock trades disclosure 2026 latest buy ticker"
   q "most bought stocks US Congress 2026 Capitol Trades Trump"
+  # ── influencer X tweets (Musk active; Trump may be dormant on X) — direct pull ──
+  echo "### INFLUENCER TWEETS"
+  if [ -f /home/qbao775/.agent-reach/twitter.env ]; then
+    source /home/qbao775/.agent-reach/twitter.env
+    TW=/home/qbao775/.local/bin/twitter
+    for handle in elonmusk realDonaldTrump; do
+      echo "--- @$handle ---"
+      timeout 90 "$TW" search "from:$handle" -n 8 2>/dev/null \
+        | grep -ivE "ExperimentalWarning|trace-warnings" \
+        | grep -iE "^\s+text:|createdAt:" | head -16
+    done
+  fi
 } > "$RAW"
 
 "$PY" - "$RAW" "$OUT" <<'PY'
@@ -68,11 +80,32 @@ except Exception:
     pass
 overlap = [t for t in tickers if t in serenity]
 
+# influencer tweet snippets (Musk/Trump) — capture the text after the marker
+infl = []
+seg = raw.split("### INFLUENCER TWEETS", 1)
+if len(seg) == 2:
+    who = "?"
+    for line in seg[1].splitlines():
+        m = re.match(r"---\s*@(\w+)", line.strip())
+        if m:
+            who = m.group(1); continue
+        tm = re.search(r"text:\s*['\"]?(.+)", line.strip())
+        if tm:
+            txt = tm.group(1).strip().strip("'\"")[:180]
+            # keep only MARKET-relevant tweets — Musk/Trump post mostly noise
+            kw = ("$", "stock", "tesla", "tsla", "ai", "chip", "nvidia", "fed",
+                  "rate", "tariff", "econom", "market", "dollar", "trade", "earnings",
+                  "spacex", "robot", "energy", "invest", "crypto", "bitcoin")
+            if len(txt) > 15 and any(k in txt.lower() for k in kw):
+                infl.append({"who": who, "text": txt})
+infl = infl[:8]
+
 out = {
     "fetched_at": datetime.datetime.utcnow().isoformat() + "Z",
     "tickers": tickers,
     "mention_weights": {t: counts[t] for t in tickers},
     "overlap_with_serenity": overlap,
+    "influencer_tweets": infl,
     "note": "LAGGED disclosure signal — awareness/cross-check only, secondary to Serenity. Don't chase.",
 }
 json.dump(out, open(dst, "w"), ensure_ascii=False, indent=1)
