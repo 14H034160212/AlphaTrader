@@ -105,7 +105,14 @@ def main(apply=True):
     m = a["metrics"]
     print(f"REGIME {a['regime']} (score {a['score']}) → cash_floor {a['cash_floor_pct']}% | {m}")
     if apply:
-        if a["regime"] == "UNKNOWN" or a["cash_floor_pct"] is None:
+        # Manual freeze: the regime is computed from DAILY bars (lags an intraday
+        # gap). On a known risk-off morning (e.g. futures crashing pre-open) set
+        # regime_freeze=true to hold the current defensive floor and stop the daily
+        # signal from flipping us to RISK_ON straight into the gap-down.
+        if get_setting(db, "regime_freeze", 1, "false") == "true":
+            print(f"  regime FROZEN (manual) — keeping cash_reserve_pct="
+                  f"{get_setting(db, 'cash_reserve_pct', 1, '?')}, not applying {a['regime']}")
+        elif a["regime"] == "UNKNOWN" or a["cash_floor_pct"] is None:
             # keep the last regime/floor rather than overwrite on a data outage
             print(f"  data feed unavailable ({m.get('error')}); KEEPING last "
                   f"cash_reserve_pct={get_setting(db, 'cash_reserve_pct', 1, '?')}, "
