@@ -636,8 +636,11 @@ async def background_auto_trade_loop():
                         import serenity_lens as _sl
                         _eng = TradingEngine(db, user.id)
                         _held = [p.symbol for p in _eng.get_all_positions() if p.quantity > 0.001]
+                        # top_n=15: focus buys on Serenity's highest-conviction CPO/chip
+                        # names, not the ~48-name tail (drops mega-cap noise GOOGL/MSFT/
+                        # TSLA we deliberately moved away from). Held names kept regardless.
                         watchlist = list(dict.fromkeys(
-                            _held + _sl.recommended_tickers() + _sl.nvda_downstream_extras()))
+                            _held + _sl.recommended_tickers(top_n=15) + _sl.nvda_downstream_extras()))
                     except Exception as _e:
                         logger.warning(f"[AutoTrade] serenity watchlist build failed, falling back: {_e}")
                         watchlist = json.loads(get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST)))
