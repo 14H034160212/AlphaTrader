@@ -55,7 +55,39 @@ print(f"JSON {len(out)} tweets → {dst}")
 PY
     echo "OK saved $(grep -c '^- id:' "$OUT" 2>/dev/null || echo '?') tweets → $OUT"
 else
-    echo "FETCH_FAIL (auth expired? rate-limited?); keeping last-good"
+    rm -f "$TMP"
+    # FALLBACK: the twitter CLI broke (X changed their site, HTTP 404 on
+    # ClientTransaction). Capture Serenity's CURRENT thinking via Exa instead —
+    # news aggregators (Bitget/BlockBeats/TopicDigg) quote his tweets — and write
+    # them as pseudo-tweets in the lens JSON schema so recency scoring keeps
+    # tracking his latest focus. The YAML stays last-good.
+    echo "FETCH_FAIL (twitter CLI down); trying Exa fallback for Serenity content"
+    JSON_OUT="${OUT%.yaml}.json"
+    MCP=/data/qbao775/miniconda3/bin/mcporter
+    "$MCP" call exa.web_search_exa query="aleabitoreddit Serenity latest tweets CPO optics SIVE AAOI memory" numResults=8 2>/dev/null \
+        | grep -ivE "ExperimentalWarning|trace-warnings" > "$TMP" || true
+    "$PY" - "$TMP" "$JSON_OUT" <<'PY' || echo "Exa fallback parse failed; keeping last-good JSON"
+import sys, re, json
+raw = open(sys.argv[1]).read(); dst = sys.argv[2]
+# split Exa result blocks on "Title:"; pull Published date + Highlights text
+blocks = re.split(r"\nTitle:", raw)
+out = []
+for b in blocks:
+    if "serenity" not in b.lower() and "aleabitoreddit" not in b.lower():
+        continue
+    dm = re.search(r"Published:\s*(\d{4}-\d{2}-\d{2})", b)
+    iso = (dm.group(1) + "T00:00:00+00:00") if dm else ""
+    # keep the body text (drop the URL/Published lines)
+    txt = re.sub(r"(Published:|URL:|https?://)\S*", " ", b)
+    txt = " ".join(txt.split())[:400]
+    if len(txt) > 40:
+        out.append({"createdAtISO": iso, "text": txt, "quotedTweet": {"text": ""}})
+if out:
+    json.dump(out, open(dst, "w"), ensure_ascii=False, indent=1)
+    print(f"Exa fallback: {len(out)} Serenity items → {dst}")
+else:
+    raise SystemExit("no Serenity items parsed")
+PY
     rm -f "$TMP"
 fi
 echo "==== $(date -u +%FT%TZ) tweets fetch done ===="
