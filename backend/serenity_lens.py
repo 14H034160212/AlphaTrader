@@ -35,6 +35,10 @@ _LIVE_TWEETS_PATH = os.path.join(_SKILL_DIR, "data", "serenity_latest_tweets.jso
 # Fresh CURRENT-focus tickers scraped daily from semiconstocks.com tracker
 # (refresh_serenity_intel.py) — supplements the frozen 2026-06-08 tweet archive.
 _FOCUS_PATH = os.path.join(_SKILL_DIR, "data", "serenity_current_focus.json")
+# Smart-money + influencer signals (Buffett/Pelosi/Trump/Musk 13F + tweets) from
+# fetch_smart_money.sh — used ONLY as a conviction cross-check on names Serenity
+# already covers (never introduces off-thesis mega-caps). See _smart_money_confirms.
+_SMART_MONEY_PATH = os.path.join(_SKILL_DIR, "data", "smart_money_signals.json")
 # Recency half-life (days) for time-decayed conviction scoring: a mention this
 # many days before his latest tweet counts half as much. 30d → strongly favors
 # what he's pushing NOW (user directive 2026-06-10: latest tweets = top priority,
@@ -227,6 +231,18 @@ def build_serenity_lens_block(symbol, sector="Other"):
             "chokepoint; few boxes = likely not his kind of setup.\n"
         )
 
+    # Smart-money cross-check (Buffett/Berkshire 13F, Congress/Pelosi/Trump, Musk
+    # tweets). Confirmation only — appears only for names Serenity ALSO covers.
+    sm_block = ""
+    if symbol in _smart_money_confirms():
+        sm_block = (
+            f"\n**🐳 Smart-money cross-check:** {symbol} is ALSO currently held/pushed "
+            "by tracked smart money (Buffett/Berkshire 13F, Congress, or Musk/Trump) — "
+            "a dual-confirmation with Serenity's chokepoint thesis. Mild conviction "
+            "boost only; lagged disclosure, NOT independent proof, never a reason to "
+            "chase a name that's already run.\n"
+        )
+
     checklist_block = ""
     _checklist = _get_checklist()
     if _checklist:
@@ -253,7 +269,7 @@ def build_serenity_lens_block(symbol, sector="Other"):
         "his small-caps are volatile (20%+ days, dilution/single-customer/binary risk).\n"
     )
 
-    return header + stance_block + checklist_block + decision_guidance
+    return header + stance_block + sm_block + checklist_block + decision_guidance
 
 
 _TICK_RE = re.compile(r"\$([A-Za-z]{1,6})\b")
@@ -337,6 +353,28 @@ def _get_current_focus():
     return _focus_cache["focus"]
 
 
+def _smart_money_confirms():
+    """Tickers that smart money (Buffett/Berkshire 13F, Congress/Pelosi/Trump
+    trades, Musk/Trump tweets) ALSO favors AND that are already in Serenity's
+    universe — i.e. dual-confirmation. INTERSECTION ONLY: a smart-money name not
+    in Serenity's coverage (e.g. GOOGL/AMZN mega-caps) is never introduced here,
+    so this can only boost on-thesis names, never pull us off-thesis. Returns a
+    set; empty on any failure (so the lens degrades to pure-Serenity)."""
+    try:
+        with open(_SMART_MONEY_PATH) as f:
+            sm = json.load(f)
+        # overlap_with_serenity = smart-money tickers ∩ Serenity's CURRENT focus —
+        # the right set (e.g. NVDA). Intersect once more with current focus for
+        # robustness. Deliberately NOT the all-time universe (which contains
+        # mega-caps like GOOGL Serenity merely mentioned once, off current thesis).
+        focus = set(_get_current_focus())
+        confirms = set(sm.get("overlap_with_serenity", []))
+        confirms |= (set(sm.get("tickers", [])) & focus)
+        return confirms
+    except Exception:
+        return set()
+
+
 def recommended_tickers(top_n=45, min_score=0.5):
     """Serenity's CURRENT conviction names, ranked by RECENCY-decayed mentions.
 
@@ -352,12 +390,17 @@ def recommended_tickers(top_n=45, min_score=0.5):
     # what Serenity is pushing NOW, fresher than the frozen 2026-06-08 archive.
     focus = _get_current_focus()
     scores = _get_recency_scores()
+    # Smart-money cross-check: a 1.25x conviction boost for names Serenity AND
+    # smart money both favor (e.g. NVDA). It nudges ranking — Serenity's own
+    # strongest picks still lead — and only touches names already in his universe.
+    confirms = _smart_money_confirms()
     if not scores:  # fallback: all-time mentions
         archive = [t for t, info in sorted(_get_universe().items(),
                                            key=lambda kv: -kv[1]["mentions"])
                    if info["mentions"] >= 50]
     else:
-        archive = [t for t, s in sorted(scores.items(), key=lambda kv: -kv[1]) if s >= min_score]
+        boosted = {t: (s * 1.25 if t in confirms else s) for t, s in scores.items()}
+        archive = [t for t, s in sorted(boosted.items(), key=lambda kv: -kv[1]) if s >= min_score]
     # merge: fresh focus first, then archive-recency, deduped
     return list(dict.fromkeys(focus + archive))[:top_n]
 
