@@ -1,0 +1,19 @@
+# Agent Reach intelligence environment — INSTALL IN A SEPARATE conda env
+# (Python >= 3.10), never the trading env. See README "2b. Agent Reach".
+#
+#   conda create -n agentreach python=3.11 -y
+#   pip install -r requirements-agentreach.txt
+#
+# agent-reach is not on PyPI — it is installed from GitHub (pulls its own deps:
+# yt-dlp, feedparser, loguru, rich, python-dotenv, etc.) and provides the
+# `twitter` channel CLI + `agent-reach` command:
+https://github.com/Panniantong/agent-reach/archive/main.zip
+
+# Explicitly used by our fetch scripts:
+pyyaml>=6.0          # parse the twitter CLI's YAML output -> lens JSON schema
+requests>=2.28.0
+
+# NOT pip-installable (set up separately, see README):
+#   - node.js (>=18)            : runtime for mcporter
+#   - npm install -g mcporter   : Exa MCP client  ->  mcporter config add exa https://mcp.exa.ai/mcp
+#   - agent-reach install --env=auto --channels=twitter  : channel tooling (uv-installs the `twitter` CLI to ~/.local/bin)
