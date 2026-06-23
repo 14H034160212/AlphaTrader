@@ -625,8 +625,24 @@ async def background_auto_trade_loop():
                 logger.info(f"Starting auto-trade cycle for user: {user.username}")
                 api_key = get_setting(db, "deepseek_api_key", user.id, "")
                 ai_provider = get_setting(db, "ai_provider", user.id, "ollama")
-                watchlist_json = get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST))
-                watchlist = json.loads(watchlist_json)
+                # 2026-06-23 CHURN FIX: in serenity mode derive the tradeable set LIVE
+                # from held positions + recommended_tickers(), NOT the persisted
+                # `watchlist` setting — it had bloated to 62 stale off-thesis names
+                # (incl ORCL/GLD/LMT) and the loop churned them (buy then sell). Held
+                # names stay (so we can manage/sell them); buys limited to Serenity's
+                # current thesis. No persisted-list staleness.
+                if get_setting(db, "watchlist_source", user.id, "serenity") == "serenity":
+                    try:
+                        import serenity_lens as _sl
+                        _eng = TradingEngine(db, user.id)
+                        _held = [p.symbol for p in _eng.get_all_positions() if p.quantity > 0.001]
+                        watchlist = list(dict.fromkeys(
+                            _held + _sl.recommended_tickers() + _sl.nvda_downstream_extras()))
+                    except Exception as _e:
+                        logger.warning(f"[AutoTrade] serenity watchlist build failed, falling back: {_e}")
+                        watchlist = json.loads(get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST)))
+                else:
+                    watchlist = json.loads(get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST)))
 
                 # ⚠️ HK IPO priority injection (per user 2026-05-03):
                 # Newly-listed HK tech tickers go to the FRONT of the scan queue
