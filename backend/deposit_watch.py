@@ -50,7 +50,13 @@ def main():
 
     base = float(baseline)
     if total <= base + 1:
-        log(f"no new deposit (total ${total:.0f} == baseline ${base:.0f})")
+        # Track the baseline DOWN on withdrawals (CSW/negative JNLC) so a later
+        # real deposit isn't masked by a stale high baseline.
+        if total < base:
+            set_setting(db, "deposits_seen_total", str(total), 1)
+            log(f"net deposits fell to ${total:.0f} (withdrawal); baseline lowered")
+        else:
+            log(f"no new deposit (total ${total:.0f} == baseline ${base:.0f})")
         return
 
     new_amt = total - base

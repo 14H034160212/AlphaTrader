@@ -18,7 +18,11 @@ A = "https://api.alpaca.markets"
 MCPORTER = "/data/qbao775/miniconda3/bin/mcporter"
 RISK_KW = ("plunge", "crash", "selloff", "sell-off", "tumble", "slump", "rout",
            "downgrade", "cut", "warning", "warn", "miss", "glut", "oversupply",
-           "circuit breaker", "halt", "slash", "weak", "disappoint", "probe")
+           "circuit breaker", "halt", "slash", "weak", "disappoint", "probe",
+           # material POSITIVE catalysts too — a holding's good news (e.g. the
+           # Micron–Anthropic deal 2026-06-22) is just as worth surfacing as bad.
+           "partnership", "deal", "agreement", "contract", "surge", "soar",
+           "record high", "upgrade", "investment", "wins", "beat", "raises guidance")
 
 
 def log(m): print(f"{datetime.datetime.utcnow().isoformat()}Z  {m}", flush=True)

@@ -327,7 +327,11 @@ class TradingEngine:
             try:
                 rs = self.get_cash_reserve_status()
                 deployable = rs["cash"] - rs["target_cash"]
-                if total_cost > deployable:
+                # small tolerance: auto_trade already shrinks orders to the floor,
+                # and 4-decimal qty rounding can push total_cost a cent over
+                # deployable — without this epsilon the whole fit-to-floor buy is
+                # wrongly rejected. $1 is well below any margin risk.
+                if total_cost > deployable + 1.0:
                     return {"success": False, "skipped": True,
                             "reason": (f"Cash-floor: cost ${total_cost:.2f} > deployable "
                                        f"${deployable:.2f} (cash ${rs['cash']:.2f} − reserve "
