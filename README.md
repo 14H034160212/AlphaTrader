@@ -23,6 +23,20 @@ The trade-selection brain applies the analytical methodology of **Serenity ([@al
 
 > ⚠️ **Decision-support only — not financial advice.** The Serenity lens shapes *which questions the brain asks*; it never auto-trades on copied signals. Serenity's self-reported returns are unverified and carry survivorship/selection bias; his names are volatile micro/small-caps. See the skill's risk framing.
 
+## What's new (June 2026)
+
+- **🛡️ No-margin lockdown (living-money safety)**: a critical bug had `get_cash_balance()` return Alpaca `buying_power` (4× margin) instead of real `cash`, letting the engine silently buy on margin. Fixed: real-cash only + a hard cash-reserve-floor guard at the single `execute_buy()` chokepoint (so deposit/rebalance paths can't bypass it) + the broker account is locked to **`max_margin_multiplier=1` + `no_shorting=true`** — borrowing is now impossible at both the software and broker layer.
+- **📈 Adaptive exposure engine (`market_regime.py`)**: scores SPY trend / momentum / volatility / drawdown into RISK_ON / NEUTRAL / RISK_OFF and writes a dynamic `cash_reserve_pct` (20 / 40 / 65 %). "Earn more in good markets, lose less in bad" — the engine deploys more when healthy, defends when stressed. Daily pre-open cron, no restart needed.
+- **🐦 LIVE Serenity tweets via Agent Reach**: the yan-labs archive froze at 2026-06-08; `fetch_serenity_tweets.sh` now pulls @aleabitoreddit's live timeline (burner account, never the main one) and merges it into the lens recency scoring, so his freshest picks (SIVE/AAOI/COHR …) drive the watchlist.
+- **🐳 Smart-money + influencer tracking (`fetch_smart_money.sh`)**: Buffett/Berkshire & Ackman 13F, Congressional/STOCK-Act trades (Pelosi, Trump), and Musk/Trump market-relevant X posts — a LAGGED cross-check only (never overrides Serenity, never auto-buys), surfaced in the daily email.
+- **📰 Proactive news alerts (`news_watch.py`)**: Exa-searches holdings + sectors (memory/HBM, CPO/optics) for material-risk headlines (plunge/downgrade/glut/halt …) and emails an alert — closes the "breaking-news blind spot".
+- **💰 Deposit auto-detect (`deposit_watch.py`)**: detects new cash deposits and lets the engine deploy them into Serenity names within the guardrails; emails on arrival.
+- **📧 Daily email upgrade**: status banner shows leverage state, market regime + cash floor, and **real cumulative return NET OF DEPOSITS** broken down into unrealized + realized + today (deposits are never miscounted as gains).
+- **🔌 Real-time internet access (Agent Reach)**: Exa semantic search, RSS, web, GitHub, X — installed in an isolated `agentreach` conda env; powers the catalyst/news pipeline above.
+- **🧱 Cron-robustness**: absolute SQLite DB path (was a relative `./` path that broke cron-run scripts) + `rsync --delete` excludes for locally-generated data files.
+
+---
+
 ## What's new (May 2026)
 
 - **Hong Kong live trading** via Moomoo NZ OpenD (FUTUAU entity). HK + US in one platform; separate daily emails.
@@ -388,6 +402,49 @@ conda create -n alphatrader python=3.10 -y
     einops \
     safetensors \
     tqdm
+```
+
+### 2b. (Optional) Real-time Intelligence via Agent Reach
+
+Powers live Serenity tweets, Exa news search, and the smart-money / news / deposit
+watchers. Installed in its OWN isolated conda env (needs Python ≥ 3.10) so it never
+touches the trading env:
+
+```bash
+conda create -n agentreach python=3.11 -y
+/data/qbao775/miniconda3/envs/agentreach/bin/pip install \
+    "https://github.com/Panniantong/agent-reach/archive/main.zip"
+/data/qbao775/miniconda3/envs/agentreach/bin/agent-reach install --env=auto          # zero-config channels
+/data/qbao775/miniconda3/envs/agentreach/bin/agent-reach install --channels=twitter  # X channel tooling
+
+# Exa global semantic search (needs node + mcporter, npm-global into miniconda)
+npm install -g mcporter
+mcporter config add exa https://mcp.exa.ai/mcp        # writes ./config/mcporter.json
+
+# X / Twitter auth — use a BURNER account, never your main one (datacenter-IP
+# scraping can get an account rate-limited/locked). Export cookies with the
+# Cookie-Editor extension on x.com (Export → Header String), then:
+#   agent-reach configure twitter-cookies "PASTED_STRING"
+# and store the auth for cron (chmod 600), read by fetch_serenity_tweets.sh:
+cat > ~/.agent-reach/twitter.env <<'EOF'
+export TWITTER_AUTH_TOKEN="..."   # from the burner account's cookies
+export TWITTER_CT0="..."
+EOF
+chmod 600 ~/.agent-reach/twitter.env
+```
+
+Cron jobs that drive the intelligence pipeline (all use absolute paths so they
+survive cron's minimal env):
+
+```cron
+*/30 * * * *        refresh_serenity_data.sh                 # yan-labs archive sync
+23 */6 * * *        fetch_serenity_tweets.sh 25               # LIVE Serenity tweets
+17 6 * * *          backend/refresh_serenity_intel.py         # semiconstocks focus
+0 13 * * 1-5        backend/market_regime.py                  # adaptive cash floor (pre-open)
+13 7 * * 1,4        fetch_smart_money.sh                      # 13F + congress + Musk/Trump
+47 13,15,17,19 * * 1-5  backend/news_watch.py                 # breaking-news alerts (market hours)
+*/30 * * * *        backend/deposit_watch.py                  # deposit auto-detect
+33 21 * * 1-5       send_market_reports.sh                    # daily email (after US close)
 ```
 
 ### 3. Download Kronos Model Code
