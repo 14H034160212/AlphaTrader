@@ -192,6 +192,44 @@ def weighted_cross_entropy(logits, labels, weights):
 
 
 # ──────────────────────────────────────────────
+# Checkpoint helpers (continual training)
+# ──────────────────────────────────────────────
+
+def save_checkpoint(model, tokenizer, optimizer, scheduler, ckpt_dir,
+                    epoch, batch_in_epoch, best_val_loss):
+    """Save the LoRA adapter PLUS full trainer state so training can resume
+    exactly where it stopped (optimizer momentum, LR schedule, epoch/batch
+    position, best metric, RNG)."""
+    os.makedirs(ckpt_dir, exist_ok=True)
+    model.save_pretrained(ckpt_dir)
+    tokenizer.save_pretrained(ckpt_dir)
+    torch.save({
+        "optimizer":      optimizer.state_dict(),
+        "scheduler":      scheduler.state_dict(),
+        "epoch":          epoch,            # 0-based epoch index in progress
+        "batch_in_epoch": batch_in_epoch,   # dataloader batches consumed in that epoch
+        "best_val_loss":  best_val_loss,
+        "torch_rng":      torch.get_rng_state(),
+        "cuda_rng":       torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }, os.path.join(ckpt_dir, "trainer_state.pt"))
+
+
+def find_latest_checkpoint(output_dir):
+    """Return the most recently modified step_*/epoch_*/last checkpoint dir in
+    output_dir (by mtime), or None if there are none."""
+    import glob
+    cands = []
+    for pat in ("step_*", "epoch_*", "last"):
+        for d in glob.glob(os.path.join(output_dir, pat)):
+            if os.path.isdir(d):
+                cands.append((os.path.getmtime(d), d))
+    if not cands:
+        return None
+    cands.sort()
+    return cands[-1][1]
+
+
+# ──────────────────────────────────────────────
 # Main training loop
 # ──────────────────────────────────────────────
 
@@ -207,6 +245,21 @@ def train(args):
     num_gpus = torch.cuda.device_count()
     cv = os.environ.get("CUDA_VISIBLE_DEVICES", "all")
     print(f"[GPU] Training on {num_gpus} GPU(s) (CUDA_VISIBLE_DEVICES={cv})", flush=True)
+
+    # ── Resume / continual training ────────────────────────
+    # Resolve which checkpoint (if any) to continue from. "auto" picks the
+    # newest checkpoint in output_dir; an explicit path is used verbatim.
+    resume_dir = None
+    if args.resume_from:
+        if args.resume_from == "auto":
+            resume_dir = find_latest_checkpoint(args.output_dir)
+            print(f"[Resume] auto → {resume_dir}" if resume_dir
+                  else "[Resume] auto: no checkpoint in output_dir, starting fresh")
+        elif os.path.isdir(args.resume_from):
+            resume_dir = args.resume_from
+            print(f"[Resume] resuming from {resume_dir}")
+        else:
+            print(f"[Resume] path not found: {args.resume_from} — starting fresh")
 
     # For MoE models (Qwen3.5), even QLoRA can't fit on 1 GPU because the
     # 256 expert layers aren't all quantized → still need pipeline parallel.
@@ -289,7 +342,12 @@ def train(args):
         bias="none",
         target_modules=lora_target_modules,
     )
-    model = get_peft_model(model, lora_config)
+    if resume_dir:
+        from peft import PeftModel
+        print(f"[LoRA] Loading existing adapter from {resume_dir} (is_trainable=True)")
+        model = PeftModel.from_pretrained(model, resume_dir, is_trainable=True)
+    else:
+        model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
     # ── Dataset ────────────────────────────────────────────
@@ -298,9 +356,13 @@ def train(args):
     val_ds   = RLSFTDataset(
         os.path.join(args.dataset_dir, "val.jsonl"),   tokenizer, args.max_length)
 
+    # Deterministic shuffle generator: reseeded per-epoch (args.seed + epoch).
+    # This makes each epoch's batch order reproducible so a resumed run can
+    # fast-forward to the exact batch it stopped at.
+    train_gen = torch.Generator()
     train_loader = DataLoader(
         train_ds, batch_size=args.per_device_batch_size,
-        shuffle=True, num_workers=2, pin_memory=False,
+        shuffle=True, num_workers=2, pin_memory=False, generator=train_gen,
     )
     val_loader = DataLoader(
         val_ds, batch_size=args.per_device_batch_size, num_workers=2)
@@ -317,18 +379,64 @@ def train(args):
     os.makedirs(args.output_dir, exist_ok=True)
     best_val_loss = float("inf")
 
+    # ── Restore trainer state for continual training ───────
+    start_epoch = 0
+    resume_skip_batches = 0
+    if resume_dir:
+        state_path = os.path.join(resume_dir, "trainer_state.pt")
+        if os.path.exists(state_path):
+            state = torch.load(state_path, map_location="cpu")
+            try:
+                optimizer.load_state_dict(state["optimizer"])
+                scheduler.load_state_dict(state["scheduler"])
+            except Exception as e:
+                print(f"[Resume] WARNING: optimizer/scheduler restore failed ({e}); "
+                      f"warm-starting from adapter weights with a fresh optimizer.")
+            start_epoch         = state.get("epoch", 0)
+            resume_skip_batches = state.get("batch_in_epoch", 0)
+            best_val_loss       = state.get("best_val_loss", best_val_loss)
+            if state.get("torch_rng") is not None:
+                try:
+                    torch.set_rng_state(state["torch_rng"])
+                except Exception:
+                    pass
+            if state.get("cuda_rng") is not None and torch.cuda.is_available():
+                try:
+                    torch.cuda.set_rng_state_all(state["cuda_rng"])
+                except Exception:
+                    pass
+            # If that epoch was already finished, start at the next one.
+            if resume_skip_batches >= len(train_loader):
+                start_epoch += 1
+                resume_skip_batches = 0
+            print(f"[Resume] restored: start_epoch={start_epoch}, "
+                  f"skip_batches={resume_skip_batches}, best_val_loss={best_val_loss:.4f}")
+        else:
+            print(f"[Resume] no trainer_state.pt in {resume_dir}: adapter weights "
+                  f"loaded, but optimizer and LR schedule restart from scratch.")
+
     # With device_map="auto", inputs go to the first device; model handles the rest
     first_device = next(model.parameters()).device
 
     import time
-    for epoch in range(args.num_epochs):
+    for epoch in range(start_epoch, args.num_epochs):
         model.train()
         total_loss = 0.0
         optimizer.zero_grad()
         epoch_start = time.time()
         last_log_t  = time.time()
 
+        # Reproducible per-epoch shuffle so resume can fast-forward exactly.
+        train_gen.manual_seed(args.seed + epoch)
+        # On the resumed epoch only, skip the batches already trained.
+        skip_n = resume_skip_batches if epoch == start_epoch else 0
+        if skip_n:
+            print(f"  [Resume] fast-forwarding {skip_n} batches in epoch {epoch+1}...",
+                  flush=True)
+
         for step, batch in enumerate(train_loader):
+            if step < skip_n:
+                continue   # already trained before the interruption
             input_ids      = batch["input_ids"].to(first_device)
             attention_mask = batch["attention_mask"].to(first_device)
             labels         = batch["labels"].to(first_device)
@@ -355,10 +463,12 @@ def train(args):
                 scheduler.step()
                 optimizer.zero_grad()
 
-            # Mid-epoch checkpoint so partial training is usable
+            # Mid-epoch checkpoint so partial training is usable AND resumable
             if args.save_every_n_steps > 0 and (step + 1) % args.save_every_n_steps == 0:
                 ckpt = os.path.join(args.output_dir, f"step_{step+1}")
-                model.save_pretrained(ckpt)
+                save_checkpoint(model, tokenizer, optimizer, scheduler, ckpt,
+                                epoch=epoch, batch_in_epoch=step + 1,
+                                best_val_loss=best_val_loss)
                 print(f"  [Checkpoint] step {step+1} → {ckpt}", flush=True)
 
         # Validation
@@ -377,10 +487,11 @@ def train(args):
               f"train_loss={total_loss/len(train_loader):.4f}  "
               f"val_loss={val_loss:.4f}")
 
-        # Save checkpoint
+        # Save checkpoint (adapter + trainer state for resume)
         ckpt_dir = os.path.join(args.output_dir, f"epoch_{epoch+1}")
-        model.save_pretrained(ckpt_dir)
-        tokenizer.save_pretrained(ckpt_dir)
+        save_checkpoint(model, tokenizer, optimizer, scheduler, ckpt_dir,
+                        epoch=epoch, batch_in_epoch=len(train_loader),
+                        best_val_loss=best_val_loss)
         print(f"  Checkpoint saved → {ckpt_dir}")
 
         if val_loss < best_val_loss:
@@ -422,6 +533,13 @@ if __name__ == "__main__":
                         help="How often to print loss (default: every 5 steps)")
     parser.add_argument("--save_every_n_steps",  type=int,   default=1000,
                         help="Save mid-epoch checkpoint every N steps (0=off)")
+    parser.add_argument("--resume_from",         default="",
+                        help="Continual training: resume from a checkpoint dir, or "
+                             "'auto' to pick the newest in --output_dir. "
+                             "Empty (default) = fresh start.")
+    parser.add_argument("--seed",                type=int,   default=42,
+                        help="Seed for reproducible data shuffling (required for "
+                             "exact mid-epoch resume).")
     args = parser.parse_args()
 
     # Safety cap — never exceed 2 GPUs regardless of CLI input

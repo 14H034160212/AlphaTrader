@@ -11,7 +11,7 @@ LOG=/tmp/ollama_qwen35.log
 PORT=11435
 BIN=/data/qbao775/.local/ollama/bin/ollama
 MODELS=/data/qbao775/.ollama-new
-GPUS="5,6"
+GPUS="6"   # Pinned to GPU-6 only (consolidated GPU layout: all qbao775 jobs on GPUs 5,6)
 
 echo "[$(date)] qwen3.5:35b daemon supervisor started" >> "$LOG"
 

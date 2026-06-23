@@ -4,7 +4,7 @@
 BACKEND_DIR="/data/qbao775/AlphaTrader/backend"
 LOG_FILE="/tmp/alphatrader.log"
 PYTHON="/data/qbao775/miniconda3/envs/alphatrader/bin/python3"
-export CUDA_VISIBLE_DEVICES=7   # Use GPU-7 (~52GB free), avoid GPU 0-6 used by RL training
+export CUDA_VISIBLE_DEVICES=6   # Pinned to GPU-6 (shared with ollama+dp_m7); consolidated to GPUs 5,6 only
 
 # Load secrets from backend/.env (gitignored). Required: SECRET_KEY for JWT signing.
 # To rotate: edit backend/.env, restart the supervisor, all users must re-login.
