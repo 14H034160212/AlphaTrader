@@ -436,7 +436,10 @@ def trigger_lora_training_if_needed(records: list) -> str | None:
              "--max_length", "2048",
              "--log_every_n_steps", "10",
              "--save_every_n_steps", "1000",
-             "--max_gpus", "2"],
+             "--max_gpus", "2",
+             # Continual training: pick up the latest checkpoint instead of
+             # restarting from the base model on every (re)spawn.
+             "--resume_from", "auto"],
             stdout=log_fd, stderr=subprocess.STDOUT,
             env=env, cwd=repo_root, start_new_session=True,
         )
