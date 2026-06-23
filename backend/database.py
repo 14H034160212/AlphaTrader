@@ -9,7 +9,11 @@ except ImportError:
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 
-DATABASE_URL = "sqlite:///./trading_platform.db"
+# Absolute path anchored to this file's dir so the DB resolves identically no
+# matter the cwd — cron-run scripts were hitting an empty './trading_platform.db'
+# ("no such table: settings"); same file as before for the engine (runs in backend/).
+import os as _os
+DATABASE_URL = "sqlite:///" + _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "trading_platform.db")
 
 # NullPool: SQLite is a file DB - no connection pooling needed.
 # Background tasks call next(get_db()) without triggering finally-close,
