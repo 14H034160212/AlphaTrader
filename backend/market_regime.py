@@ -41,6 +41,7 @@ def _fetch_closes(sym, key, sec, days=300):
     r = requests.get(_DATA.format(sym=sym), headers=H, timeout=20, params={
         "timeframe": "1Day", "start": start, "end": end,
         "limit": 300, "feed": "iex", "adjustment": "all"})
+    r.raise_for_status()   # surface 401/403/429 instead of silently returning []
     return [b["c"] for b in (r.json().get("bars") or [])]
 
 
@@ -52,7 +53,11 @@ def assess_regime(key, sec):
         if len(c) < 60:
             raise ValueError(f"only {len(c)} bars")
     except Exception as e:
-        return {"regime": "NEUTRAL", "score": 0, "cash_floor_pct": _FLOOR["NEUTRAL"],
+        # Data feed down (bad keys / 429 / outage). Do NOT silently reset to
+        # NEUTRAL — during a crash that would leave the engine at the 40% floor
+        # deploying into the decline. Signal failure so main() keeps the LAST
+        # regime (and a real RISK_OFF set earlier stays in force).
+        return {"regime": "UNKNOWN", "score": 0, "cash_floor_pct": None,
                 "metrics": {"error": str(e)}}
 
     last = c[-1]
@@ -100,10 +105,16 @@ def main(apply=True):
     m = a["metrics"]
     print(f"REGIME {a['regime']} (score {a['score']}) → cash_floor {a['cash_floor_pct']}% | {m}")
     if apply:
-        prev = get_setting(db, "cash_reserve_pct", 1, "?")
-        set_setting(db, "cash_reserve_pct", str(a["cash_floor_pct"]), 1)
-        set_setting(db, "market_regime", a["regime"], 1)
-        print(f"  applied: cash_reserve_pct {prev} → {a['cash_floor_pct']}; market_regime={a['regime']}")
+        if a["regime"] == "UNKNOWN" or a["cash_floor_pct"] is None:
+            # keep the last regime/floor rather than overwrite on a data outage
+            print(f"  data feed unavailable ({m.get('error')}); KEEPING last "
+                  f"cash_reserve_pct={get_setting(db, 'cash_reserve_pct', 1, '?')}, "
+                  f"market_regime={get_setting(db, 'market_regime', 1, '?')}")
+        else:
+            prev = get_setting(db, "cash_reserve_pct", 1, "?")
+            set_setting(db, "cash_reserve_pct", str(a["cash_floor_pct"]), 1)
+            set_setting(db, "market_regime", a["regime"], 1)
+            print(f"  applied: cash_reserve_pct {prev} → {a['cash_floor_pct']}; market_regime={a['regime']}")
     return a
 
 

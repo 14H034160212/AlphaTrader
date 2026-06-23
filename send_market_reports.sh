@@ -154,27 +154,39 @@ def build_us_report():
     regime = get_setting(db,"market_regime",1,"?"); floor = get_setting(db,"cash_reserve_pct",1,"?")
     auto = "开" if get_setting(db,"auto_trade_enabled",1,"false")=="true" else "关"
     # real cumulative return = equity − net cash deposits (so deposits aren't counted as gains)
+    net_dep = None
     try:
         acts = requests.get("https://api.alpaca.markets/v2/account/activities?activity_types=CSD,CSW,JNLC&page_size=100",
-                            headers=H, timeout=10).json()
-        net_dep = sum(float(a.get('net_amount',0)) for a in acts)
+                            headers=H, timeout=10)
+        acts.raise_for_status()
+        data = acts.json()
+        if isinstance(data, list):
+            net_dep = sum(float(a.get('net_amount',0)) for a in data)
     except Exception:
-        net_dep = 0
-    real_pl = equity - net_dep if net_dep else 0
-    real_pct = (equity/net_dep-1)*100 if net_dep else 0
-    realized = real_pl - unrealized        # past closed trades (real_total = unrealized + realized)
-    rc = "#28a745" if real_pl>=0 else "#dc3545"
+        net_dep = None
     uc = "#28a745" if unrealized>=0 else "#dc3545"
-    zc = "#28a745" if realized>=0 else "#dc3545"
     dc = "#28a745" if day_pnl>=0 else "#dc3545"
+    # Only show the real-return line when deposits are known AND positive — never
+    # fabricate $0 from a failed API call on the living-money report.
+    if net_dep and net_dep > 0:
+        real_pl = equity - net_dep
+        real_pct = (equity/net_dep-1)*100
+        realized = real_pl - unrealized
+        rc = "#28a745" if real_pl>=0 else "#dc3545"
+        zc = "#28a745" if realized>=0 else "#dc3545"
+        real_line = (f"<b>真实累计收益</b>(净值 ${equity:.0f} − 入金 ${net_dep:.0f}): "
+                     f"<span style='color:{rc}'><b>${real_pl:+.0f} ({real_pct:+.2f}%)</b></span>"
+                     f"<span style='color:#888;font-size:11px'> ← 真赚/亏,入金不算</span><br>"
+                     f"<span style='font-size:13px'>= 持仓浮盈 <span style='color:{uc}'><b>${unrealized:+.0f}</b></span>"
+                     f" + 已实现(过往平仓)<span style='color:{zc}'><b>${realized:+.0f}</b></span>"
+                     f" · 今日 <span style='color:{dc}'><b>${day_pnl:+.0f}</b></span></span>")
+    else:
+        real_line = (f"<span style='color:#888'>真实累计收益:入金数据暂时获取失败,本次不展示</span><br>"
+                     f"<span style='font-size:13px'>持仓浮盈 <span style='color:{uc}'><b>${unrealized:+.0f}</b></span>"
+                     f" · 今日 <span style='color:{dc}'><b>${day_pnl:+.0f}</b></span></span>")
     banner = (f"<div style='background:#f8f9fa;border-left:4px solid {lev_c};padding:10px;margin:8px 0'>"
               f"<b>状态:</b> <span style='color:{lev_c}'>{lev}</span> · 体制 <b>{regime}</b>(现金保底 {floor}%) · 自动交易 <b>{auto}</b><br>"
-              f"<b>真实累计收益</b>(净值 ${equity:.0f} − 入金 ${net_dep:.0f}): "
-              f"<span style='color:{rc}'><b>${real_pl:+.0f} ({real_pct:+.2f}%)</b></span>"
-              f"<span style='color:#888;font-size:11px'> ← 真赚/亏,入金不算</span><br>"
-              f"<span style='font-size:13px'>= 持仓浮盈 <span style='color:{uc}'><b>${unrealized:+.0f}</b></span>"
-              f" + 已实现(过往平仓)<span style='color:{zc}'><b>${realized:+.0f}</b></span>"
-              f" · 今日 <span style='color:{dc}'><b>${day_pnl:+.0f}</b></span></span></div>")
+              f"{real_line}</div>")
 
     rows = ""
     for p in sorted([p for p in pos if float(p['qty'])>0.001], key=lambda x: -float(x.get('market_value',0))):
