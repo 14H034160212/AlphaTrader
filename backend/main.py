@@ -608,6 +608,28 @@ async def background_price_refresh():
         await asyncio.sleep(300)  # Refresh every 5 min (cache handles inter-loop dedup)
 
 
+def build_tradeable_watchlist(db, user_id):
+    """Single source of truth for the tradeable watchlist used by ALL trading
+    loops (auto_trade + blog/event/news catalyst scans). In serenity mode it is
+    built LIVE from held positions + recommended_tickers(15) + nvda extras —
+    NOT the persisted `watchlist` setting, which bloated to 49 stale off-thesis
+    names (incl ORCL) and caused buy/sell churn (2026-06-23/30). Held names stay
+    so positions can be managed/sold; buys are limited to Serenity's thesis.
+    Uses a direct DB position query (no per-call TradingEngine / broker sockets).
+    Falls back to the persisted setting on any error or non-serenity mode."""
+    try:
+        if get_setting(db, "watchlist_source", user_id, "serenity") == "serenity":
+            import serenity_lens as _sl
+            from database import Position as _Pos
+            held = [p.symbol for p in db.query(_Pos).filter(
+                _Pos.user_id == user_id, _Pos.quantity > 0.001).all()]
+            return list(dict.fromkeys(
+                held + _sl.recommended_tickers(top_n=15) + _sl.nvda_downstream_extras()))
+    except Exception as _e:
+        logger.warning(f"[Watchlist] serenity build failed, fallback to setting: {_e}")
+    return json.loads(get_setting(db, "watchlist", user_id, json.dumps(md.DEFAULT_WATCHLIST)))
+
+
 async def background_auto_trade_loop():
     """Continuously analyze watchlist and trigger auto-trades for all users."""
     await asyncio.sleep(5)  # Let server fully start before first heavy cycle
@@ -625,27 +647,10 @@ async def background_auto_trade_loop():
                 logger.info(f"Starting auto-trade cycle for user: {user.username}")
                 api_key = get_setting(db, "deepseek_api_key", user.id, "")
                 ai_provider = get_setting(db, "ai_provider", user.id, "ollama")
-                # 2026-06-23 CHURN FIX: in serenity mode derive the tradeable set LIVE
-                # from held positions + recommended_tickers(), NOT the persisted
-                # `watchlist` setting — it had bloated to 62 stale off-thesis names
-                # (incl ORCL/GLD/LMT) and the loop churned them (buy then sell). Held
-                # names stay (so we can manage/sell them); buys limited to Serenity's
-                # current thesis. No persisted-list staleness.
-                if get_setting(db, "watchlist_source", user.id, "serenity") == "serenity":
-                    try:
-                        import serenity_lens as _sl
-                        _eng = TradingEngine(db, user.id)
-                        _held = [p.symbol for p in _eng.get_all_positions() if p.quantity > 0.001]
-                        # top_n=15: focus buys on Serenity's highest-conviction CPO/chip
-                        # names, not the ~48-name tail (drops mega-cap noise GOOGL/MSFT/
-                        # TSLA we deliberately moved away from). Held names kept regardless.
-                        watchlist = list(dict.fromkeys(
-                            _held + _sl.recommended_tickers(top_n=15) + _sl.nvda_downstream_extras()))
-                    except Exception as _e:
-                        logger.warning(f"[AutoTrade] serenity watchlist build failed, falling back: {_e}")
-                        watchlist = json.loads(get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST)))
-                else:
-                    watchlist = json.loads(get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST)))
+                # tradeable set = held + Serenity top-15 (NOT the stale `watchlist`
+                # setting that bloated to off-thesis names and caused churn). Shared
+                # by all trading loops via build_tradeable_watchlist().
+                watchlist = build_tradeable_watchlist(db, user.id)
 
                 # ⚠️ HK IPO priority injection (per user 2026-05-03):
                 # Newly-listed HK tech tickers go to the FRONT of the scan queue
@@ -1077,8 +1082,8 @@ async def background_blog_scan():
 
                     api_key = get_setting(db, "deepseek_api_key", user.id, "")
                     ai_provider = get_setting(db, "ai_provider", user.id, "ollama")
-                    watchlist_json = get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST))
-                    watchlist = json.loads(watchlist_json)
+                    # churn-safe: shared Serenity tradeable list
+                    watchlist = build_tradeable_watchlist(db, user.id)
 
                     # Only re-analyze stocks that are in our watchlist AND affected
                     urgent_symbols = [s for s in affected["sell"] if s in watchlist]
@@ -1161,8 +1166,8 @@ async def background_event_scan():
 
                 api_key = get_setting(db, "deepseek_api_key", user.id, "")
                 ai_provider = get_setting(db, "ai_provider", user.id, "ollama")
-                watchlist_json = get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST))
-                watchlist = json.loads(watchlist_json)
+                # churn-safe: shared Serenity tradeable list, not the stale `watchlist` setting
+                watchlist = build_tradeable_watchlist(db, user.id)
 
                 # Find symbols with imminent events in the next 2 days
                 priority_symbols = em.get_event_priority_symbols(watchlist, days_ahead=2)
@@ -1244,8 +1249,8 @@ async def background_news_scan():
 
                 api_key = get_setting(db, "deepseek_api_key", user.id, "")
                 ai_provider = get_setting(db, "ai_provider", user.id, "ollama")
-                watchlist_json = get_setting(db, "watchlist", user.id, json.dumps(md.DEFAULT_WATCHLIST))
-                watchlist = json.loads(watchlist_json)
+                # churn-safe: shared Serenity tradeable list, not the stale `watchlist` setting
+                watchlist = build_tradeable_watchlist(db, user.id)
 
                 # Scan for new competitive threats (last 2 hours only - fresh news)
                 threat_map = ni.scan_all_threats(watchlist, hours_back=2)
@@ -4233,7 +4238,10 @@ async def background_deposit_handler():
             try:
                 users = db.query(User).all()
                 for user in users:
-                    enabled = get_setting(db, "deposit_handler_enabled", user.id, "true") == "true"
+                    # default FALSE (2026-06-30): large deposits are conservative-sleeve
+                    # savings, NOT auto-deploy fuel — a reset/missing setting must not
+                    # silently re-activate auto-buying of a deposit.
+                    enabled = get_setting(db, "deposit_handler_enabled", user.id, "false") == "true"
                     if not enabled:
                         continue
 

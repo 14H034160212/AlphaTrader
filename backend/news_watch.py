@@ -16,13 +16,17 @@ import requests
 
 A = "https://api.alpaca.markets"
 MCPORTER = "/data/qbao775/miniconda3/bin/mcporter"
+# Negative (risk) and positive (catalyst) keywords kept SEPARATE so alerts are
+# labeled correctly (a deal/upgrade is good news, not a risk). Matched on WORD
+# BOUNDARIES via regex so short tokens don't false-match inside words (e.g. "cut"
+# must not match "Connecticut", "deal" not "dealer", "beat" not "unbeatable").
 RISK_KW = ("plunge", "crash", "selloff", "sell-off", "tumble", "slump", "rout",
            "downgrade", "cut", "warning", "warn", "miss", "glut", "oversupply",
-           "circuit breaker", "halt", "slash", "weak", "disappoint", "probe",
-           # material POSITIVE catalysts too — a holding's good news (e.g. the
-           # Micron–Anthropic deal 2026-06-22) is just as worth surfacing as bad.
-           "partnership", "deal", "agreement", "contract", "surge", "soar",
-           "record high", "upgrade", "investment", "wins", "beat", "raises guidance")
+           "circuit breaker", "halt", "slash", "weak", "disappoints", "probe", "lawsuit")
+POS_KW = ("partnership", "deal", "agreement", "contract", "surges", "soars",
+          "record high", "upgrade", "investment", "wins", "beats", "raises guidance")
+_RISK_RE = re.compile(r"\b(" + "|".join(re.escape(k) for k in RISK_KW) + r")\b", re.I)
+_POS_RE = re.compile(r"\b(" + "|".join(re.escape(k) for k in POS_KW) + r")\b", re.I)
 
 
 def log(m): print(f"{datetime.datetime.utcnow().isoformat()}Z  {m}", flush=True)
@@ -65,8 +69,9 @@ def main():
         (f"{held_q} stock news today", "我们的持仓"),
         ("semiconductor memory HBM DRAM SK Hynix Samsung Micron selloff news today", "内存/半导体板块"),
         ("AI optics CPO co-packaged optics Coherent Lumentum AAOI news today", "CPO/光通信板块"),
+        ("quantum computing stocks IONQ RGTI QBTS QUBT momentum Trump executive order news today", "量子(观察,不持仓)"),
     ]
-    # pull headlines, keep only the ones carrying a material-risk keyword
+    # keep headlines carrying a material keyword (risk OR positive), labeled 🔴/🟢
     alerts = []
     for q, label in queries:
         raw = exa(q, 4)
@@ -75,22 +80,24 @@ def main():
             if not m:
                 continue
             title = m.group(1).strip()
-            if any(k in title.lower() for k in RISK_KW):
-                alerts.append(f"[{label}] {title[:150]}")
+            is_risk = bool(_RISK_RE.search(title)); is_pos = bool(_POS_RE.search(title))
+            if is_risk or is_pos:
+                tag = "🔴" if is_risk else "🟢"   # risk wins the tag if both present
+                alerts.append(f"{tag} [{label}] {title[:150]}")
 
     # de-dup, and only alert on items not seen before (stored signature)
     alerts = list(dict.fromkeys(alerts))
     seen = set(filter(None, get_setting(db, "news_watch_seen", 1, "").split("||")))
     fresh = [a for a in alerts if a not in seen]
     if not fresh:
-        log(f"no fresh material news ({len(alerts)} risk-headlines, all seen)")
+        log(f"no fresh material news ({len(alerts)} headlines, all seen)")
         return
 
     set_setting(db, "news_watch_seen", "||".join((list(seen) + fresh)[-60:]), 1)
-    body = ("检测到与你持仓/板块相关的重大新闻(仅提醒,引擎不会因此自动交易;"
-            "-5%止损 + 体制敞口在兜底):\n\n  • " + "\n  • ".join(fresh) +
-            f"\n\n当前持仓: {held_q}\n如需我评估是否调整,回我一句即可。")
-    email(db, f"⚠️ 持仓相关重大新闻 {len(fresh)} 条 — SerenityAlphaTrader", body)
+    body = ("检测到与你持仓/板块相关的重大动态(🔴=风险 / 🟢=利好;仅提醒,引擎不会"
+            "自动交易):\n\n  • " + "\n  • ".join(fresh) +
+            f"\n\n当前持仓: {held_q}\n需要我评估是否调整,回我一句即可。")
+    email(db, f"📰 持仓相关动态 {len(fresh)} 条 — SerenityAlphaTrader", body)
     log(f"ALERTED {len(fresh)} fresh items")
 
 
