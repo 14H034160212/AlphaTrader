@@ -23,6 +23,62 @@ The trade-selection brain applies the analytical methodology of **Serenity ([@al
 
 > ⚠️ **Decision-support only — not financial advice.** The Serenity lens shapes *which questions the brain asks*; it never auto-trades on copied signals. Serenity's self-reported returns are unverified and carry survivorship/selection bias; his names are volatile micro/small-caps. See the skill's risk framing.
 
+## 🛑 What's new (2026-06-30) — Strategy pivot to passive-index core + on-demand AI research
+
+After 6 months of live autonomous operation, the daily-driver model has been retired in favor of a **passive-index core (70–80% SPY/VOO + HK 2800) + on-demand AI research via Claude Code skills**.
+
+**Why the pivot:**
+
+1. A live single-name SMIC bet (~$1,300 unrealized loss at the worst point) showed conviction-based satellite picks need stronger pre-trade discipline than the 24/7 auto-trade loop provided.
+2. For a personal portfolio of this size (~US$60k after a fresh NZ$100k deposit), keeping a fleet of background processes (Ollama GPU runner, IB Gateway, Moomoo OpenD, 21-task asyncio loop, cron jobs) running on a shared lab server is not a sustainable footprint. **All AlphaTrader daemons have been shut down**; the SQLite DB and code remain.
+3. Net of the SMIC drag, the existing Alpaca SPY/VOO core has tracked S&P 500 cleanly. The conclusion: *index it, then be selective about the satellite ~20-30% rather than running a continuous decision engine*.
+
+**The new path — `serenity-trader-stack`:** a lightweight, on-demand stack that runs entirely inside **Claude Code (Opus 4.8)**, with one install script and zero background processes.
+
+```
+~/.claude/{commands,skills}/         ← 18 ai-berkshire slash commands + 3 anthropic equity-research skills
+~/serenity-trader-stack/
+├── scripts/refresh-today.sh         # Anchor today's date (UTC/NZT/EDT/HKT) + market hours
+├── scripts/snapshot-portfolio.sh    # Pull Alpaca + IBKR + Moomoo holdings → markdown snapshot
+├── scripts/quote.sh <TICKER>        # Current price (US + HK) via market_data.get_stock_quote()
+├── scripts/check-allocation.sh      # Actual vs target 70/20/8/2 allocation; warn if >5pp off
+├── scripts/place-order.sh           # One-shot order placement (US auto via Alpaca, HK manual via App)
+├── reports/                         # Git-versioned per-ticker thesis state (init'd by installer)
+└── CLAUDE.md                        # 8 operating rules — sizing buckets, sourcing, falsifiable thesis
+```
+
+**One-command install** (idempotent, safe to re-run):
+
+```bash
+bash install-trader-stack.sh
+```
+
+This clones three external repos — [`xbtlin/ai-berkshire`](https://github.com/xbtlin/ai-berkshire) (Buffett/Munger/段永平/李录 multi-master value framework), [`muxuuu/serenity-skill`](https://github.com/muxuuu/serenity-skill) (chokepoint scorecard JSON; the existing `serenity-chokepoint-analysis` Chinese skill is preserved), and [`anthropics/financial-services`](https://github.com/anthropics/financial-services) (idea-generation + thesis-tracker + market-researcher skills) — installs the markdown skills into `~/.claude/`, writes the 5 helper scripts, sets up the git-versioned `reports/` folder, and writes a project `CLAUDE.md` with the operating rules.
+
+**Daily use** (no background daemons; everything is on-demand):
+
+```bash
+# Before any session — refresh date + portfolio snapshot
+~/serenity-trader-stack/scripts/refresh-today.sh
+~/serenity-trader-stack/scripts/snapshot-portfolio.sh   # IB Gateway / OpenD start on demand
+
+# In Claude Code (Opus 4.8)
+/portfolio-review                         # Re-evaluate current holdings against stored theses
+/investment-team <ticker>                 # 4-master adversarial value research (Buffett/Munger/段/李)
+/dyp-ask "<question>"                     # 段永平 persona
+"用 Serenity 卡点分析 <theme>"            # Supply-chain chokepoint analysis (existing CN skill)
+"Run an idea-generation screen for ..."   # Anthropic equity-research skill
+```
+
+**What carries forward from the old system:**
+- All broker integration in `backend/futu_broker.py`, `backend/trading_engine.py`, etc., is intact — `scripts/place-order.sh` wraps it for one-shot execution.
+- The bug-fix session that preceded the pivot landed: `price_refresh` 20-symbol starvation cap → 250; silent `auto_trade` failure logging at the call-site; dust-position filter for held-symbol scan front-loading; DCF poison-data gate tightened for non-US tickers (0.5×–2× sanity band); `priority_symbols` initialized before the try block so the gap-filter bypass never NameErrors.
+- The autonomous trading loop, dynamic watchlist, online RL pipeline, LLM shootout, regime-aware exposure engine, and cron-driven monitoring described below remain operational if re-started, but are **not the recommended daily path**.
+
+The full Serenity supply-chain skill (`serenity-chokepoint-analysis`), the live tweet pipeline (`fetch_serenity_tweets.sh`), and the daily email reporting still work standalone if invoked manually.
+
+---
+
 ## What's new (June 2026)
 
 - **🛡️ No-margin lockdown (living-money safety)**: a critical bug had `get_cash_balance()` return Alpaca `buying_power` (4× margin) instead of real `cash`, letting the engine silently buy on margin. Fixed: real-cash only + a hard cash-reserve-floor guard at the single `execute_buy()` chokepoint (so deposit/rebalance paths can't bypass it) + the broker account is locked to **`max_margin_multiplier=1` + `no_shorting=true`** — borrowing is now impossible at both the software and broker layer.
