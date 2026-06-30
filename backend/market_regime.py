@@ -113,10 +113,16 @@ def main(apply=True):
             print(f"  regime FROZEN (manual) — keeping cash_reserve_pct="
                   f"{get_setting(db, 'cash_reserve_pct', 1, '?')}, not applying {a['regime']}")
         elif a["regime"] == "UNKNOWN" or a["cash_floor_pct"] is None:
-            # keep the last regime/floor rather than overwrite on a data outage
-            print(f"  data feed unavailable ({m.get('error')}); KEEPING last "
-                  f"cash_reserve_pct={get_setting(db, 'cash_reserve_pct', 1, '?')}, "
-                  f"market_regime={get_setting(db, 'market_regime', 1, '?')}")
+            # Data feed down. Do NOT just "keep last" — if the last state was
+            # RISK_ON (20% floor) and a crash is underway during the outage, that
+            # leaves us aggressive into the decline. Fail SAFE: raise the floor to
+            # at least NEUTRAL (40%) — never deploy MORE when we're flying blind.
+            cur = get_setting(db, "cash_reserve_pct", 1, "40")
+            safe = max(float(cur or 40), float(_FLOOR["NEUTRAL"]))
+            set_setting(db, "cash_reserve_pct", str(safe), 1)
+            set_setting(db, "market_regime", "UNKNOWN", 1)
+            print(f"  data feed unavailable ({m.get('error')}); FAIL-SAFE → "
+                  f"cash_reserve_pct={safe}% (≥NEUTRAL, never aggressive while blind)")
         else:
             prev = get_setting(db, "cash_reserve_pct", 1, "?")
             set_setting(db, "cash_reserve_pct", str(a["cash_floor_pct"]), 1)

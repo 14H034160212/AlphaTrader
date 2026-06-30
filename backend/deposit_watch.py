@@ -38,9 +38,13 @@ def main():
     db = SessionLocal()
     H = {"APCA-API-KEY-ID": get_setting(db, "alpaca_api_key", 1, ""),
          "APCA-API-SECRET-KEY": get_setting(db, "alpaca_secret_key", 1, "")}
-    acts = requests.get(f"{A}/v2/account/activities?activity_types=CSD,JNLC&page_size=100",
-                        headers=H, timeout=15).json()
-    total = round(sum(float(a.get("net_amount", 0)) for a in acts), 2)
+    # include CSW (cash withdrawals) so net deposits drop on a wire-out and the
+    # baseline lowers correctly — without CSW a withdrawal never reduces `total`.
+    acts = requests.get(f"{A}/v2/account/activities?activity_types=CSD,CSW,JNLC&page_size=100",
+                        headers=H, timeout=15)
+    acts.raise_for_status()
+    data = acts.json()
+    total = round(sum(float(a.get("net_amount", 0)) for a in data if isinstance(a, dict)), 2)
 
     baseline = get_setting(db, "deposits_seen_total", 1, "")
     if baseline == "":                      # first run → record, don't alert
@@ -63,16 +67,15 @@ def main():
     acct = requests.get(f"{A}/v2/account", headers=H, timeout=15).json()
     cash = float(acct["cash"]); eq = float(acct["equity"])
     set_setting(db, "deposits_seen_total", str(total), 1)
-    # ensure the engine will deploy it (margin already impossible: multiplier=1)
-    set_setting(db, "auto_trade_enabled", "true", 1)
-    regime = get_setting(db, "market_regime", 1, "?"); floor = get_setting(db, "cash_reserve_pct", 1, "40")
-    log(f"💰 NEW DEPOSIT ${new_amt:.0f} detected → cash ${cash:.0f}, equity ${eq:.0f}. auto_trade ON.")
-    email(db, f"💰 入金到账 ${new_amt:.0f} — SerenityAlphaTrader 将自动部署",
+    # 2026-06-30: do NOT auto-enable auto_trade on a deposit. Large deposits are
+    # CONSERVATIVE-SLEEVE savings (40/35/25 VOO/BND/SGOV, DCA'd in manually), NOT
+    # fuel for the active small-cap strategy. Just alert; deployment is manual.
+    log(f"💰 NEW DEPOSIT ${new_amt:.0f} detected → cash ${cash:.0f}, equity ${eq:.0f}. auto_trade NOT touched.")
+    email(db, f"💰 入金到账 ${new_amt:.0f} — 等待手动配置(保守组合)",
           f"检测到新入金 ${new_amt:.0f}。\n\n"
-          f"当前现金 ${cash:.0f} / 净值 ${eq:.0f}。\n"
-          f"市场体制 {regime}(现金保底 {floor}%),引擎已开启自动交易,将按 Serenity 卡点策略"
-          f"把可部署现金投入(每只≤12%、最短持有10天、-5%止损、无杠杆 multiplier=1)。\n\n"
-          f"具体成交见今晚的每日报告。")
+          f"当前现金 ${cash:.0f} / 净值 ${eq:.0f}。\n\n"
+          f"⚠️ 不会自动炒股。这笔钱按计划进保守 ETF 组合(VOO 40% / BND 35% / SGOV 25%,"
+          f"分批 DCA),与主动小盘策略分开管理。我会手动分批部署并向你汇报。")
 
 
 if __name__ == "__main__":

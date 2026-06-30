@@ -968,7 +968,15 @@ class TradingEngine:
         cash_reserve_pct = float(get_setting(
             self.db, "cash_reserve_pct", self.user_id, str(self.CASH_RESERVE_PCT * 100)
         )) / 100
-        target_cash = total_equity * cash_reserve_pct
+        # HARD savings protection (2026-06-30): `reserved_cash` is the conservative
+        # sleeve (~$60k can't-afford-to-lose savings) that the active small-cap
+        # strategy must NEVER deploy — regardless of regime, toggles, or which loop
+        # asks. It's subtracted absolutely; the % floor then applies only to the
+        # ACTIVE portion (total − reserved), so the active sleeve still deploys
+        # normally while the savings principal is walled off at the buy chokepoint.
+        reserved_cash = float(get_setting(self.db, "reserved_cash", self.user_id, "0") or 0)
+        active_equity = max(0.0, total_equity - reserved_cash)
+        target_cash = reserved_cash + active_equity * cash_reserve_pct
         shortfall = max(0, target_cash - cash)
         return {
             "cash": cash,
