@@ -27,6 +27,13 @@ from market_calendar import detect_market, get_currency, is_china_ashare, round_
 
 logger = logging.getLogger(__name__)
 
+# User-requested policy: do not initiate buys in gold / precious-metals ETFs.
+_BLOCKED_BUY_SYMBOLS = {"GLD", "IAU", "SLV", "GDX", "GDXJ"}
+
+
+def _is_blocked_buy_symbol(symbol: Optional[str]) -> bool:
+    return (symbol or "").upper() in _BLOCKED_BUY_SYMBOLS
+
 
 # ── Broker registry helpers ───────────────────────────────────────────────────
 
@@ -579,6 +586,13 @@ class TradingEngine:
         if confidence < min_confidence:
             return {"success": False, "skipped": True,
                     "reason": f"Confidence {confidence:.0%} below minimum {min_confidence:.0%}"}
+
+        if action in ("BUY", "COVER") and _is_blocked_buy_symbol(symbol):
+            return {
+                "success": False,
+                "skipped": True,
+                "reason": f"Blocked buy policy: {symbol} is excluded from buys (gold/safe-haven policy)",
+            }
 
         # Market-specific auto-trade gate: check market is open
         from market_calendar import is_symbol_market_open

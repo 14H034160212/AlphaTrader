@@ -80,6 +80,24 @@ BLOG_FEEDS = {
         "fallback_url": "https://developer.nvidia.com/blog/",
         "company_type": "Semiconductor",
     },
+    "nvidia_news": {
+        "name": "NVIDIA News",
+        "rss_url": "https://nvidianews.nvidia.com/rss.xml",
+        "fallback_url": "https://nvidianews.nvidia.com/",
+        "company_type": "Semiconductor",
+    },
+    "meta_news": {
+        "name": "Meta Newsroom",
+        "rss_url": "https://about.meta.com/news/feed/",
+        "fallback_url": "https://about.meta.com/news/",
+        "company_type": "AI Lab",
+    },
+    "microsoft_news": {
+        "name": "Microsoft News",
+        "rss_url": "https://news.microsoft.com/feed/",
+        "fallback_url": "https://news.microsoft.com/",
+        "company_type": "Tech Giant",
+    },
 }
 
 # ── Blog Topic → Stock Impact Map ────────────────────────────────────────────
@@ -182,17 +200,71 @@ BLOG_IMPACT_MAP = [
         "reason": "Model efficiency breakthroughs reduce GPU demand per unit of AI output",
         "sector": "AI Infrastructure",
     },
-    # ── OpenAI / Anthropic New Model Release ──────────────────────────────────
+    # ── AI Model Release / Launch Events ────────────────────────────────────
     {
+        "event_type": "model_release",
         "keywords": [
-            "GPT-5", "Claude 4", "Gemini Ultra", "new model", "model release",
-            "AGI", "reasoning model", "o3", "o4", "Claude opus"
+            "gpt-5", "claude 4", "gemini ultra", "new model", "model release",
+            "reasoning model", "o3", "o4", "claude opus", "launches new model",
+            "openai releases", "anthropic releases", "meta releases"
         ],
         "stocks_to_avoid": [],
-        "stocks_to_watch": ["NVDA", "MSFT", "GOOGL", "AMZN"],  # More GPU demand
-        "severity": "MEDIUM",
-        "reason": "Major model releases drive increased AI infrastructure spending",
+        "stocks_to_watch": ["NVDA", "MSFT", "GOOGL", "AMZN", "META", "AMD"],
+        "severity": "HIGH",
+        "reason": "New model launches often lift AI infrastructure demand immediately.",
         "sector": "AI Models",
+    },
+    # ── Layoff / Restructuring / Cost-Cutting Announcements ─────────────────
+    {
+        "event_type": "layoff",
+        "keywords": [
+            "layoff", "layoffs", "laid off", "job cuts", "workforce reduction",
+            "headcount reduction", "restructuring", "cost reduction plan"
+        ],
+        "stocks_to_avoid": [],
+        "stocks_to_watch": ["META", "MSFT", "GOOGL", "AMZN", "NVDA", "IBM", "ORCL"],
+        "severity": "MEDIUM",
+        "reason": "Major layoff or restructuring announcements can be bullish for the announcing company when they improve margins.",
+        "sector": "Corporate Restructuring",
+    },
+    # ── Government policy / industrial incentives ───────────────────────────
+    {
+        "event_type": "government_policy",
+        "keywords": [
+            "chips act", "industrial policy", "government stake", "sovereign stake",
+            "trade deal", "export license", "tariff relief", "regulatory approval"
+        ],
+        "stocks_to_avoid": [],
+        "stocks_to_watch": ["NVDA", "AMD", "TSM", "INTC", "MU", "AVGO", "GFS"],
+        "severity": "HIGH",
+        "reason": "Government support and export-policy changes can re-rate semiconductor and AI infrastructure names quickly.",
+        "sector": "Policy / Industrial Strategy",
+    },
+    # ── M&A / Acquisitions ─────────────────────────────────────────────────
+    {
+        "event_type": "acquisition",
+        "keywords": [
+            "acquisition", "acquires", "acquired", "buyout", "merger",
+            "purchase of"
+        ],
+        "stocks_to_avoid": [],
+        "stocks_to_watch": ["NVDA", "AMD", "MSFT", "GOOGL", "META", "AMZN"],
+        "severity": "HIGH",
+        "reason": "M&A activity can change competitive positioning and accelerate growth for the acquirer or the target.",
+        "sector": "M&A / Strategic Transactions",
+    },
+    # ── NVIDIA partnership / deployment announcements ──────────────────────
+    {
+        "event_type": "nvidia_partnership",
+        "keywords": [
+            "nvidia partners", "nvidia partnership", "partners with",
+            "collaboration", "collaborates", "blackwell deployment", "sovereign ai"
+        ],
+        "stocks_to_avoid": [],
+        "stocks_to_watch": ["NVDA", "ORCL", "MSFT", "GOOGL", "AMZN", "META"],
+        "severity": "HIGH",
+        "reason": "NVIDIA partnerships and deployment wins can expand the install base and validate the AI infrastructure cycle.",
+        "sector": "AI Infrastructure / Partnerships",
     },
     # ── 2028 Global Intelligence Crisis Keywords ──────────────────────────────
     {
@@ -298,6 +370,7 @@ def _match_impact(title: str, summary: str) -> List[Dict]:
             matched.append({
                 **impact,
                 "matched_keywords": hits,
+                "event_type": impact.get("event_type", "general"),
             })
     return matched
 
@@ -373,6 +446,7 @@ def build_blog_alert_context(alerts: List[Dict], target_symbol: str = "") -> str
         lines.append(f"  Published: {alert['published'][:10]} | Link: {alert['link']}")
         for imp in alert["impacts"]:
             lines.append(f"  → Sector: {imp['sector']}")
+            lines.append(f"  → Event Type: {imp.get('event_type', 'general').replace('_', ' ')}")
             lines.append(f"  → Reason: {imp['reason']}")
             if imp["stocks_to_avoid"]:
                 lines.append(f"  → SELL/AVOID: {', '.join(imp['stocks_to_avoid'])}")
