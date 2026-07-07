@@ -10,3 +10,17 @@ OVERALL: NEUTRAL
 
 
 
+### 2026-07-07 20:02 UTC 新标的自动筛选
+- 行情: real-time price $181.28 (as of 2026-07-07T19:59:57.254303358Z, includes pre/post-market), today's change -4.51%, 52w range $70.36-$220.89
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — wide moat in semiconductors but highly cyclical
+MUNGER: Mistake if geopolitical escalation or semiconductor oversupply occurs
+DUAN: Yes, provided the core industrial ecosystem remains globally dominant
+LI_LU: NEUTRAL — cyclical compounding with persistent geopolitical tail risk
+OVERALL: NEUTRAL
+- Serenity速览: BEARISH
+CHOKEPOINT_INTACT: WEAKENING
+REASON: sharp daily price decline indicates a lack of immediate support
+OVERALL: BEARISH
+
+
