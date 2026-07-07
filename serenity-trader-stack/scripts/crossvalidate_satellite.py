@@ -45,7 +45,23 @@ OLLAMA_HOST = 'http://localhost:11435'
 OLLAMA_MODEL = 'gemma4:31b'
 PRICE_MOVE_TRIGGER_PCT = 15.0   # escalate if unrealized P&L moves beyond this
 STALE_DEEPDIVE_DAYS = 7         # force a paid check-in even if nothing else fires
+# 2026-07-07: during real GPU contention on this shared server, "both local
+# checks timed out" fired on 3 consecutive 4h cycles (08:00/12:00/12:00),
+# each paying for a claude -p call that just said "infra issue, not a real
+# signal" -- $1.94 total for zero new information. Don't pay again for the
+# SAME reason within this window; genuine signals (disagreement/BEARISH/
+# price move/staleness) still escalate immediately regardless.
+INFRA_FAILURE_COOLDOWN_HOURS = 3
 USER_EMAIL = 'bqmbill714@gmail.com'
+
+# 2026-07-07: user asked to also proactively screen NEW buy candidates every
+# 4h, not just recheck existing satellite holdings — starting with Korea/
+# global chip exposure (EWY is the only one of these actually tradeable via
+# Alpaca right now; Moomoo has no KR market enabled, IBKR isn't connected —
+# see .broker_capabilities.json). Extend this list as new candidates surface.
+CANDIDATE_WATCHLIST = ['EWY']
+TRIAL_BUCKET_PCT = 0.03           # 试探仓 per CLAUDE.md rule 5
+CHASE_GUARD_INTRADAY_PCT = 5.0    # don't buy if already up this much today
 
 
 def log(msg):
@@ -113,7 +129,12 @@ def get_satellite_positions():
     return positions
 
 
-def ollama_call(prompt, timeout=120):
+def ollama_call(prompt, timeout=240):
+    # 2026-07-07: bumped 120s -> 240s. This is a shared 8-GPU lab server;
+    # under real contention (other jobs on the same GPUs) a 31B-model
+    # generation call can legitimately take >120s, which was triggering
+    # unnecessary paid claude -p escalations (both local checks "failing"
+    # when the model just hadn't finished yet, not because it's down).
     try:
         import requests
         r = requests.post(f"{OLLAMA_HOST}/api/generate",
@@ -160,6 +181,197 @@ def quick_serenity_recheck(symbol, thesis_summary, price_context):
         "OVERALL: <BULLISH/NEUTRAL/BEARISH>\n"
     )
     return ollama_call(prompt)
+
+
+def get_live_price(symbol):
+    """Real-time last trade (INCLUDING pre/post-market prints) straight from
+    Alpaca's own v2 data API — yfinance's ticker.history() only returns
+    completed daily bars, so it misses pre-market moves entirely. The old
+    alpaca_trade_api SDK helpers (get_last_trade/get_last_quote) hit a
+    deprecated v1 path and 404 — call the v2 endpoint directly instead."""
+    from database import SessionLocal, get_setting
+    import requests
+    db = SessionLocal()
+    k = get_setting(db, 'alpaca_api_key', 1)
+    s = get_setting(db, 'alpaca_secret_key', 1)
+    db.close()
+    try:
+        r = requests.get(f'https://data.alpaca.markets/v2/stocks/{symbol}/trades/latest',
+                          headers={'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}, timeout=10)
+        if r.status_code == 200:
+            trade = r.json().get('trade', {})
+            return trade.get('p'), trade.get('t')
+    except Exception as e:
+        log(f"  get_live_price({symbol}) failed: {e}")
+    return None, None
+
+
+def get_candidate_context(symbol):
+    """Fresh quote for a NOT-yet-held candidate (no position data exists).
+    Price comes from Alpaca's real-time feed (covers pre/post-market);
+    52w range/fundamentals still come from yfinance since those don't need
+    to be real-time-precise."""
+    import market_data as md
+    try:
+        live_price, live_ts = get_live_price(symbol)
+        q = md.get_stock_quote(symbol) or {}
+        price = live_price if live_price else q.get('current')
+        prev_close = q.get('current') - (q.get('change') or 0) if q.get('current') and q.get('change') is not None else None
+        change_pct = ((price / prev_close - 1) * 100) if price and prev_close else q.get('change_pct')
+        if not price:
+            return None
+        return {
+            'price': price,
+            'price_as_of': live_ts,
+            'change_pct': change_pct,
+            'fifty_two_week_high': q.get('fifty_two_week_high'),
+            'fifty_two_week_low': q.get('fifty_two_week_low'),
+        }
+    except Exception as e:
+        log(f"  get_candidate_context({symbol}) failed: {e}")
+        return None
+
+
+def quick_4master_new_screen(symbol, context_str):
+    """Fresh 4-master screen on a NEW candidate (not a recheck — no existing thesis)."""
+    prompt = (
+        f"You are running a condensed 4-master FIRST-LOOK screen on {symbol} as a "
+        f"POTENTIAL NEW satellite buy (not an existing position).\n"
+        f"Live market data (authoritative — do not use your own recalled price): {context_str}\n\n"
+        "Give ONE line per master, terse:\n"
+        "BUFFETT: <moat/economics verdict — BUY/WATCH/PASS + one clause>\n"
+        "MUNGER: <inversion check — what would have to be true for this to be a mistake, one clause>\n"
+        "DUAN(段永平): <is this a business you'd want to own for 10 years, one clause>\n"
+        "LI_LU(李录): <long-term compounding + risk-of-permanent-loss verdict, one clause>\n"
+        "OVERALL: <BULLISH/NEUTRAL/BEARISH>\n"
+    )
+    return ollama_call(prompt)
+
+
+def quick_serenity_new_screen(symbol, context_str):
+    """Fresh Serenity chokepoint screen on a NEW candidate — is there a real
+    supply-chain bottleneck here worth a position, not just a general holding."""
+    prompt = (
+        f"You are running a FIRST-LOOK Serenity chokepoint screen on {symbol} as a "
+        f"POTENTIAL NEW satellite buy.\n"
+        f"Live market data (authoritative — do not use your own recalled price): {context_str}\n\n"
+        "Answer in this exact format:\n"
+        "CHOKEPOINT_INTACT: <YES/WEAKENING/BROKEN> (YES = there is a real, defensible bottleneck here)\n"
+        "REASON: <one clause>\n"
+        "OVERALL: <BULLISH/NEUTRAL/BEARISH>\n"
+    )
+    return ollama_call(prompt)
+
+
+def escalate_new_candidate(symbol, context_str, master_take, serenity_take):
+    """PAID call — only when both local lenses independently agree BULLISH.
+    Asks specifically for a buy/no-buy + sizing recommendation."""
+    prompt = (
+        f"本地两套框架(4大师 + Serenity卡点)独立筛选后,都对新标的 {symbol} 给出 BULLISH 首轮判断,"
+        f"触发人工复核。\n\n"
+        f"实时行情: {context_str}\n\n"
+        f"本地4大师速览:\n{master_take}\n\n"
+        f"本地Serenity速览:\n{serenity_take}\n\n"
+        "请你做一次简明判断(3-5句话): 这是不是一个值得建仓的真实机会,还是本地模型的误判/凑巧一致?"
+        "给出 BUY/PASS 的结论,如果 BUY,建议仓位是试探(≤3%)/标准(~5%)/确信(8-10%)中的哪一档。"
+    )
+    try:
+        claude_bin = '/home/qbao775/.local/bin/claude'
+        result = subprocess.run(
+            [claude_bin, '-p', prompt, '--output-format', 'json'],
+            capture_output=True, text=True, timeout=180,
+            cwd='/data/qbao775/AlphaTrader'
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            cost = data.get('total_cost_usd', 0)
+            answer = data.get('result', '')
+            log(f"  claude -p cost: ${cost:.4f}")
+            return answer, cost
+        else:
+            log(f"  claude -p failed: {result.stderr[:200]}")
+    except Exception as e:
+        log(f"  claude -p exception: {e}")
+    return "", 0
+
+
+def execute_trial_buy(symbol, price):
+    """Places a GTC limit buy sized to the trial bucket (~3% of equity),
+    capped by genuinely-available cash (no-margin account). Returns
+    (qty, limit_price, order_id) or None if it couldn't place anything."""
+    from database import SessionLocal, get_setting
+    import alpaca_trade_api as tradeapi
+    db = SessionLocal()
+    k = get_setting(db, 'alpaca_api_key', 1)
+    s = get_setting(db, 'alpaca_secret_key', 1)
+    u = get_setting(db, 'alpaca_base_url', 1, 'https://api.alpaca.markets')
+    db.close()
+    api = tradeapi.REST(k, s, u)
+
+    acc = api.get_account()
+    equity = float(acc.equity)
+    buying_power = float(acc.buying_power)
+    target_notional = min(equity * TRIAL_BUCKET_PCT, buying_power * 0.95)  # small safety buffer
+    if target_notional < price:
+        log(f"  insufficient buying power (${buying_power:.2f}) to buy even 1 share of {symbol} @ ${price:.2f} — skipping execution, flagging only")
+        return None
+
+    limit_price = round(price * 1.01, 2)  # small buffer to help it fill
+    qty = int(target_notional // limit_price)
+    if qty < 1:
+        return None
+    o = api.submit_order(symbol=symbol, qty=qty, side='buy', type='limit',
+                          limit_price=limit_price, time_in_force='gtc', extended_hours=True)
+    log(f"  ✓ BUY {symbol} qty={qty} limit=${limit_price} order={o.id[:8]}")
+    return qty, limit_price, o.id
+
+
+def screen_new_candidates(state, held_symbols):
+    for sym in CANDIDATE_WATCHLIST:
+        if sym in held_symbols:
+            continue
+        log(f"── candidate screen: {sym} ──")
+        ctx = get_candidate_context(sym)
+        if not ctx or not ctx.get('price'):
+            log(f"  no quote data for {sym} — skipping")
+            continue
+        context_str = (f"real-time price ${ctx['price']:.2f} (as of {ctx.get('price_as_of', 'unknown time')}, "
+                        f"includes pre/post-market), today's change {ctx.get('change_pct', 0):+.2f}%, "
+                        f"52w range ${ctx.get('fifty_two_week_low', 0):.2f}-${ctx.get('fifty_two_week_high', 0):.2f}")
+
+        master_take = quick_4master_new_screen(sym, context_str)
+        serenity_take = quick_serenity_new_screen(sym, context_str)
+        master_dir = parse_overall(master_take)
+        serenity_dir = parse_overall(serenity_take)
+        log(f"  4-master: {master_dir}  |  serenity: {serenity_dir}")
+
+        entry = (f"### {datetime.datetime.utcnow():%Y-%m-%d %H:%M UTC} 新标的自动筛选\n"
+                  f"- 行情: {context_str}\n"
+                  f"- 4大师速览: {master_dir}\n{master_take}\n"
+                  f"- Serenity速览: {serenity_dir}\n{serenity_take}\n")
+
+        if master_dir == 'BULLISH' and serenity_dir == 'BULLISH':
+            log(f"  🔺 两框架一致 BULLISH — 升级付费复核")
+            claude_answer, cost = escalate_new_candidate(sym, context_str, master_take, serenity_take)
+            entry += f"- **升级触发**: 两框架一致BULLISH\n- **付费深度判断** (${cost:.4f}): {claude_answer}\n"
+            if claude_answer and re.search(r'\bBUY\b', claude_answer, re.I) and not re.search(r'\bPASS\b', claude_answer, re.I):
+                if abs(ctx.get('change_pct') or 0) > CHASE_GUARD_INTRADAY_PCT:
+                    entry += f"- **执行**: 跳过——今日盘中已经 {ctx['change_pct']:+.1f}%,追高违反纪律,等回调\n"
+                    log(f"  ⚠️ {sym} 今日 {ctx['change_pct']:+.1f}%,不追高,跳过执行")
+                else:
+                    result = execute_trial_buy(sym, ctx['price'])
+                    if result:
+                        qty, limit_price, order_id = result
+                        entry += f"- **执行**: 试探仓买入 {qty}股 @ ${limit_price} (order {order_id[:8]})\n"
+                        state.setdefault(sym, {})['first_bought'] = datetime.datetime.utcnow().isoformat()
+                    else:
+                        entry += f"- **执行**: 可用资金不足,未下单,仅记录信号\n"
+            else:
+                entry += f"- **执行**: 付费复核判定 PASS 或不明确,不建仓\n"
+        else:
+            log(f"  ✓ 未达到一致 BULLISH 门槛,不升级")
+
+        append_update(sym, entry)
 
 
 def parse_overall(text):
@@ -243,13 +455,12 @@ def main():
     safety_check()
     state = load_state()
     positions = get_satellite_positions()
+    escalations = []
 
     if not positions:
         log("no satellite positions held — nothing to cross-validate")
-        return
-
-    log(f"checking {len(positions)} satellite position(s): {[p['symbol'] for p in positions]}")
-    escalations = []
+    else:
+        log(f"checking {len(positions)} satellite position(s): {[p['symbol'] for p in positions]}")
 
     for pos in positions:
         sym = pos['symbol']
@@ -270,7 +481,8 @@ def main():
 
         # Escalation triggers
         reasons = []
-        if not master_take and not serenity_take:
+        infra_failure = not master_take and not serenity_take
+        if infra_failure:
             reasons.append("本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线")
         if master_dir != 'UNKNOWN' and serenity_dir != 'UNKNOWN' and master_dir != serenity_dir:
             if not (master_dir == 'NEUTRAL' or serenity_dir == 'NEUTRAL'):
@@ -294,20 +506,40 @@ def main():
                   f"- 4大师速览: {master_dir}\n{master_take}\n"
                   f"- Serenity速览: {serenity_dir}\n{serenity_take}\n")
 
-        if reasons:
+        # If the ONLY trigger is the infra failure, and we already paid for
+        # this exact "is Ollama down" answer recently, don't pay again —
+        # a repeat GPU-contention timeout isn't new information.
+        skip_infra_repeat = False
+        if infra_failure and len(reasons) == 1:
+            last_infra = state.get('_global', {}).get('last_infra_escalation')
+            if last_infra:
+                hrs_since = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(last_infra)).total_seconds() / 3600
+                if hrs_since < INFRA_FAILURE_COOLDOWN_HOURS:
+                    skip_infra_repeat = True
+                    log(f"  ⏭️ 本地分析失败,但 {hrs_since:.1f} 小时前已为同样原因付费复核过(冷却期 {INFRA_FAILURE_COOLDOWN_HOURS}h)— 跳过,不重复付费")
+
+        if reasons and not skip_infra_repeat:
             reason_str = "; ".join(reasons)
             log(f"  🔺 升级触发: {reason_str}")
             claude_answer, cost = escalate_to_claude(sym, thesis, master_take, serenity_take, reason_str)
             entry += f"- **升级触发**: {reason_str}\n- **付费深度判断** (${cost:.4f}): {claude_answer}\n"
             escalations.append(f"{sym}: {reason_str}\n  → {claude_answer[:300]}")
             if claude_answer:
-                state.setdefault(sym, {})['last_deepdive'] = datetime.datetime.utcnow().isoformat()
+                if infra_failure and len(reasons) == 1:
+                    state.setdefault('_global', {})['last_infra_escalation'] = datetime.datetime.utcnow().isoformat()
+                else:
+                    state.setdefault(sym, {})['last_deepdive'] = datetime.datetime.utcnow().isoformat()
             else:
-                log(f"  ⚠️ claude -p 深度判断失败,不更新 last_deepdive(避免误跳过下次复核)")
+                log(f"  ⚠️ claude -p 深度判断失败,不更新状态(避免误跳过下次复核)")
+        elif skip_infra_repeat:
+            entry += f"- **升级触发**: {reasons[0]}\n- **跳过付费复核**: 冷却期内({INFRA_FAILURE_COOLDOWN_HOURS}h),避免重复为同一 infra 问题付费\n"
         else:
             log(f"  ✓ 无需升级,本地判断一致且无异常")
 
         append_update(sym, entry)
+
+    held_symbols = {p['symbol'] for p in positions} | {'SPY', 'QQQ', 'BRK.B'}
+    screen_new_candidates(state, held_symbols)
 
     save_state(state)
 
