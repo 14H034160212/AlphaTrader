@@ -1,0 +1,21 @@
+# secrets — never track
+.env
+
+# runtime state / markers — machine-specific, regenerated
+.crossvalidate_state.json
+.nz100k-deployed
+
+# logs
+*.log
+
+# python cache
+__pycache__/
+*.pyc
+
+# ephemeral daily refresh
+today.md
+
+# external skill clones (installed fresh by install-trader-stack.sh; not our code)
+ai-berkshire/
+financial-services/
+serenity-skill/
