@@ -4808,5 +4808,12 @@ async def background_llm_catalyst_loop():
 
 
 if __name__ == "__main__":
+    import os as _os
+    _kill_switch = "/data/qbao775/AlphaTrader/.DISABLE_AUTOSTART"
+    if _os.path.exists(_kill_switch):
+        print(f"拒绝启动: {_kill_switch} 存在。删除该文件以恢复自动交易引擎。"
+              " (start.sh 的同款安全开关 — 直接 python main.py 运行也要检查,"
+              " 因为它是绕过 start.sh 的第二个启动入口)")
+        raise SystemExit(1)
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8888, reload=True)

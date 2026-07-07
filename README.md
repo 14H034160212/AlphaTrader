@@ -23,6 +23,28 @@ The trade-selection brain applies the analytical methodology of **Serenity ([@al
 
 > ⚠️ **Decision-support only — not financial advice.** The Serenity lens shapes *which questions the brain asks*; it never auto-trades on copied signals. Serenity's self-reported returns are unverified and carry survivorship/selection bias; his names are volatile micro/small-caps. See the skill's risk framing.
 
+## 🔴🔴 What's new (2026-07-03) — Plan D management mandate + hybrid 4-master/Serenity cross-validation + rogue-engine kill-switch
+
+**Plan D ratified as the standing management mandate.** The user formally delegated full ongoing stewardship ("以后你就是我的管家"). Target allocation: **70% SPY / 15% QQQ / 12% BRK.B / 3% cash** as the core (95%+ of the portfolio), plus a **Serenity satellite** for opportunistic active picks, capped at **20% of total portfolio value** (~$12,333) with a 20%-of-satellite per-name guardrail (~$2,467). This cap is non-negotiable by design — see `~/serenity-trader-stack/PLAN_D.md` for the full escalating-authorization history and the backtest evidence (0/15 strategies tested achieve simultaneous up-capture>100%/down-capture<100%) behind why the cap exists.
+
+**New: `crossvalidate_satellite.py` — automated hybrid cross-validation, every 4 hours.** Runs entirely on-demand-free local compute + a small paid tail:
+1. For each live satellite position (pulled fresh from Alpaca, core SPY/QQQ/BRK.B excluded), runs **two independent local Ollama (`gemma4:31b`) lenses at zero marginal cost**: a condensed 4-master value check (Buffett/Munger/段永平/李录 — approximates `ai-berkshire`'s `/investment-team`, which needs a live Claude Code session and can't itself be cron-triggered) and a Serenity chokepoint re-check (is the original thesis still intact, not a fresh screen).
+2. Escalates to a **paid** `claude -p` deep-dive (~$0.05–0.15/call) only when the two lenses disagree, either flags a break, price has moved >15% from cost basis, or 7+ days have passed since the last paid check-in.
+3. Logs every cycle to `~/serenity-trader-stack/reports/<TICKER>/updates.md` (git-committed); emails only on escalation — routine "still fine" cycles stay silent.
+4. Installed via cron: `0 */4 * * * ... crossvalidate_satellite.py`.
+
+This is the "hybrid" approach because the full `ai-berkshire` 4-master framework and Serenity's own six-step chokepoint analysis are each too expensive/interactive to run unattended every 4 hours — this script approximates both cheaply and only pays for a real Claude read when the local checks actually disagree or something looks wrong.
+
+**🔴 Rogue legacy-engine incident — recurred twice, root-caused and structurally fixed.** The old always-on `auto_trade_enabled=true` engine sold live satellite positions twice without authorization (CRDO on 2026-07-01, VST on 2026-07-03), each time believed already stopped. Root causes, all now fixed:
+- `stop.sh` grepped for the uvicorn process on **port 8000**, but the server has always run on **port 8888** — the pattern never matched anything, so `stop.sh` printed "successfully stopped" while the engine kept running the whole time. This is the most likely reason the same incident happened twice. *(Fixed: pattern corrected to 8888; the health-check curl example above had the same stale port and is also fixed.)*
+- `backend/main.py` has its own standalone `if __name__ == "__main__"` entrypoint that never checked the kill-switch — only `start.sh` did. *(Fixed: same kill-switch check added there.)*
+- A structural **kill-switch file** (`/data/qbao775/AlphaTrader/.DISABLE_AUTOSTART`) was added at the top of both entrypoints: while it exists, the engine refuses to start no matter how it's invoked (`bash start.sh`, `python main.py`, or systemd). It exits **0**, not 1 — `alphatrader.service` runs with `Restart=on-failure`, so a non-zero exit would have made systemd tight-loop-restart `start.sh` every 5 seconds for as long as the switch was active.
+- **Lesson recorded in the standing mandate**: killing a process is not sufficient for a self-healing supervisor (`start.sh`'s own `while true` loop, plus systemd, plus a shared server where anyone could re-run `bash start.sh`) — the fix has to be structural (a checked flag file), not just operational (killing PIDs).
+
+**`news_watch.py` fixes** — a silent bug had it firing **zero alerts for months**: `mcporter`/`node` live in the base miniconda `/bin`, not on `PATH` inside the `alphatrader` conda env, so every Exa search silently failed with `rc=127`. Fixed by explicitly prepending the base conda `bin/` to the subprocess `PATH`. Also added: keyword coverage for layoffs/tariffs/export-controls/M&A/model-releases (per the user's "track official announcements, not just headline sentiment" preference), and a local Ollama pre-screen (`quick_chokepoint_take()`) that scores each fresh headline as a real bottleneck / noise / too-early before it reaches an email alert.
+
+---
+
 ## 🛑 What's new (2026-06-30) — Strategy pivot to passive-index core + on-demand AI research
 
 After 6 months of live autonomous operation, the daily-driver model has been retired in favor of a **passive-index core (70–80% SPY/VOO + HK 2800) + on-demand AI research via Claude Code skills**.
@@ -669,8 +691,17 @@ tail -f /tmp/alphatrader.log
 ### Verify Service Health
 
 ```bash
-curl http://localhost:8000/api/health
+curl http://localhost:8888/api/health
 # Returns: {"status":"ok","timestamp":"..."}
+```
+
+### 🔒 Kill-switch (safety standby)
+
+If `/data/qbao775/AlphaTrader/.DISABLE_AUTOSTART` exists, **both** `start.sh` and `backend/main.py`'s standalone entrypoint refuse to start (see "What's new (2026-07-03)" further down for why this exists). Delete it to restore normal operation:
+
+```bash
+rm /data/qbao775/AlphaTrader/.DISABLE_AUTOSTART
+systemctl --user restart alphatrader
 ```
 
 ---
