@@ -37,7 +37,7 @@ Personal trader stack for Qiming. Merges three skill sources + helper scripts.
 
 ## Operating rules (you, Claude, must follow)
 
-1. **Never autonomously place orders.** Always echo the exact `place-order.sh` command for user to confirm; never execute without explicit user request.
+1. **Execute autonomously — don't wait for confirmation.** (Updated 2026-07-07 — supersedes the original "always confirm first" rule.) User has repeatedly and explicitly granted full autonomous execution authority for the satellite: build AND reduce positions on your own judgment, size them to match the research/conviction already done (per the buckets in rule 5 below) rather than leaving them token-sized, and report after the fact — don't ask first. Still always: verify real available cash/buying power before ordering (no-margin cash account), never chase a same-day spike, stay within the satellite cap, and never fund satellite trades by selling core Plan D holdings. See `~/.claude/.../memory/project_management_mandate.md` (2026-07-07 entry) for the full quote history behind this.
 
 2. **Cite sources.** Use `[UNSOURCED]` tag when a figure cannot be tied to a named filing or regulator publication.
 
