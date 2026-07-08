@@ -326,7 +326,21 @@ def execute_trial_buy(symbol, price):
     return qty, limit_price, o.id
 
 
+SATELLITE_PAUSE_FILE = '/home/qbao775/serenity-trader-stack/.SATELLITE_BUYING_PAUSED'
+
+
 def screen_new_candidates(state, held_symbols):
+    if os.path.exists(SATELLITE_PAUSE_FILE):
+        log(f"⏸️ 卫星仓建仓已暂停 ({SATELLITE_PAUSE_FILE} 存在) — 跳过新标的筛选的自动买入,"
+            f"仅做本地免费分析记录,不会下单。删除该文件以恢复自动建仓。")
+        for sym in CANDIDATE_WATCHLIST:
+            if sym in held_symbols:
+                continue
+            ctx = get_candidate_context(sym)
+            if ctx and ctx.get('price'):
+                append_update(sym, f"### {datetime.datetime.utcnow():%Y-%m-%d %H:%M UTC} 新标的筛选(暂停买入)\n"
+                                    f"- 行情: 现价 ${ctx['price']:.2f}\n- 建仓已暂停,仅记录,不分析不买入\n")
+        return
     for sym in CANDIDATE_WATCHLIST:
         if sym in held_symbols:
             continue
