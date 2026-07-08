@@ -54,3 +54,17 @@ OVERALL: BEARISH
 
 
 
+### 2026-07-08 12:03 UTC 新标的自动筛选
+- 行情: real-time price $181.64 (as of 2026-07-07T20:26:32.726692893Z, includes pre/post-market), today's change -4.32%, 52w range $70.36-$220.89
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — cyclical semiconductor dependency and governance discounts
+MUNGER: Mistake if AI chip dominance erodes or geopolitical instability peaks
+DUAN: PASS — poor corporate governance precludes a 10-year ownership conviction
+LI_LU: NEUTRAL — compounding potential offset by systemic permanent loss risk
+OVERALL: NEUTRAL
+- Serenity速览: BEARISH
+CHOKEPOINT_INTACT: BROKEN
+REASON: sharp daily decline breaking immediate support
+OVERALL: BEARISH
+
+
