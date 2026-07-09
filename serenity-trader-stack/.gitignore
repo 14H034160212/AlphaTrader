@@ -4,6 +4,12 @@
 # runtime state / markers — machine-specific, regenerated
 .crossvalidate_state.json
 .nz100k-deployed
+.reentry_state.json
+.reentry_executed
+
+# NOTE: .SATELLITE_BUYING_PAUSED and .DISABLE_AUTOSTART are deliberate on/off
+# markers with explanatory content (like a kill-switch) — tracked in git on
+# purpose, not listed here, so their presence/removal is visible in history.
 
 # logs
 *.log
