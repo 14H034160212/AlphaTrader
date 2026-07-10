@@ -6,6 +6,8 @@
 .nz100k-deployed
 .reentry_state.json
 .reentry_executed
+.skhy_daytrade_state.json
+.skhy_daytrade_done
 
 # NOTE: .SATELLITE_BUYING_PAUSED and .DISABLE_AUTOSTART are deliberate on/off
 # markers with explanatory content (like a kill-switch) — tracked in git on
