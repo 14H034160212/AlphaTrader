@@ -242,20 +242,65 @@ def manage_position(api, state):
                f"平仓原因: {reason}\n最终盈亏: {plpc:+.2f}%")
 
 
-def main():
-    if os.path.exists(DONE_MARKER):
-        log("already closed today — nothing more to do")
+FULL_LIQUIDATION_MARKER = '/home/qbao775/serenity-trader-stack/.full_liquidation_done'
+# 2026-07-10: user explicitly asked to cash out EVERYTHING by end of day
+# today (Plan D core just re-bought this same morning, plus today's META
+# trial position) -- proceeds earmarked for buying the real SKHY (regular
+# ticker, trading starts Monday 2026-07-13) at next week's open. This is
+# separate from the SKHYV day-trade logic above, which already has its own
+# close-out. Confirmed scope explicitly ("全部卖掉" / "这两个都卖掉") after
+# Claude asked whether this meant just today's day-trades or the core too.
+FULL_LIQUIDATION_SYMBOLS = ['SPY', 'QQQ', 'BRK.B', 'META']
+
+
+def liquidate_everything_near_close(api):
+    if os.path.exists(FULL_LIQUIDATION_MARKER):
+        return
+    clock = api.get_clock()
+    if not clock.is_open:
+        return
+    now = datetime.datetime.now(datetime.timezone.utc)
+    mins_to_close = (clock.next_close - now).total_seconds() / 60
+    if not (0 <= mins_to_close <= CLOSE_BUFFER_MIN):
         return
 
+    log(f"  🔴 end-of-day full liquidation window ({mins_to_close:.0f} min to close) — "
+        f"selling Plan D core + META per explicit user instruction")
+    sold_any = False
+    for sym in FULL_LIQUIDATION_SYMBOLS:
+        positions = [p for p in api.list_positions() if p.symbol == sym]
+        if not positions:
+            continue
+        qty = positions[0].qty
+        o = api.submit_order(symbol=sym, qty=qty, side='sell', type='market', time_in_force='day')
+        log(f"  ✓ SOLD {sym} qty={qty} order={o.id[:8]}")
+        sold_any = True
+
+    with open(FULL_LIQUIDATION_MARKER, 'w') as f:
+        json.dump({'liquidated_at': datetime.datetime.utcnow().isoformat()}, f)
+
+    if sold_any:
+        send_email("💰 全部清仓完成 — 准备下周一买 SKHY",
+                   "Plan D 核心(SPY/QQQ/BRK.B)+ META 已按用户指令全部卖出。\n"
+                   "账户现金已备好,准备下周一(7/13)SKHY 正式代码开盘时买入。")
+
+
+def main():
     api = get_alpaca()
     clock = api.get_clock()
     if not clock.is_open:
         log(f"market closed (next_open={clock.next_open}) — nothing to do this tick")
         return
 
+    liquidate_everything_near_close(api)
+
+    if os.path.exists(DONE_MARKER):
+        log("SKHYV day-trade already closed today — nothing more to do for that leg")
+        return
+
     state = load_state()
     if not state.get('entered'):
-        log("no position yet — attempting entry")
+        log("no SKHYV position yet — attempting entry")
         enter_position(api)
     else:
         manage_position(api, state)
