@@ -52,6 +52,15 @@ LOG_PATH = '/home/qbao775/serenity-trader-stack/skhy_daytrade.log'
 TARGET_PCT = 0.10          # 10% of equity, per user's instruction
 STOP_LOSS_PCT = -10.0      # Claude's addition — protect capital intraday
 CLOSE_BUFFER_MIN = 15      # sell this many minutes before 4pm ET close
+TRAIL_FROM_PEAK_PCT = -4.0 # sell if price pulls back this much from the
+                           # intraday peak seen so far — approximates
+                           # "sell near the high" without requiring perfect
+                           # foresight of the exact top (impossible in
+                           # real time). Only engages once price has moved
+                           # meaningfully above entry (see manage_position).
+TRAIL_ARM_ABOVE_PCT = 3.0  # only start trailing once up at least this much
+                           # from entry — otherwise normal early-session
+                           # noise would trigger it immediately
 
 
 def log(msg):
@@ -170,7 +179,22 @@ def manage_position(api, state):
     p = positions[0]
     plpc = float(p.unrealized_plpc) * 100
     mv = float(p.market_value)
-    log(f"  SKHY position: qty={p.qty} mv=${mv:.2f} unrealized_plpc={plpc:+.2f}%")
+    current_px = mv / float(p.qty)
+
+    # Track the intraday peak price seen so far, so we can trail from it.
+    # "Sell at the exact daily high" isn't achievable in real time — this is
+    # the realistic approximation: once up a meaningful amount, sell if it
+    # pulls back a chunk from the best level reached, locking in most of
+    # the run rather than giving it all back waiting for a peak that's
+    # already passed.
+    peak_px = max(state.get('peak_price', current_px), current_px)
+    state['peak_price'] = peak_px
+    save_state(state)
+    pullback_from_peak_pct = (current_px / peak_px - 1) * 100
+    up_from_entry_pct = (current_px / state['entry_price_est'] - 1) * 100
+
+    log(f"  SKHY position: qty={p.qty} mv=${mv:.2f} current=${current_px:.2f} "
+        f"unrealized_plpc={plpc:+.2f}% peak=${peak_px:.2f} pullback_from_peak={pullback_from_peak_pct:+.2f}%")
 
     clock = api.get_clock()
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -180,12 +204,18 @@ def manage_position(api, state):
         mins_to_close = (close_time - now).total_seconds() / 60
         near_close = 0 <= mins_to_close <= CLOSE_BUFFER_MIN
 
+    trailing_armed = up_from_entry_pct >= TRAIL_ARM_ABOVE_PCT
+    trailing_triggered = trailing_armed and pullback_from_peak_pct <= TRAIL_FROM_PEAK_PCT
+
     if plpc <= STOP_LOSS_PCT:
         reason = f"止损触发 ({plpc:+.2f}% <= {STOP_LOSS_PCT}%)"
+    elif trailing_triggered:
+        reason = (f"从高点回落触发 (最高 ${peak_px:.2f}, 现价 ${current_px:.2f}, "
+                   f"回落 {pullback_from_peak_pct:+.2f}%, 当前盈利 {plpc:+.2f}%)")
     elif near_close:
         reason = f"接近收盘(单日交易,无论涨跌都平仓,当前 {plpc:+.2f}%)"
     else:
-        log(f"  未触发平仓条件(止损线 {STOP_LOSS_PCT}%,当前 {plpc:+.2f}%,非收盘时段),继续持有")
+        log(f"  未触发平仓条件(止损{STOP_LOSS_PCT}% / 回落追踪{'已启动' if trailing_armed else '未启动,需先上涨'+str(TRAIL_ARM_ABOVE_PCT)+'%'} / 非收盘时段),继续持有")
         return
 
     o = api.submit_order(symbol='SKHY', qty=p.qty, side='sell', type='market', time_in_force='day')
