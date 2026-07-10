@@ -118,23 +118,34 @@ def enter_position(api):
     acc = api.get_account()
     equity = float(acc.equity)
     target_notional = equity * TARGET_PCT
-
-    sgov = [p for p in api.list_positions() if p.symbol == 'SGOV']
-    if not sgov:
-        log("no SGOV position to fund this trade from — aborting")
-        return None
-    sgov_qty = float(sgov[0].qty)
-    sgov_px = float(sgov[0].market_value) / sgov_qty
-    sell_qty = int((target_notional / sgov_px) + 5)  # small buffer
-    sell_qty = min(sell_qty, int(sgov_qty))
-
-    o1 = api.submit_order(symbol='SGOV', qty=sell_qty, side='sell', type='market', time_in_force='day')
-    log(f"  sold {sell_qty}sh SGOV to fund entry, order={o1.id[:8]}")
-
-    import time
-    time.sleep(8)
-    acc = api.get_account()
     bp = float(acc.buying_power)
+
+    # Bug fix (2026-07-10, live): earlier ticks already sold SGOV twice
+    # (13:30 and 13:35 UTC) while SKHYV had no trade data yet, each retry
+    # blindly sold MORE SGOV without checking cash already on hand from the
+    # prior attempt — only sell if current buying power is actually short
+    # of the target, so a retry doesn't compound into an ever-growing cash
+    # pile sitting idle outside SGOV.
+    if bp < target_notional:
+        sgov = [p for p in api.list_positions() if p.symbol == 'SGOV']
+        if not sgov:
+            log("no SGOV position to fund this trade from — aborting")
+            return None
+        sgov_qty = float(sgov[0].qty)
+        sgov_px = float(sgov[0].market_value) / sgov_qty
+        shortfall = target_notional - bp
+        sell_qty = int((shortfall / sgov_px) + 5)  # small buffer
+        sell_qty = min(sell_qty, int(sgov_qty))
+
+        o1 = api.submit_order(symbol='SGOV', qty=sell_qty, side='sell', type='market', time_in_force='day')
+        log(f"  sold {sell_qty}sh SGOV to cover shortfall (​${shortfall:.2f}), order={o1.id[:8]}")
+
+        import time
+        time.sleep(8)
+        acc = api.get_account()
+        bp = float(acc.buying_power)
+    else:
+        log(f"  buying_power ${bp:.2f} already covers target ${target_notional:.2f} — no SGOV sale needed this tick")
 
     import requests
     from database import SessionLocal, get_setting
@@ -142,22 +153,22 @@ def enter_position(api):
     k = get_setting(db, 'alpaca_api_key', 1)
     s = get_setting(db, 'alpaca_secret_key', 1)
     db.close()
-    r = requests.get('https://data.alpaca.markets/v2/stocks/SKHY/trades/latest',
+    r = requests.get('https://data.alpaca.markets/v2/stocks/SKHYV/trades/latest',
                       headers={'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}, timeout=10)
     px = None
     if r.status_code == 200:
         px = r.json().get('trade', {}).get('p')
     if not px:
-        log("  no live SKHY price available yet — will retry next cron tick")
+        log("  no live SKHYV price available yet — will retry next cron tick")
         return None
 
     qty = int(min(target_notional, bp - 20) // px)
     if qty < 1:
-        log(f"  insufficient funds for even 1 share of SKHY @ ${px} — aborting")
+        log(f"  insufficient funds for even 1 share of SKHYV @ ${px} — aborting")
         return None
 
-    o2 = api.submit_order(symbol='SKHY', qty=qty, side='buy', type='market', time_in_force='day')
-    log(f"  ✓ BOUGHT SKHY qty={qty} @~${px} order={o2.id[:8]}")
+    o2 = api.submit_order(symbol='SKHYV', qty=qty, side='buy', type='market', time_in_force='day')
+    log(f"  ✓ BOUGHT SKHYV qty={qty} @~${px} order={o2.id[:8]}")
 
     state = {
         'entered': True,
@@ -173,9 +184,9 @@ def enter_position(api):
 
 
 def manage_position(api, state):
-    positions = [p for p in api.list_positions() if p.symbol == 'SKHY']
+    positions = [p for p in api.list_positions() if p.symbol == 'SKHYV']
     if not positions:
-        log("no SKHY position held (already sold or never filled) — marking done")
+        log("no SKHYV position held (already sold or never filled) — marking done")
         with open(DONE_MARKER, 'w') as f:
             json.dump({'closed_at': datetime.datetime.utcnow().isoformat()}, f)
         return
@@ -197,7 +208,7 @@ def manage_position(api, state):
     pullback_from_peak_pct = (current_px / peak_px - 1) * 100
     up_from_entry_pct = (current_px / state['entry_price_est'] - 1) * 100
 
-    log(f"  SKHY position: qty={p.qty} mv=${mv:.2f} current=${current_px:.2f} "
+    log(f"  SKHYV position: qty={p.qty} mv=${mv:.2f} current=${current_px:.2f} "
         f"unrealized_plpc={plpc:+.2f}% peak=${peak_px:.2f} pullback_from_peak={pullback_from_peak_pct:+.2f}%")
 
     clock = api.get_clock()
@@ -222,8 +233,8 @@ def manage_position(api, state):
         log(f"  未触发平仓条件(止损{STOP_LOSS_PCT}% / 回落追踪{'已启动' if trailing_armed else '未启动,需先上涨'+str(TRAIL_ARM_ABOVE_PCT)+'%'} / 非收盘时段),继续持有")
         return
 
-    o = api.submit_order(symbol='SKHY', qty=p.qty, side='sell', type='market', time_in_force='day')
-    log(f"  ✓ SOLD SKHY qty={p.qty} reason={reason} order={o.id[:8]}")
+    o = api.submit_order(symbol='SKHYV', qty=p.qty, side='sell', type='market', time_in_force='day')
+    log(f"  ✓ SOLD SKHYV qty={p.qty} reason={reason} order={o.id[:8]}")
     with open(DONE_MARKER, 'w') as f:
         json.dump({'closed_at': datetime.datetime.utcnow().isoformat(), 'reason': reason,
                     'final_plpc': plpc}, f, indent=2)
