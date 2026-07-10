@@ -49,7 +49,11 @@ STATE_FILE = '/home/qbao775/serenity-trader-stack/.skhy_daytrade_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.skhy_daytrade_done'
 LOG_PATH = '/home/qbao775/serenity-trader-stack/skhy_daytrade.log'
 
-TARGET_PCT = 0.10          # 10% of equity, per user's instruction
+TARGET_PCT = 0.20          # 20% of equity — user raised from 10% to 20% on
+                           # 2026-07-10 explicitly ("直接用20%尝试，不要10%")
+                           # after Claude flagged the concentration risk
+                           # (single, untested, first-day-trading IPO name,
+                           # above the established 8-10% conviction ceiling)
 STOP_LOSS_PCT = -10.0      # Claude's addition — protect capital intraday
 CLOSE_BUFFER_MIN = 15      # sell this many minutes before 4pm ET close
 TRAIL_FROM_PEAK_PCT = -4.0 # sell if price pulls back this much from the
