@@ -220,18 +220,29 @@ def check_qualitative_conditions():
 
 
 def send_email(subject, body):
-    key = os.environ.get('RESEND_API_KEY')
-    if not key:
-        log("email skipped: RESEND_API_KEY not set in env")
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from database import SessionLocal, get_setting
+    db = SessionLocal()
+    sender = get_setting(db, "email_sender", 1, "")
+    pw = get_setting(db, "email_app_password", 1, "")
+    recip = get_setting(db, "email_recipient", 1, "")
+    db.close()
+    if not (sender and pw and recip):
+        log("email skipped: email_sender/email_app_password/email_recipient not set in DB")
         return
     try:
-        import requests
-        r = requests.post(
-            'https://api.resend.com/emails',
-            headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
-            json={'from': 'onboarding@resend.dev', 'to': ['bqmbill714@gmail.com'],
-                  'subject': subject, 'text': body}, timeout=15)
-        log(f"email: {r.status_code}")
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = sender
+        msg["To"] = recip
+        msg.attach(MIMEText(body, "plain"))
+        s = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20)
+        s.login(sender, pw)
+        s.sendmail(sender, [recip], msg.as_string())
+        s.quit()
+        log(f"email sent to {recip}")
     except Exception as e:
         log(f"email err: {e}")
 
