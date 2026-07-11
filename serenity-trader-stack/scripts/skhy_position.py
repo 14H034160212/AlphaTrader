@@ -45,6 +45,18 @@ DONE_MARKER = '/home/qbao775/serenity-trader-stack/.skhy_position_done'
 TARGET_PCT = 0.20        # same 20% sizing as the day-trade, user hasn't said otherwise
 TARGET_PRICE = 200.0     # sell ONLY when price >= this. No other exit condition.
 
+# 2026-07-11: user asked not to buy mechanically at the open — watch price
+# action first; if it's declining, wait for a sign of stabilization rather
+# than buying into a falling knife (this is a reaction to Friday's SKHYV
+# entry being poorly timed near a local high). "A good entry point" can't
+# be fully quantified, so this is a reasonable approximation, not a
+# guarantee: track the lowest price seen since we started observing, buy
+# once price has recovered a bit off that low -- or once a max wait has
+# elapsed, so we don't end up waiting forever and missing the entry
+# entirely if it never clearly stabilizes.
+ENTRY_RECOVERY_FROM_LOW_PCT = 1.5   # buy once price is up this much from the observed low
+ENTRY_MAX_WAIT_MIN = 120             # give up waiting and just buy after this long
+
 
 def log(msg):
     ts = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
@@ -107,16 +119,43 @@ def get_live_price(api, symbol):
     return None
 
 
-def enter_position(api):
-    acc = api.get_account()
-    equity = float(acc.equity)
-    bp = float(acc.buying_power)
-    target_notional = equity * TARGET_PCT
-
+def enter_position(api, state):
     px = get_live_price(api, 'SKHY')
     if not px:
         log("  no live SKHY price yet — will retry next tick")
         return
+
+    now = datetime.datetime.utcnow()
+    watch = state.get('watch')
+    if not watch:
+        # First observation — just start watching, don't buy yet.
+        state['watch'] = {'first_seen_time': now.isoformat(), 'first_seen_price': px, 'lowest_price': px}
+        save_state(state)
+        log(f"  first price observed (${px:.2f}) — watching before buying, not chasing an open print")
+        return
+
+    watch['lowest_price'] = min(watch['lowest_price'], px)
+    first_time = datetime.datetime.fromisoformat(watch['first_seen_time'])
+    mins_waiting = (now - first_time).total_seconds() / 60
+    recovery_from_low_pct = (px / watch['lowest_price'] - 1) * 100
+
+    should_buy = recovery_from_low_pct >= ENTRY_RECOVERY_FROM_LOW_PCT or mins_waiting >= ENTRY_MAX_WAIT_MIN
+    if not should_buy:
+        state['watch'] = watch
+        save_state(state)
+        log(f"  watching: current=${px:.2f} low_seen=${watch['lowest_price']:.2f} "
+            f"recovery={recovery_from_low_pct:+.2f}% (need {ENTRY_RECOVERY_FROM_LOW_PCT}%) "
+            f"waited={mins_waiting:.0f}min (max {ENTRY_MAX_WAIT_MIN}) — not buying yet")
+        return
+
+    reason = ("recovered off the observed low" if recovery_from_low_pct >= ENTRY_RECOVERY_FROM_LOW_PCT
+              else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed, buying regardless")
+    log(f"  entry condition met ({reason}) — buying now")
+
+    acc = api.get_account()
+    equity = float(acc.equity)
+    bp = float(acc.buying_power)
+    target_notional = equity * TARGET_PCT
 
     qty = int(min(target_notional, bp - 20) // px)
     if qty < 1:
@@ -130,7 +169,7 @@ def enter_position(api):
              'entry_price_est': px, 'qty': qty}
     save_state(state)
     send_email("📈 SKHY 长期持仓 — 已建仓",
-               f"买入 SKHY {qty}股,预估入场价 ~${px}\n"
+               f"买入 SKHY {qty}股,预估入场价 ~${px}(等待理由: {reason})\n"
                f"目标价: ${TARGET_PRICE} 才卖出,中途不设止损,跌多少都不动。")
 
 
@@ -174,7 +213,7 @@ def main():
     state = load_state()
     if not state.get('entered'):
         log("no position yet — attempting entry")
-        enter_position(api)
+        enter_position(api, state)
     else:
         manage_position(api)
 
