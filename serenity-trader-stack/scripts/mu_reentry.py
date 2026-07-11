@@ -16,16 +16,14 @@ in a new news wrapper. This is a considered REVERSAL of a prior rejection,
 not a fresh uncontested thesis.
 
 Given that unresolved risk, Claude sized this more conservatively than the
-SKHY position (5% vs 20%) and added a real stop-loss (-15%) -- unlike
-SKHY, the user did NOT ask for "no downside limit" on this one, so this
-reflects Claude's own risk-management judgment for a reversal-of-rejected-
-thesis position, not an explicit instruction either way.
-
-No fixed take-profit target (none was specified) -- once held, MU will
-automatically show up in crossvalidate_satellite.py's get_satellite_positions()
-and get the same 4-master + Serenity chokepoint hybrid recheck every 4h as
-CRDO/TER/RRX. This script only handles entry + the stop-loss; ongoing
-qualitative thesis monitoring is the existing satellite infrastructure's job.
+SKHY position (5% vs 20%) and initially added a self-imposed -15%
+stop-loss. User then explicitly said "我觉得不需要设置止损" (no stop-loss
+needed) -- removed. MU is now a pure hold with NO defined exit condition
+at all (not even a take-profit target like SKHY's $200) -- the only thing
+watching it is crossvalidate_satellite.py's regular 4h thesis recheck,
+which can escalate/recommend TRIM/EXIT but does not auto-sell. This script
+now only handles entry; there is no ongoing management logic left to run
+after that.
 """
 import sys, os, json, datetime
 sys.path.insert(0, '/data/qbao775/AlphaTrader/backend')
@@ -44,11 +42,8 @@ DONE_MARKER = '/home/qbao775/serenity-trader-stack/.mu_reentry_entered'
 
 TARGET_PCT = 0.05         # 5% -- more conservative than SKHY's 20%, given
                           # the unresolved valuation-trap concern
-STOP_LOSS_PCT = -15.0     # Claude's own risk-management addition (not
-                          # explicitly requested) -- wider than a day-trade
-                          # stop since this is meant as a real hold, but a
-                          # real limit given the thesis is a reversal of a
-                          # prior rejection, not a fresh clean call
+# STOP_LOSS_PCT removed 2026-07-11 -- user: "我觉得不需要设置止损".
+# No downside limit on this position at all now.
 
 
 def log(msg):
@@ -121,40 +116,29 @@ def enter_position(api):
 
     with open(DONE_MARKER, 'w') as f:
         json.dump({'entered_at': datetime.datetime.utcnow().isoformat()}, f)
-    state = {'entry_price_est': px, 'qty': qty, 'stopped_out': False}
+    state = {'entry_price_est': px, 'qty': qty}
     save_state(state)
     send_email("📈 MU 重新建仓",
                f"买入 MU {qty}股,预估入场价 ~${px}\n"
-               f"止损线: {STOP_LOSS_PCT}%(Claude 自行设置,用户未明确要求)\n"
-               f"无固定止盈目标 — 后续由 crossvalidate_satellite.py 的常规4小时"
-               f"论文复核自动跟踪。")
-
-
-def check_stop_loss(api):
-    positions = [p for p in api.list_positions() if p.symbol == 'MU']
-    if not positions:
-        return
-    p = positions[0]
-    plpc = float(p.unrealized_plpc) * 100
-    log(f"  MU position: qty={p.qty} unrealized_plpc={plpc:+.2f}% (stop-loss {STOP_LOSS_PCT}%)")
-    if plpc <= STOP_LOSS_PCT:
-        o = api.submit_order(symbol='MU', qty=p.qty, side='sell', type='market', time_in_force='day')
-        log(f"  ✓ STOP-LOSS TRIGGERED — SOLD MU qty={p.qty} @ {plpc:+.2f}% order={o.id[:8]}")
-        send_email(f"⚠️ MU 止损触发 ({plpc:+.2f}%)", f"已按 -15% 止损线卖出。")
+               f"不设止损、不设止盈目标(用户明确要求不设止损)\n"
+               f"后续由 crossvalidate_satellite.py 的常规4小时论文复核自动跟踪,"
+               f"该机制只会提示/升级,不会自动卖出。")
 
 
 def main():
+    if os.path.exists(DONE_MARKER):
+        log("MU already entered — no stop-loss, no take-profit target, nothing left for this "
+            "script to do. Ongoing monitoring is crossvalidate_satellite.py's job.")
+        return
+
     api = get_alpaca()
     clock = api.get_clock()
     if not clock.is_open:
         log(f"market closed (next_open={clock.next_open}) — nothing to do this tick")
         return
 
-    if not os.path.exists(DONE_MARKER):
-        log("no MU position yet — attempting entry")
-        enter_position(api)
-    else:
-        check_stop_loss(api)
+    log("no MU position yet — attempting entry")
+    enter_position(api)
 
 
 if __name__ == '__main__':
