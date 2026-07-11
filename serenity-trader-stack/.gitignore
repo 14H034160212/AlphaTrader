@@ -9,6 +9,8 @@
 .skhy_daytrade_state.json
 .skhy_daytrade_done
 .full_liquidation_done
+.skhy_position_state.json
+.skhy_position_done
 
 # NOTE: .SATELLITE_BUYING_PAUSED and .DISABLE_AUTOSTART are deliberate on/off
 # markers with explanatory content (like a kill-switch) — tracked in git on
