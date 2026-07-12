@@ -1,0 +1,23 @@
+
+## 2026-07-12
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(5), Google/GOOGL(4), Anthropic (via GOOGL/AMZN investment)(3), Microsoft/MSFT(2)
+- 消费端App排名:
+  - AI Took Three of the Top Ten App Download Spots in April · ASO Tools and App Analytics by Appfigures
+  - GenAI Chatbots: July 2026 Apptopia Data Brief, 86% of People Use Just One Chatbot - Apptopia
+  - ‎iPhone Top Games & Apps - App Store
+  - Anthropic's Claude hits No. 1 on Apple's top free apps list
+- 开发者/API调用份额:
+  - LLM Rankings | OpenRouter
+  - DeepSeek V4 Is Earning Agentic Token Share — OpenRouter Blog
+  - OpenRouter Models Leaderboard: Adoption, Spend, Price and Context | CodeSOTA | CodeSOTA
+  - LLM Market Share: Compare Usage & Adoption
+- 网站流量对比:
+  - July 2026 Top Generative AI Chatbots & LLMs by Market Share | Momentic
+  - ChatGPT vs Gemini vs Claude vs Perplexity: 2026 Market Share Showdown (40+ Stats)
+  - ChatGPT Lost 24 Points of Market Share in 12 Months — Here's Who Took It - FourWeekMBA
+  - AI Referral Traffic 2026: Gemini Is Catching ChatGPT
+- 企业级采用率:
+  - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
+  - 2026 Work Trend Index report: Agents, human agency, and opportunity
+  - State of AI Usage Report 2026 - LayerXLayerX
+  - Google Gemini vs. Microsoft Copilot: Who Owns Enterprise AI in 2026? – USA Business Times
