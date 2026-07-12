@@ -51,7 +51,17 @@ STALE_DEEPDIVE_DAYS = 7         # force a paid check-in even if nothing else fir
 # signal" -- $1.94 total for zero new information. Don't pay again for the
 # SAME reason within this window; genuine signals (disagreement/BEARISH/
 # price move/staleness) still escalate immediately regardless.
-INFRA_FAILURE_COOLDOWN_HOURS = 3
+#
+# Bug fix (2026-07-12): this was set to 3h against a cron that runs every 4h
+# (0 */4 * * *) -- since every normal run is already >3h after the previous
+# one, the cooldown could never actually suppress anything in steady state;
+# it only helped for a manual rerun close to the last one. Confirmed live:
+# crossvalidate.log shows this same infra-only escalation firing repeatedly
+# across ordinary 4h-spaced cycles (2026-07-10 08:00 and 12:00 both paid for
+# "Ollama down" when the daemon was never actually down, just contended).
+# Needs to be >= the cron interval to do anything; 5h gives one real cycle of
+# headroom without silencing a genuinely new escalation for too long.
+INFRA_FAILURE_COOLDOWN_HOURS = 5
 USER_EMAIL = 'bqmbill714@gmail.com'
 
 # 2026-07-07: user asked to also proactively screen NEW buy candidates every
@@ -129,21 +139,30 @@ def get_satellite_positions():
     return positions
 
 
-def ollama_call(prompt, timeout=240):
+def ollama_call(prompt, timeout=300):
     # 2026-07-07: bumped 120s -> 240s. This is a shared 8-GPU lab server;
     # under real contention (other jobs on the same GPUs) a 31B-model
     # generation call can legitimately take >120s, which was triggering
     # unnecessary paid claude -p escalations (both local checks "failing"
     # when the model just hadn't finished yet, not because it's down).
-    try:
-        import requests
-        r = requests.post(f"{OLLAMA_HOST}/api/generate",
-                          json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-                          timeout=timeout)
-        if r.status_code == 200:
-            return r.json().get('response', '').strip()
-    except Exception as e:
-        log(f"ollama_call failed: {e}")
+    #
+    # Bug fix (2026-07-12): 240s still wasn't enough -- crossvalidate.log
+    # shows this timing out repeatedly even at 240s (e.g. 2026-07-10 08:04
+    # and 12:04 UTC), confirming contention on this box can run longer than
+    # that. Bumped again to 300s and added one retry -- a second attempt
+    # after a cold-start has usually already paid the model-load cost, so
+    # it's cheap insurance against declaring "infra failure" (which triggers
+    # a paid claude -p escalation) over what's actually just slowness.
+    import requests
+    for attempt in (1, 2):
+        try:
+            r = requests.post(f"{OLLAMA_HOST}/api/generate",
+                              json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                              timeout=timeout)
+            if r.status_code == 200:
+                return r.json().get('response', '').strip()
+        except Exception as e:
+            log(f"ollama_call failed (attempt {attempt}/2): {e}")
     return ""
 
 
@@ -358,6 +377,8 @@ def screen_new_candidates(state, held_symbols):
         master_dir = parse_overall(master_take)
         serenity_dir = parse_overall(serenity_take)
         log(f"  4-master: {master_dir}  |  serenity: {serenity_dir}")
+        log_verdict(sym, '4master_candidate', master_dir, ctx['price'])
+        log_verdict(sym, 'serenity_candidate', serenity_dir, ctx['price'])
 
         entry = (f"### {datetime.datetime.utcnow():%Y-%m-%d %H:%M UTC} 新标的自动筛选\n"
                   f"- 行情: {context_str}\n"
@@ -386,6 +407,25 @@ def screen_new_candidates(state, held_symbols):
             log(f"  ✓ 未达到一致 BULLISH 门槛,不升级")
 
         append_update(sym, entry)
+
+
+VERDICT_LOG = '/home/qbao775/serenity-trader-stack/.verdict_log.jsonl'
+
+
+def log_verdict(symbol, source, direction, price):
+    """Append every gradable (BULLISH/BEARISH) local verdict to a durable log
+    so grade_verdicts.py can later check whether the call was actually right.
+    Added 2026-07-12 (user: is there a way to improve the algorithm?) --
+    up to now the system produced BULLISH/BEARISH calls constantly but never
+    checked afterward whether either lens (4-master vs Serenity) was actually
+    predictive, so there was no way to tell if the system was getting better
+    or worse over time."""
+    if direction not in ('BULLISH', 'BEARISH') or not price:
+        return
+    rec = {'ts': datetime.datetime.utcnow().isoformat(), 'symbol': symbol,
+           'source': source, 'direction': direction, 'price_at_verdict': price}
+    with open(VERDICT_LOG, 'a') as f:
+        f.write(json.dumps(rec) + '\n')
 
 
 def parse_overall(text):
@@ -503,6 +543,8 @@ def main():
         chokepoint_state = parse_chokepoint_intact(serenity_take)
 
         log(f"  4-master: {master_dir}  |  serenity: {serenity_dir} (chokepoint: {chokepoint_state})")
+        log_verdict(sym, '4master_hold', master_dir, current_price)
+        log_verdict(sym, 'serenity_hold', serenity_dir, current_price)
 
         # Escalation triggers
         reasons = []

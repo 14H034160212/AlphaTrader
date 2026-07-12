@@ -52,9 +52,30 @@ def main():
     ranked = [t for t, c in sorted(counts.items(), key=lambda kv: -kv[1]) if c >= 3]
 
     # Best-effort: the most recent date string mentioned on the page.
-    dates = re.findall(r"(20\d{2}-\d{2}-\d{2})", html)
-    dates += [d for d in re.findall(r"([A-Z][a-z]+ \d{1,2},? 20\d{2})", html)]
-    src_date = max(dates) if dates else "unknown"
+    # Bug fix (2026-07-12): this used to take max() over the raw strings,
+    # mixing "2026-06-09" (ISO) and "June 9, 2026" (text) formats -- string
+    # comparison sorts by first character, so any text-format date starting
+    # with a letter that sorts high (e.g. "May...") beat EVERY ISO date
+    # regardless of which was actually more recent. Confirmed live 2026-07-12:
+    # real ISO dates on the page went up to 2026-07-05, but the old max()
+    # reported "May 13, 2026" purely because 'M' > '2' and 'M' > other
+    # date-text letters in ASCII. Parse each candidate into an actual date
+    # and compare those; skip unparseable strings or dates further in the
+    # future than tomorrow (footer/banner noise, not real content dates).
+    today = datetime.date.today()
+    candidates = []
+    for m in re.findall(r"(20\d{2}-\d{2}-\d{2})", html):
+        try:
+            candidates.append(datetime.datetime.strptime(m, "%Y-%m-%d").date())
+        except ValueError:
+            continue
+    for m in re.findall(r"([A-Z][a-z]+ \d{1,2},? 20\d{2})", html):
+        try:
+            candidates.append(datetime.datetime.strptime(m.replace(",", ""), "%B %d %Y").date())
+        except ValueError:
+            continue
+    candidates = [d for d in candidates if d <= today + datetime.timedelta(days=1)]
+    src_date = max(candidates).isoformat() if candidates else "unknown"
 
     if len(ranked) < 5:
         print(f"PARSE_THIN only {len(ranked)} tickers; keeping last-good")
