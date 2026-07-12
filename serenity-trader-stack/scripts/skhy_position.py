@@ -150,7 +150,25 @@ def enter_position(api, state):
     mins_waiting = (now - first_time).total_seconds() / 60
     recovery_from_low_pct = (px / watch['lowest_price'] - 1) * 100
 
-    should_buy = recovery_from_low_pct >= ENTRY_RECOVERY_FROM_LOW_PCT or mins_waiting >= ENTRY_MAX_WAIT_MIN
+    recovered = recovery_from_low_pct >= ENTRY_RECOVERY_FROM_LOW_PCT
+    timed_out = mins_waiting >= ENTRY_MAX_WAIT_MIN
+    # Bug fix (2026-07-12, user: "不要追涨"): the timeout fallback used to
+    # force a buy regardless of price -- if the stock never actually dipped
+    # and just kept climbing the whole wait window, that forced buy would be
+    # chasing a rally, exactly what this logic exists to avoid. Only let the
+    # timeout override fire if there was a REAL dip at some point (current
+    # price not still above where we first started watching) -- otherwise
+    # keep waiting rather than cave and chase.
+    still_above_start = px >= watch['first_seen_price']
+    if timed_out and still_above_start:
+        watch['first_seen_time'] = now.isoformat()  # reset the clock, keep watching
+        state['watch'] = watch
+        save_state(state)
+        log(f"  ⚠️ max wait elapsed but price (${px:.2f}) never dipped below where we started "
+            f"watching (${watch['first_seen_price']:.2f}) — NOT chasing, resetting wait clock")
+        return
+
+    should_buy = recovered or timed_out
     if not should_buy:
         state['watch'] = watch
         save_state(state)
@@ -159,8 +177,8 @@ def enter_position(api, state):
             f"waited={mins_waiting:.0f}min (max {ENTRY_MAX_WAIT_MIN}) — not buying yet")
         return
 
-    reason = ("recovered off the observed low" if recovery_from_low_pct >= ENTRY_RECOVERY_FROM_LOW_PCT
-              else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed, buying regardless")
+    reason = ("recovered off the observed low" if recovered
+              else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed with a real dip seen, buying")
     log(f"  entry condition met ({reason}) — buying now")
 
     acc = api.get_account()

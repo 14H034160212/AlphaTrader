@@ -126,7 +126,8 @@ def enter_position(api, state):
     now = datetime.datetime.utcnow()
     watch = state.get('watch')
     if not watch:
-        state['watch'] = {'first_seen_time': now.isoformat(), 'lowest_price': px, 'stable_checks': 0}
+        state['watch'] = {'first_seen_time': now.isoformat(), 'first_seen_price': px,
+                           'lowest_price': px, 'stable_checks': 0}
         save_state(state)
         log(f"  first price observed (${px:.2f}) — watching for stabilization, not chasing the open")
         return
@@ -142,6 +143,19 @@ def enter_position(api, state):
     recovered_and_stable = (recovery_pct >= ENTRY_RECOVERY_FROM_LOW_PCT
                              and watch['stable_checks'] >= ENTRY_STABLE_CHECKS_REQUIRED)
     timed_out = mins_waiting >= ENTRY_MAX_WAIT_MIN
+    # Bug fix (2026-07-12, user: "不要追涨"): don't let the timeout override
+    # force a buy if the price never actually dipped below where we started
+    # watching -- that would be chasing a continued rally, not buying a
+    # stabilized pullback. Reset the clock and keep waiting instead.
+    still_above_start = px >= watch['first_seen_price']
+    if timed_out and still_above_start:
+        watch['first_seen_time'] = now.isoformat()
+        state['watch'] = watch
+        save_state(state)
+        log(f"  ⚠️ max wait elapsed but price (${px:.2f}) never dipped below where we started "
+            f"watching (${watch['first_seen_price']:.2f}) — NOT chasing, resetting wait clock")
+        return
+
     if not (recovered_and_stable or timed_out):
         state['watch'] = watch
         save_state(state)
@@ -150,7 +164,7 @@ def enter_position(api, state):
             f"waited={mins_waiting:.0f}/{ENTRY_MAX_WAIT_MIN}min — not buying yet")
         return
 
-    reason = "recovered and stabilized off the observed low" if recovered_and_stable else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed, buying regardless"
+    reason = "recovered and stabilized off the observed low" if recovered_and_stable else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed with a real dip seen, buying"
     log(f"  entry condition met ({reason}) — buying now")
 
     acc = api.get_account()
