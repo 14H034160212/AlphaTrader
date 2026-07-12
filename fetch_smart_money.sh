@@ -33,11 +33,14 @@ RAW=$(mktemp)
   q "Nancy Pelosi recent stock trades disclosure 2026 latest buy ticker"
   q "most bought stocks US Congress 2026 Capitol Trades Trump"
   # ── influencer X tweets (Musk active; Trump may be dormant on X) — direct pull ──
+  # zuck added 2026-07-12 (user request) -- now directly relevant given the
+  # META long-term position; his own public statements are a real signal
+  # source distinct from third-party news coverage of Meta.
   echo "### INFLUENCER TWEETS"
   if [ -f /home/qbao775/.agent-reach/twitter.env ]; then
     source /home/qbao775/.agent-reach/twitter.env
     TW=/home/qbao775/.local/bin/twitter
-    for handle in elonmusk realDonaldTrump; do
+    for handle in elonmusk realDonaldTrump zuck; do
       echo "--- @$handle ---"
       timeout 90 "$TW" search "from:$handle" -n 8 2>/dev/null \
         | grep -ivE "ExperimentalWarning|trace-warnings" \
