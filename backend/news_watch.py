@@ -131,7 +131,7 @@ def main():
         ("semiconductor memory HBM DRAM SK Hynix Samsung Micron selloff news today", "内存/半导体板块"),
         ("AI optics CPO co-packaged optics Coherent Lumentum AAOI news today", "CPO/光通信板块"),
         ("quantum computing stocks IONQ RGTI QBTS QUBT momentum Trump executive order news today", "量子(观察,不持仓)"),
-        ("new AI model release GPT Gemini Claude Llama Grok announcement this week", "新模型发布"),
+        ("new AI model release GPT Gemini Claude Muse Spark Grok Meta Superintelligence Labs announcement this week", "新模型发布"),
         ("tech company layoffs 2026 Google Meta Amazon Microsoft Intel job cuts", "大公司裁员"),
         ("CHIPS Act semiconductor export control tariff policy AI executive order 2026", "政府政策"),
         ("tech company acquisition merger buyout AI startup 2026", "并购/收购"),
