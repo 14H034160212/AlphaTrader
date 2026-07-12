@@ -15,6 +15,11 @@
 .mu_reentry_entered
 .meta_longhold_entered
 .weekly_focus_state.json
+.verdict_graded_state.json
+
+# NOTE: .verdict_log.jsonl IS tracked on purpose (unlike the *_state.json
+# bookkeeping above) -- it's the raw history of every gradable local verdict,
+# the actual data grade_verdicts.py's accuracy scorecard is built from.
 
 # NOTE: .SATELLITE_BUYING_PAUSED and .DISABLE_AUTOSTART are deliberate on/off
 # markers with explanatory content (like a kill-switch) — tracked in git on

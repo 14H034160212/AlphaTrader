@@ -66,14 +66,25 @@ def quick_chokepoint_take(fresh_items):
         "Only list tickers that trade on Alpaca (US-listed) or are clearly "
         "identifiable. Be skeptical by default — most headlines are noise."
     )
-    try:
-        r = requests.post(f"{OLLAMA_HOST}/api/generate",
-                          json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-                          timeout=120)
-        if r.status_code == 200:
-            return r.json().get("response", "").strip()
-    except Exception as e:
-        log(f"quick_chokepoint_take failed: {e}")
+    # Bug fix (2026-07-12, project_ollama_crossvalidate_false_positive memory):
+    # this repeatedly logged "Read timed out (read timeout=120)" on a shared
+    # GPU server where gemma4:31b's cold-start (or contention with other jobs)
+    # can genuinely take longer than 120s -- the model wasn't actually down,
+    # the client just gave up too early. crossvalidate_satellite.py hit the
+    # same problem 2026-07-07 and fixed it by bumping 120s->240s; this file
+    # never got the same fix. Match that timeout, and retry once (a second
+    # attempt after a cold-start has usually already paid the load cost) before
+    # giving up -- cheap insurance since a miss here just silently drops the
+    # local pre-screen annotation from an email, not a paid escalation.
+    for attempt in (1, 2):
+        try:
+            r = requests.post(f"{OLLAMA_HOST}/api/generate",
+                              json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                              timeout=240)
+            if r.status_code == 200:
+                return r.json().get("response", "").strip()
+        except Exception as e:
+            log(f"quick_chokepoint_take failed (attempt {attempt}/2): {e}")
     return ""
 
 
