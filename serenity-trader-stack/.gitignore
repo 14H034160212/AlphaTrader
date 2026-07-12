@@ -13,6 +13,7 @@
 .skhy_position_done
 .mu_reentry_state.json
 .mu_reentry_entered
+.meta_longhold_entered
 
 # NOTE: .SATELLITE_BUYING_PAUSED and .DISABLE_AUTOSTART are deliberate on/off
 # markers with explanatory content (like a kill-switch) — tracked in git on
