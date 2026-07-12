@@ -59,7 +59,7 @@ USER_EMAIL = 'bqmbill714@gmail.com'
 # global chip exposure (EWY is the only one of these actually tradeable via
 # Alpaca right now; Moomoo has no KR market enabled, IBKR isn't connected —
 # see .broker_capabilities.json). Extend this list as new candidates surface.
-CANDIDATE_WATCHLIST = ['EWY']
+CANDIDATE_WATCHLIST = ['EWY', 'NVDA', 'COHR', 'LITE']
 TRIAL_BUCKET_PCT = 0.03           # 试探仓 per CLAUDE.md rule 5
 CHASE_GUARD_INTRADAY_PCT = 5.0    # don't buy if already up this much today
 
