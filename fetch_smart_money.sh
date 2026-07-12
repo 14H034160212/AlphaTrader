@@ -36,11 +36,16 @@ RAW=$(mktemp)
   # zuck added 2026-07-12 (user request) -- now directly relevant given the
   # META long-term position; his own public statements are a real signal
   # source distinct from third-party news coverage of Meta.
+  # MicronTech/SKhynix/SanDisk added 2026-07-12 (user: 海力士、美光、闪迪
+  # 官网、推特也要重点关注) -- official corporate accounts for the three
+  # names now held/being watched long-term (SKHY, MU) plus SanDisk (SNDK,
+  # same storage-parabolic theme as MU per project_gemma4_promoted_storage_
+  # parabolic memory).
   echo "### INFLUENCER TWEETS"
   if [ -f /home/qbao775/.agent-reach/twitter.env ]; then
     source /home/qbao775/.agent-reach/twitter.env
     TW=/home/qbao775/.local/bin/twitter
-    for handle in elonmusk realDonaldTrump zuck; do
+    for handle in elonmusk realDonaldTrump zuck MicronTech SKhynix SanDisk; do
       echo "--- @$handle ---"
       timeout 90 "$TW" search "from:$handle" -n 8 2>/dev/null \
         | grep -ivE "ExperimentalWarning|trace-warnings" \
@@ -58,6 +63,7 @@ NAME2TICK = {
     "alphabet": "GOOGL", "google": "GOOGL", "nvidia": "NVDA", "broadcom": "AVGO",
     "microsoft": "MSFT", "apple": "AAPL", "amazon": "AMZN", "meta": "META",
     "palantir": "PLTR", "tesla": "TSLA", "micron": "MU", "tsmc": "TSM",
+    "sandisk": "SNDK", "sk hynix": "SKHY", "skhynix": "SKHY",
     "the new york times": "NYT", "occidental": "OXY", "chevron": "CVX",
 }
 NOISE = {"AI","CEO","US","USD","Q1","Q2","Q3","Q4","13F","NYT","SEC","ETF","CPO","GDP","CPI"}
@@ -95,10 +101,15 @@ if len(seg) == 2:
         tm = re.search(r"text:\s*['\"]?(.+)", line.strip())
         if tm:
             txt = tm.group(1).strip().strip("'\"")[:180]
-            # keep only MARKET-relevant tweets — Musk/Trump post mostly noise
+            # keep only MARKET-relevant tweets — Musk/Trump post mostly noise;
+            # memory/storage terms added 2026-07-12 so MicronTech/SKhynix/
+            # SanDisk's own product/earnings tweets aren't filtered out just
+            # for not containing "chip"/"ai".
             kw = ("$", "stock", "tesla", "tsla", "ai", "chip", "nvidia", "fed",
                   "rate", "tariff", "econom", "market", "dollar", "trade", "earnings",
-                  "spacex", "robot", "energy", "invest", "crypto", "bitcoin")
+                  "spacex", "robot", "energy", "invest", "crypto", "bitcoin",
+                  "memory", "dram", "nand", "hbm", "flash", "ssd", "semiconductor",
+                  "fab", "wafer")
             if len(txt) > 15 and any(k in txt.lower() for k in kw):
                 infl.append({"who": who, "text": txt})
 infl = infl[:8]

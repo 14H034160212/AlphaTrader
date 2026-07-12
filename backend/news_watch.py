@@ -114,10 +114,17 @@ def exa(query, n=4):
 OFFICIAL_BLOG_RSS = {
     "OpenAI":    "https://openai.com/blog/rss.xml",
     "DeepMind":  "https://deepmind.google/blog/rss.xml",
+    # added 2026-07-12 (user: SKHY/MU/SanDisk 官网也要重点关注) -- both have
+    # real, working RSS feeds (verified live), same treatment as OpenAI/DeepMind.
+    "Micron":    "https://investors.micron.com/rss/news-releases.xml",
+    "SK hynix":  "https://news.skhynix.com/feed/",
 }
 OFFICIAL_BLOG_SITE_SEARCH = {
     "Meta AI":   "site:ai.meta.com/blog",
     "Anthropic": "site:anthropic.com/news",
+    # SanDisk's newsroom has no working RSS (checked live 2026-07-12 --
+    # rss.xml redirects to a dead preview host) -- Exa site-search fallback.
+    "SanDisk":   "site:sandisk.com/company/newsroom",
 }
 
 
