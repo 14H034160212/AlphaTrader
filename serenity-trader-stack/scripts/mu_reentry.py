@@ -45,6 +45,17 @@ TARGET_PCT = 0.05         # 5% -- more conservative than SKHY's 20%, given
 # STOP_LOSS_PCT removed 2026-07-11 -- user: "我觉得不需要设置止损".
 # No downside limit on this position at all now.
 
+# 2026-07-11: user asked to watch first and prefer a pullback before buying
+# ("你可以先看一下，最好等回落一些再买"), then added: "上周五冲高回落，有资金
+# 在借利好卖出，要等回落走稳了再买" -- some holders are selling into the good
+# news, so wait for the price to actually STABILIZE, not just bounce once.
+# Approximation, not a guarantee: require (a) price off its observed low by
+# some margin AND (b) no new low in the last few checks (proxy for "selling
+# pressure has actually let up"), or a max wait so this doesn't wait forever.
+ENTRY_RECOVERY_FROM_LOW_PCT = 1.5
+ENTRY_STABLE_CHECKS_REQUIRED = 2   # consecutive checks with no new low
+ENTRY_MAX_WAIT_MIN = 120
+
 
 def log(msg):
     ts = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
@@ -104,18 +115,48 @@ def send_email(subject, body):
         log(f"email err: {e}")
 
 
-def enter_position(api):
+def enter_position(api, state):
     import market_data as md
-    acc = api.get_account()
-    equity = float(acc.equity)
-    bp = float(acc.buying_power)
-    target_notional = equity * TARGET_PCT
-
     q = md.get_stock_quote('MU')
     px = q['current'] if q and q.get('current') else None
     if not px:
         log("  no live MU price available yet — will retry next tick")
         return
+
+    now = datetime.datetime.utcnow()
+    watch = state.get('watch')
+    if not watch:
+        state['watch'] = {'first_seen_time': now.isoformat(), 'lowest_price': px, 'stable_checks': 0}
+        save_state(state)
+        log(f"  first price observed (${px:.2f}) — watching for stabilization, not chasing the open")
+        return
+
+    made_new_low = px < watch['lowest_price']
+    watch['lowest_price'] = min(watch['lowest_price'], px)
+    watch['stable_checks'] = 0 if made_new_low else watch['stable_checks'] + 1
+
+    first_time = datetime.datetime.fromisoformat(watch['first_seen_time'])
+    mins_waiting = (now - first_time).total_seconds() / 60
+    recovery_pct = (px / watch['lowest_price'] - 1) * 100
+
+    recovered_and_stable = (recovery_pct >= ENTRY_RECOVERY_FROM_LOW_PCT
+                             and watch['stable_checks'] >= ENTRY_STABLE_CHECKS_REQUIRED)
+    timed_out = mins_waiting >= ENTRY_MAX_WAIT_MIN
+    if not (recovered_and_stable or timed_out):
+        state['watch'] = watch
+        save_state(state)
+        log(f"  watching: current=${px:.2f} low=${watch['lowest_price']:.2f} recovery={recovery_pct:+.2f}% "
+            f"stable_checks={watch['stable_checks']}/{ENTRY_STABLE_CHECKS_REQUIRED} "
+            f"waited={mins_waiting:.0f}/{ENTRY_MAX_WAIT_MIN}min — not buying yet")
+        return
+
+    reason = "recovered and stabilized off the observed low" if recovered_and_stable else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed, buying regardless"
+    log(f"  entry condition met ({reason}) — buying now")
+
+    acc = api.get_account()
+    equity = float(acc.equity)
+    bp = float(acc.buying_power)
+    target_notional = equity * TARGET_PCT
 
     qty = round(min(target_notional, bp - 20) / px, 4)
     if qty <= 0:
@@ -127,10 +168,9 @@ def enter_position(api):
 
     with open(DONE_MARKER, 'w') as f:
         json.dump({'entered_at': datetime.datetime.utcnow().isoformat()}, f)
-    state = {'entry_price_est': px, 'qty': qty}
-    save_state(state)
+    save_state({'entry_price_est': px, 'qty': qty})
     send_email("📈 MU 重新建仓",
-               f"买入 MU {qty}股,预估入场价 ~${px}\n"
+               f"买入 MU {qty}股,预估入场价 ~${px}(等待理由: {reason})\n"
                f"不设止损、不设止盈目标(用户明确要求不设止损)\n"
                f"后续由 crossvalidate_satellite.py 的常规4小时论文复核自动跟踪,"
                f"该机制只会提示/升级,不会自动卖出。")
@@ -148,8 +188,9 @@ def main():
         log(f"market closed (next_open={clock.next_open}) — nothing to do this tick")
         return
 
+    state = load_state()
     log("no MU position yet — attempting entry")
-    enter_position(api)
+    enter_position(api, state)
 
 
 if __name__ == '__main__':
