@@ -97,6 +97,65 @@ def exa(query, n=4):
         log(f"exa fail: {e}"); return ""
 
 
+# 2026-07-12: user asked why a Meta model launch (Llama -> rebranded "Muse
+# Spark") wasn't caught, then "你不是有关注meta的官网吗" (don't you watch
+# Meta's official blog?) -- honest answer was no: everything above is
+# generic Exa web search gated on a hardcoded keyword list (RISK_KW/POS_KW),
+# which breaks every time a product/model gets renamed (whack-a-mole, not a
+# durable fix). This adds DIRECT monitoring of the major AI labs' own blogs,
+# independent of guessing keywords: real RSS feeds where available (OpenAI,
+# DeepMind), Exa site-restricted search as a fallback where a lab has no
+# working RSS (checked live 2026-07-12: ai.meta.com and anthropic.com don't
+# expose one). Any post found this way is inherently alert-worthy -- it's
+# the lab's own announcement -- so it bypasses the RISK_KW/POS_KW title
+# filter entirely rather than depending on the post's title happening to
+# contain one of those words (e.g. "Introducing Muse Spark 1.1" matches
+# neither list).
+OFFICIAL_BLOG_RSS = {
+    "OpenAI":    "https://openai.com/blog/rss.xml",
+    "DeepMind":  "https://deepmind.google/blog/rss.xml",
+}
+OFFICIAL_BLOG_SITE_SEARCH = {
+    "Meta AI":   "site:ai.meta.com/blog",
+    "Anthropic": "site:anthropic.com/news",
+}
+
+
+def _fetch_rss_titles(url, n=5):
+    """Minimal RSS parse (title + link per <item>) -- avoids adding a
+    feedparser dependency for what's a simple, well-formed feed."""
+    try:
+        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        r.raise_for_status()
+        items = re.findall(r"<item>(.*?)</item>", r.text, re.S)
+        out = []
+        for it in items[:n]:
+            tm = re.search(r"<title>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</title>", it, re.S)
+            lm = re.search(r"<link>\s*(.*?)\s*</link>", it, re.S)
+            if tm:
+                out.append((tm.group(1).strip(), lm.group(1).strip() if lm else ""))
+        return out
+    except Exception as e:
+        log(f"rss fetch failed ({url}): {e}")
+        return []
+
+
+def check_official_blogs():
+    """Returns a list of '🆕 [来源] Title' strings for posts detected on
+    monitored AI-lab blogs, independent of the generic keyword filter."""
+    found = []
+    for name, url in OFFICIAL_BLOG_RSS.items():
+        for title, _link in _fetch_rss_titles(url):
+            found.append(f"🆕 [{name} 官方博客] {title[:150]}")
+    for name, site_q in OFFICIAL_BLOG_SITE_SEARCH.items():
+        raw = exa(f"{site_q} latest blog post announcement", 5)
+        for line in raw.splitlines():
+            m = re.match(r"\s*Title:\s*(.+)", line)
+            if m:
+                found.append(f"🆕 [{name} 官方博客] {m.group(1).strip()[:150]}")
+    return found
+
+
 def email(db, subject, body):
     try:
         s = get_setting(db, "email_sender", 1, ""); pw = get_setting(db, "email_app_password", 1, "")
@@ -150,6 +209,11 @@ def main():
             if is_risk or is_pos:
                 tag = "🔴" if is_risk else "🟢"   # risk wins the tag if both present
                 alerts.append(f"{tag} [{label}] {title[:150]}")
+
+    # Official-blog posts bypass the RISK_KW/POS_KW filter entirely -- these
+    # are curated, always-relevant sources (the lab's own announcement), not
+    # generic web search results that need keyword gating.
+    alerts.extend(check_official_blogs())
 
     # de-dup, and only alert on items not seen before (stored signature)
     alerts = list(dict.fromkeys(alerts))
