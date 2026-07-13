@@ -48,6 +48,11 @@ STATE_FILE = '/home/qbao775/serenity-trader-stack/.reentry_state.json'
 LOG_PATH = '/home/qbao775/serenity-trader-stack/reentry_monitor.log'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.reentry_executed'
 PAUSE_FILE = '/home/qbao775/serenity-trader-stack/.SATELLITE_BUYING_PAUSED'
+# 2026-07-13: user said "我什么时候让你买你再买" (only buy when I explicitly
+# tell you to) -- standing policy, applies here too: all 4 re-entry gates
+# clearing no longer auto-executes the core redeploy. Claude creates this
+# file only in direct response to the user explicitly confirming re-entry.
+CONFIRM_FILE = '/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_COREREENTRY'
 
 REENTRY_MIN_RISKON_DAYS = 5      # consecutive daily checks, not just one good day
 KOREA_DROP_TRIGGER_PCT = -4.0    # a single-day move this bad = still unstable
@@ -285,6 +290,8 @@ def execute_reentry(qualitative_note):
     if os.path.exists(PAUSE_FILE):
         os.remove(PAUSE_FILE)
         log("  ✓ removed .SATELLITE_BUYING_PAUSED — satellite candidate screening resumes")
+    if os.path.exists(CONFIRM_FILE):
+        os.remove(CONFIRM_FILE)
 
     with open(DONE_MARKER, 'w') as f:
         json.dump({'executed_at': datetime.datetime.utcnow().isoformat(),
@@ -325,7 +332,17 @@ def main():
         log("[3+4] not met — NOT re-entering this cycle")
         return
 
-    log("🟢 ALL CONDITIONS MET — executing re-entry")
+    log("🟢 ALL CONDITIONS MET")
+    if not os.path.exists(CONFIRM_FILE):
+        log("  — but awaiting explicit user confirmation before executing (not auto-buying)")
+        if not state.get('_global', {}).get('reentry_ready_notified'):
+            state.setdefault('_global', {})['reentry_ready_notified'] = True
+            save_state(state)
+            send_email("🔔 Plan D 核心仓位重新入场条件已满足 — 等待你确认",
+                       f"4项重新入场条件已全部满足(判断依据: {(deep_take or local_take)[:300]})。\n"
+                       f"按你的要求,不会自动下单——回复我确认重新入场,我会执行。")
+        return
+    log("  — confirmation file present, executing re-entry")
     execute_reentry(deep_take or local_take)
 
 

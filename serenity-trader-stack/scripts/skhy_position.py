@@ -41,18 +41,18 @@ if os.path.exists(_ENV_FILE):
 
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.skhy_position_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.skhy_position_done'
-# 2026-07-13: user said "美股开盘先不要买" (don't buy at today's US open, for
-# now) right after Korea's KOSPI hit a sell sidecar (-5%, Iran/Hormuz
-# escalation) and SK Hynix's Korea-listed shares fell hard on profit-taking
-# post-ADR-debut. This is deliberately SEPARATE from .SATELLITE_BUYING_PAUSED
-# (which already existed from the 2026-07-08 full-liquidation event and gates
-# core re-entry + the CANDIDATE_WATCHLIST screen via a much stricter 4-gate
-# regime check) -- tying this to that file would mean SKHY/MU/META silently
-# resume buying whenever the unrelated core-portfolio regime gate clears,
-# which isn't what was asked. Remove this file to resume; watch-state
-# tracking (lowest price seen, etc.) keeps updating while paused so nothing
-# is lost.
-LONGHOLD_PAUSE_FILE = '/home/qbao775/serenity-trader-stack/.LONGHOLD_ENTRY_PAUSED'
+# 2026-07-13: user said "我什么时候让你买你再买" (only buy when I explicitly
+# tell you to) -- a standing policy change, broader and more permanent than
+# the same-day ".LONGHOLD_ENTRY_PAUSED" pause it replaces (that was scoped to
+# "today's open" during the Korea/Hormuz risk-off; this applies to ALL future
+# buys, indefinitely, across every script that places a buy order). Entry
+# conditions being met no longer triggers an automatic order -- it only
+# triggers a "ready to buy, awaiting your go-ahead" email. The order only
+# fires once this per-symbol confirmation file exists; Claude creates it
+# (via `touch`) only in direct response to the user explicitly saying to buy
+# THIS name in a live conversation -- never inferred, never pre-created. The
+# script deletes the file immediately after executing so it's single-use.
+CONFIRM_FILE = '/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_SKHY'
 
 TARGET_PCT = 0.20        # same 20% sizing as the day-trade, user hasn't said otherwise
 TARGET_PRICE = 200.0     # sell ONLY when price >= this. No other exit condition.
@@ -192,13 +192,17 @@ def enter_position(api, state):
     reason = ("recovered off the observed low" if recovered
               else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed with a real dip seen, buying")
 
-    if os.path.exists(LONGHOLD_PAUSE_FILE):
-        log(f"  entry condition met ({reason}) — but {LONGHOLD_PAUSE_FILE} exists, "
-            f"buying paused per explicit user instruction — still watching, not entering")
+    if not os.path.exists(CONFIRM_FILE):
+        log(f"  entry condition met ({reason}) — awaiting explicit user confirmation before buying")
+        if not watch.get('awaiting_confirmation_notified'):
+            watch['awaiting_confirmation_notified'] = True
+            send_email("🔔 SKHY 达到买入条件 — 等待你确认",
+                       f"SKHY 达到进场条件({reason}),现价 ~${px:.2f}。\n"
+                       f"按你的要求,不会自动下单——回复我确认买入,我会执行。")
         state['watch'] = watch
         save_state(state)
         return
-    log(f"  entry condition met ({reason}) — buying now")
+    log(f"  entry condition met ({reason}) — confirmation file present, buying now")
 
     acc = api.get_account()
     equity = float(acc.equity)
@@ -212,6 +216,8 @@ def enter_position(api, state):
 
     o = api.submit_order(symbol='SKHY', qty=qty, side='buy', type='market', time_in_force='day')
     log(f"  ✓ BOUGHT SKHY qty={qty} @~${px} order={o.id[:8]}")
+    if os.path.exists(CONFIRM_FILE):
+        os.remove(CONFIRM_FILE)  # single-use — next entry (if any) needs a fresh confirmation
 
     state = {'entered': True, 'entry_time': datetime.datetime.utcnow().isoformat(),
              'entry_price_est': px, 'qty': qty}

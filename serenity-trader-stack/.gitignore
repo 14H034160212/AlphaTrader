@@ -17,14 +17,22 @@
 .weekly_focus_state.json
 .verdict_graded_state.json
 
+# 2026-07-13: ephemeral, single-use "go ahead and buy this" markers -- Claude
+# creates one only in direct response to the user explicitly confirming a
+# specific buy, and each script deletes its own immediately after executing.
+# Not meant to persist or show up in history (unlike the deliberate on/off
+# markers noted below), so they're plain machine state, not tracked.
+.ENTRY_CONFIRMED_*
+
 # NOTE: .verdict_log.jsonl IS tracked on purpose (unlike the *_state.json
 # bookkeeping above) -- it's the raw history of every gradable local verdict,
 # the actual data grade_verdicts.py's accuracy scorecard is built from.
 
-# NOTE: .SATELLITE_BUYING_PAUSED, .DISABLE_AUTOSTART, and .LONGHOLD_ENTRY_PAUSED
-# are deliberate on/off markers with explanatory content (like a kill-switch)
-# — tracked in git on purpose, not listed here, so their presence/removal is
-# visible in history.
+# NOTE: .SATELLITE_BUYING_PAUSED and .DISABLE_AUTOSTART are deliberate on/off
+# markers with explanatory content (like a kill-switch) — tracked in git on
+# purpose, not listed here, so their presence/removal is visible in history.
+# (.LONGHOLD_ENTRY_PAUSED, used briefly on 2026-07-13, was superseded same-day
+# by the broader .ENTRY_CONFIRMED_* standing policy above and removed.)
 
 # logs
 *.log

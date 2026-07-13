@@ -393,12 +393,26 @@ def screen_new_candidates(state, held_symbols):
                 if abs(ctx.get('change_pct') or 0) > CHASE_GUARD_INTRADAY_PCT:
                     entry += f"- **执行**: 跳过——今日盘中已经 {ctx['change_pct']:+.1f}%,追高违反纪律,等回调\n"
                     log(f"  ⚠️ {sym} 今日 {ctx['change_pct']:+.1f}%,不追高,跳过执行")
+                elif not os.path.exists(f'/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_{sym}'):
+                    # 2026-07-13: user said "我什么时候让你买你再买" (only buy
+                    # when I explicitly tell you to) -- standing policy, applies
+                    # to every buy path including this trial-buy candidate
+                    # screen, not just SKHY/MU/META. Flag + email, don't execute.
+                    entry += f"- **执行**: 达到买入条件,但等待你明确确认——不会自动下单\n"
+                    log(f"  🔔 {sym} 达到买入条件,等待用户确认,不自动下单")
+                    if not state.setdefault(sym, {}).get('awaiting_confirmation_notified'):
+                        state[sym]['awaiting_confirmation_notified'] = True
+                        send_email(f"🔔 {sym} 达到买入条件 — 等待你确认",
+                                   f"{sym} 试探仓筛选达到买入条件,现价 ~${ctx['price']:.2f}。\n"
+                                   f"付费复核意见: {claude_answer[:300]}\n\n"
+                                   f"按你的要求,不会自动下单——回复我确认买入,我会执行。")
                 else:
                     result = execute_trial_buy(sym, ctx['price'])
                     if result:
                         qty, limit_price, order_id = result
                         entry += f"- **执行**: 试探仓买入 {qty}股 @ ${limit_price} (order {order_id[:8]})\n"
                         state.setdefault(sym, {})['first_bought'] = datetime.datetime.utcnow().isoformat()
+                        os.remove(f'/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_{sym}')
                     else:
                         entry += f"- **执行**: 可用资金不足,未下单,仅记录信号\n"
             else:
