@@ -39,6 +39,11 @@ if os.path.exists(_ENV_FILE):
 
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.mu_reentry_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.mu_reentry_entered'
+# 2026-07-13: user said "美股开盘先不要买" right after Korea's KOSPI hit a
+# sell sidecar (Iran/Hormuz escalation) and SK Hynix's Korea shares fell hard
+# on profit-taking -- see the identical marker in skhy_position.py for why
+# this is separate from .SATELLITE_BUYING_PAUSED. Remove to resume.
+LONGHOLD_PAUSE_FILE = '/home/qbao775/serenity-trader-stack/.LONGHOLD_ENTRY_PAUSED'
 
 TARGET_PCT = 0.05         # 5% -- more conservative than SKHY's 20%, given
                           # the unresolved valuation-trap concern
@@ -165,6 +170,13 @@ def enter_position(api, state):
         return
 
     reason = "recovered and stabilized off the observed low" if recovered_and_stable else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed with a real dip seen, buying"
+
+    if os.path.exists(LONGHOLD_PAUSE_FILE):
+        log(f"  entry condition met ({reason}) — but {LONGHOLD_PAUSE_FILE} exists, "
+            f"buying paused per explicit user instruction — still watching, not entering")
+        state['watch'] = watch
+        save_state(state)
+        return
     log(f"  entry condition met ({reason}) — buying now")
 
     acc = api.get_account()
