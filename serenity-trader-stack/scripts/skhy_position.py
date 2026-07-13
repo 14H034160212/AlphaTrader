@@ -41,6 +41,18 @@ if os.path.exists(_ENV_FILE):
 
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.skhy_position_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.skhy_position_done'
+# 2026-07-13: user said "美股开盘先不要买" (don't buy at today's US open, for
+# now) right after Korea's KOSPI hit a sell sidecar (-5%, Iran/Hormuz
+# escalation) and SK Hynix's Korea-listed shares fell hard on profit-taking
+# post-ADR-debut. This is deliberately SEPARATE from .SATELLITE_BUYING_PAUSED
+# (which already existed from the 2026-07-08 full-liquidation event and gates
+# core re-entry + the CANDIDATE_WATCHLIST screen via a much stricter 4-gate
+# regime check) -- tying this to that file would mean SKHY/MU/META silently
+# resume buying whenever the unrelated core-portfolio regime gate clears,
+# which isn't what was asked. Remove this file to resume; watch-state
+# tracking (lowest price seen, etc.) keeps updating while paused so nothing
+# is lost.
+LONGHOLD_PAUSE_FILE = '/home/qbao775/serenity-trader-stack/.LONGHOLD_ENTRY_PAUSED'
 
 TARGET_PCT = 0.20        # same 20% sizing as the day-trade, user hasn't said otherwise
 TARGET_PRICE = 200.0     # sell ONLY when price >= this. No other exit condition.
@@ -179,6 +191,13 @@ def enter_position(api, state):
 
     reason = ("recovered off the observed low" if recovered
               else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed with a real dip seen, buying")
+
+    if os.path.exists(LONGHOLD_PAUSE_FILE):
+        log(f"  entry condition met ({reason}) — but {LONGHOLD_PAUSE_FILE} exists, "
+            f"buying paused per explicit user instruction — still watching, not entering")
+        state['watch'] = watch
+        save_state(state)
+        return
     log(f"  entry condition met ({reason}) — buying now")
 
     acc = api.get_account()
