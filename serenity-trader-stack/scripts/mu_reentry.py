@@ -39,11 +39,13 @@ if os.path.exists(_ENV_FILE):
 
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.mu_reentry_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.mu_reentry_entered'
-# 2026-07-13: user said "美股开盘先不要买" right after Korea's KOSPI hit a
-# sell sidecar (Iran/Hormuz escalation) and SK Hynix's Korea shares fell hard
-# on profit-taking -- see the identical marker in skhy_position.py for why
-# this is separate from .SATELLITE_BUYING_PAUSED. Remove to resume.
-LONGHOLD_PAUSE_FILE = '/home/qbao775/serenity-trader-stack/.LONGHOLD_ENTRY_PAUSED'
+# 2026-07-13: user said "我什么时候让你买你再买" (only buy when I explicitly
+# tell you to) -- a standing policy, broader/more permanent than the
+# same-day ".LONGHOLD_ENTRY_PAUSED" pause it replaces. See the identical
+# comment in skhy_position.py. The order only fires once this per-symbol
+# confirmation file exists; Claude creates it only in direct response to the
+# user explicitly saying to buy MU. Deleted immediately after executing.
+CONFIRM_FILE = '/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_MU'
 
 TARGET_PCT = 0.05         # 5% -- more conservative than SKHY's 20%, given
                           # the unresolved valuation-trap concern
@@ -171,13 +173,17 @@ def enter_position(api, state):
 
     reason = "recovered and stabilized off the observed low" if recovered_and_stable else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed with a real dip seen, buying"
 
-    if os.path.exists(LONGHOLD_PAUSE_FILE):
-        log(f"  entry condition met ({reason}) — but {LONGHOLD_PAUSE_FILE} exists, "
-            f"buying paused per explicit user instruction — still watching, not entering")
+    if not os.path.exists(CONFIRM_FILE):
+        log(f"  entry condition met ({reason}) — awaiting explicit user confirmation before buying")
+        if not watch.get('awaiting_confirmation_notified'):
+            watch['awaiting_confirmation_notified'] = True
+            send_email("🔔 MU 达到买入条件 — 等待你确认",
+                       f"MU 达到进场条件({reason}),现价 ~${px:.2f}。\n"
+                       f"按你的要求,不会自动下单——回复我确认买入,我会执行。")
         state['watch'] = watch
         save_state(state)
         return
-    log(f"  entry condition met ({reason}) — buying now")
+    log(f"  entry condition met ({reason}) — confirmation file present, buying now")
 
     acc = api.get_account()
     equity = float(acc.equity)
@@ -191,6 +197,8 @@ def enter_position(api, state):
 
     o = api.submit_order(symbol='MU', qty=qty, side='buy', type='market', time_in_force='day')
     log(f"  ✓ BOUGHT MU qty={qty} @~${px} order={o.id[:8]}")
+    if os.path.exists(CONFIRM_FILE):
+        os.remove(CONFIRM_FILE)
 
     with open(DONE_MARKER, 'w') as f:
         json.dump({'entered_at': datetime.datetime.utcnow().isoformat()}, f)
