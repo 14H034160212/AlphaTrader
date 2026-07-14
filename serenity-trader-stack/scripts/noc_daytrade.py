@@ -1,10 +1,27 @@
 #!/usr/bin/env python3
 """
-noc_daytrade.py — ONE-OFF day-trade, 2026-07-14 ONLY. User: "美股今天好像很
-不错，可不可以那10%的钱出来买你觉得合适的股票" (US stocks look good today,
-take 10% out and buy something you think is appropriate), then immediately:
-"然后你赚钱就马上出来，今天收盘之前全部卖掉" (as soon as you're in profit get
-out right away, sell everything before today's close regardless).
+noc_daytrade.py — ONE-OFF day-trade, 2026-07-14 ONLY. Rules went through
+several rapid revisions in one live conversation -- final state (see full
+sequence below) is: exit the instant there's ANY real profit (>= +0.1%,
+user's own words), don't wait for a bigger move and don't wait for close
+either; stop-loss and mandatory close-out remain as the backstops.
+
+Full instruction sequence, in order:
+  1. "美股今天好像很不错，可不可以那10%的钱出来买你觉得合适的股票" -- take
+     10% out, buy something appropriate, Claude's pick.
+  2. "然后你赚钱就马上出来，今天收盘之前全部卖掉" -- take profit immediately,
+     also sell everything before close regardless.
+  3. "不一定1%，不管涨多少，收盘全部卖掉" -- (walked back #2's early exit)
+     don't need a specific %, just hold to close no matter how far up.
+  4. "也不一定等到收盘再全部卖你觉得涨的差不多能赚钱就卖" -- (walked back #3)
+     don't necessarily wait for close either -- Claude's own judgment on
+     "risen enough for a decent profit".
+  5. "我要确保今天哪怕赚0.1%也可以" -- (sharpened #4 into a concrete number)
+     even a mere +0.1% profit today is fine to take.
+Net effect of 2-5 together: take profit at almost any positive move, don't
+hold out for a bigger one, don't wait for close either -- back to an early
+exit like step 2, just with a much lower bar than a first-draft 1% would
+have been.
 
 This IS the explicit per-buy confirmation the 2026-07-13 policy requires —
 the user is directly instructing a buy in live conversation, delegating only
@@ -21,10 +38,10 @@ move (+0.46%) means it isn't being chased into this trade either.
 
 Rules (day-trade, NOT a long-term hold like SKHY/MU/META):
   1. Buy ~10% of equity at/near today's open.
-  2. PROFIT_EXIT_PCT: sell the instant unrealized P&L clears this (small,
-     since "赚钱就马上出来" means take ANY real profit immediately, not wait
-     for a bigger move) -- 1.0%, wide enough to be a real move past bid/ask
-     noise, not so wide it contradicts "immediately".
+  2. PROFIT_EXIT_PCT = 0.1 -- exit the instant unrealized P&L clears this
+     (user's literal words: even +0.1% is fine to take). Deliberately NOT
+     zero -- needs to clear real bid/ask spread + fees, not just a noise
+     print, but otherwise as low a bar as the user asked for.
   3. STOP_LOSS_PCT: -5% -- not explicitly requested, but added on the same
      judgment basis as the 2026-07-10 SKHY day-trade (serves the user's own
      implicit "don't lose money" goal for an unsupervised same-day trade).
@@ -48,7 +65,10 @@ if os.path.exists(_ENV_FILE):
 
 SYMBOL = 'NOC'
 TARGET_PCT = 0.10
-PROFIT_EXIT_PCT = 1.0
+# 2026-07-14: went 1.0% -> removed -> back to a number, ending at 0.1% per
+# user's own words "我要确保今天哪怕赚0.1%也可以" (make sure even +0.1% profit
+# today is fine to take) -- exit on almost any real gain, don't hold out.
+PROFIT_EXIT_PCT = 0.1
 STOP_LOSS_PCT = -5.0
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.noc_daytrade_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.noc_daytrade_done'
@@ -166,8 +186,8 @@ def enter(api, state):
     save_state(state)
     send_email("📈 NOC 日内交易 — 已建仓",
                f"买入 NOC {qty}股,预估入场价 ~${px:.2f}(约占总仓位10%)\n"
-               f"规则: 一旦盈利超过{PROFIT_EXIT_PCT}%立即卖出;止损{STOP_LOSS_PCT}%;"
-               f"无论盈亏,收盘前15分钟强制平仓。")
+               f"规则: 只做今天短线,浮盈超过{PROFIT_EXIT_PCT}%就立即卖出(哪怕只赚一点点);"
+               f"止损{STOP_LOSS_PCT}%;无论盈亏,收盘前15分钟强制平仓。")
 
 
 def manage(api, state):
@@ -189,7 +209,7 @@ def manage(api, state):
 
     reason = None
     if plpc >= PROFIT_EXIT_PCT:
-        reason = f"盈利达到 {plpc:+.2f}% (>= {PROFIT_EXIT_PCT}%),立即止盈"
+        reason = f"浮盈 {plpc:+.2f}% (>= {PROFIT_EXIT_PCT}%),按规则立即止盈离场(哪怕只赚一点点)"
     elif plpc <= STOP_LOSS_PCT:
         reason = f"亏损达到 {plpc:+.2f}% (<= {STOP_LOSS_PCT}%),止损"
     elif clock.is_open and mins_to_close <= 15:
