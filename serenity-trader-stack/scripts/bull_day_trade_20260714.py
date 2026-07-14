@@ -126,6 +126,10 @@ WEIGHTS = {'META': 0.08, 'MU': 0.05, 'SNDK': 0.04, 'SKHY': 0.05}
 ENTRY_RECOVERY_FROM_LOW_PCT = 1.0   # tighter than the long-term scripts' 1.5% --
                                      # this is an intraday re-dip, not a multi-day pullback
 REENTRY_CUTOFF_MINS = 20            # no NEW entries once this close to market close
+# 2026-07-14: "sgov不要全部卖，就拿出来20%" -- total capital across all 4
+# names combined is capped at 20% of equity; a new re-entry buy is only
+# allowed if there's room left under this cap.
+TOTAL_DEPLOY_CAP_PCT = 0.20
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.bull_daytrade_20260714_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.bull_daytrade_20260714_done'
 
@@ -213,16 +217,21 @@ def manage_open_position(api, sym, p, state, mins_to_close, market_open):
     sym_state['last_plpc'] = plpc
     sym_state['decline_streak'] = decline_streak
     confirm_ticks = 3 if peak >= STRONG_MOMENTUM_PEAK_PCT else 2
-    downtrend_confirmed = decline_streak >= confirm_ticks
+    downtrend_confirmed = decline_streak >= confirm_ticks  # tracked/logged only, no longer acted on -- see below
 
     log(f"  {sym}: HOLDING qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
-        f"decline_streak={decline_streak}/{confirm_ticks}")
+        f"decline_streak={decline_streak}/{confirm_ticks}{' (downtrend confirmed, but riding to close per instruction)' if downtrend_confirmed else ''}")
 
+    # 2026-07-14 (later same session): user said "不要管涨跌了" (stop worrying
+    # about ups and downs) right after "今天势头都不错，你就买入吧，然后收盘
+    # 的时候全部卖出" (momentum looks good today, just buy in, sell everything
+    # at close) -- this REMOVES the downtrend-confirmed early exit as an
+    # ACTIVE trigger (still tracked/logged above for visibility). Only the
+    # stop-loss floor and the mandatory close-out can end a position now --
+    # ride out normal intraday noise, no more selling on every reversal.
     reason = None
     if plpc <= STOP_LOSS_PCT:
         reason = f"亏损达到 {plpc:+.2f}% (<= {STOP_LOSS_PCT}%),止损离场"
-    elif downtrend_confirmed:
-        reason = f"从峰值 {peak:+.2f}% 开始连续{decline_streak}次走低 (现{plpc:+.2f}%),确认下跌趋势,立即卖出"
     elif market_open and mins_to_close <= 15:
         reason = f"距收盘不到15分钟 (盈亏 {plpc:+.2f}%,曾达到峰值{peak:+.2f}%),按规则强制平仓"
 
@@ -268,9 +277,22 @@ def manage_watching(api, sym, state, mins_to_close):
     acc = api.get_account()
     equity = float(acc.equity)
     bp = float(acc.buying_power)
-    notional = min(equity * WEIGHTS[sym], bp - 20)
+
+    # 2026-07-14: user said "sgov不要全部卖，就拿出来20%" (don't sell all the
+    # SGOV, only take out 20%) -- cap TOTAL capital deployed across these 4
+    # names (not per-name) at 20% of equity. Already-overshot slightly at the
+    # moment this was said (~$15,980 out vs a ~$12,187 cap); not unwound
+    # retroactively, but no further room is allowed to make it worse.
+    already_deployed = sum(float(p.market_value) for p in api.list_positions() if p.symbol in SYMBOLS)
+    room = (equity * TOTAL_DEPLOY_CAP_PCT) - already_deployed
+    if room <= 0:
+        log(f"  {sym}: recovered, but total deployment (${already_deployed:.2f}) already at/over the "
+            f"{TOTAL_DEPLOY_CAP_PCT*100:.0f}% cap — skipping this round")
+        return
+
+    notional = min(equity * WEIGHTS[sym], bp - 20, room)
     if notional < px:
-        log(f"  {sym}: recovered but insufficient buying power (${bp:.2f}) — skipping this round")
+        log(f"  {sym}: recovered but insufficient buying power/room — skipping this round")
         return
 
     fractionable = sym != 'SKHY'  # SKHY confirmed not fractionable earlier today
