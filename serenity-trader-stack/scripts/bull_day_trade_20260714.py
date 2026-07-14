@@ -53,11 +53,14 @@ percentage pullback: sell on the first CONFIRMED reversal off the peak
 whether P&L is still positive or has gone negative -- the point is to not
 give back a peak, not to hit a specific number first.
 Final rules:
-  - DOWNTREND_CONFIRM_TICKS = 2: once a new peak P&L% is set, if the next 2
-    checks in a row both come in lower than the one before, that's a
-    confirmed downtrend off the peak -- sell then, whatever the P&L is at
-    that point (could still be positive, could already be negative -- the
-    trigger is the TREND, not a threshold).
+  - Downtrend confirmation is ADAPTIVE, not a fixed tick count -- user:
+    "势头好可以不设上限，势头一般可以自动调节" (if momentum is strong, no cap
+    needed; if only moderate, auto-adjust). Peak P&L% >= STRONG_MOMENTUM_
+    PEAK_PCT (3.0%) gets 3 consecutive declining checks before confirming a
+    reversal (more patience for a real trend); a more moderate peak gets 2
+    (less profit cushion to protect, confirm faster). Either way, once
+    confirmed, sell regardless of whether P&L is still positive or already
+    negative -- the trigger is the TREND, not a threshold.
   - STOP_LOSS_PCT: -4.0% -- Claude's own downside floor, same judgment basis
     as every other day-trade this account has run (SKHY 2026-07-10, NOC
     2026-07-14) -- the user accepted the risk ("亏钱不要来找我") but going in
@@ -65,6 +68,28 @@ Final rules:
     profit" requires. Never asked to be removed, so it stays.
   - Mandatory close-out ~15min before market close regardless of P&L -- never
     held past today, no exceptions -- backstop in case none of the above fire.
+  - NOTE on "最终保证赚钱" (make sure it ends up profitable): no automated
+    system can literally guarantee a profit -- real market risk exists on
+    every trade. What this DOES do is bias every exit decision toward
+    protecting whatever gain has already been established (adaptive trend-
+    exit + hard stop-loss) rather than let a winner round-trip into a loser;
+    that's the closest honest interpretation of the instruction.
+
+User then escalated further: "一直关注一直买卖，一直赚钱" (keep watching
+continuously, keep buying and selling continuously, keep making money
+continuously) -- a single buy-hold-sell cycle per name isn't enough; once a
+position closes (stop-loss, downtrend exit, whatever), watch that SAME name
+for a fresh dip-and-recovery and re-enter, repeating for the rest of the
+day. Deliberately bounded to these same 4 already-analyzed names rather than
+scanning arbitrary new tickers (keeps every re-entry within names that
+already have a real thesis behind them, not blind momentum-chasing across
+the whole market) -- REENTRY logic below. Re-entry uses the same
+recovery-off-a-fresh-low pattern already established in
+skhy_position.py/mu_reentry.py/meta_longhold.py's original entry logic, just
+tighter (1.0% vs those scripts' 1.5%, since this is an intraday re-dip, not
+a multi-day pullback). No new entries within REENTRY_CUTOFF_MINS of close --
+only exits are allowed that late, so nothing is left to unwind at the
+mandatory close-out.
 
 Cron: scoped to 2026-07-14 ONLY -- remove entries after today's close.
 """
@@ -87,8 +112,20 @@ SYMBOLS = ['META', 'MU', 'SNDK', 'SKHY']
 # shares only -- SKHY is not fractionable) @ $168.38, ~5% of equity. Same
 # exit rules apply (trend-confirmed exit/-4% stop/mandatory close-out) --
 # this is still today's day-trade, not the separate long-term skhy_position.py hold.
-DOWNTREND_CONFIRM_TICKS = 2
+# DOWNTREND_CONFIRM_TICKS is now ADAPTIVE, not fixed -- user: "势头好可以不设
+# 上限，势头一般可以自动调节" (if momentum is strong, no cap needed; if
+# momentum is only moderate, auto-adjust). A strong peak (a real, convincing
+# move) gets more patience before confirming a reversal -- don't get shaken
+# out of a genuine trend by normal noise. A moderate/weak peak gets a
+# tighter trigger -- there's less profit cushion to protect, so confirm
+# faster and lock it in rather than risk giving it all back. See
+# _confirm_ticks_for_peak() below for the exact thresholds.
+STRONG_MOMENTUM_PEAK_PCT = 3.0
 STOP_LOSS_PCT = -4.0
+WEIGHTS = {'META': 0.08, 'MU': 0.05, 'SNDK': 0.04, 'SKHY': 0.05}
+ENTRY_RECOVERY_FROM_LOW_PCT = 1.0   # tighter than the long-term scripts' 1.5% --
+                                     # this is an intraday re-dip, not a multi-day pullback
+REENTRY_CUTOFF_MINS = 20            # no NEW entries once this close to market close
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.bull_daytrade_20260714_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.bull_daytrade_20260714_done'
 
@@ -149,16 +186,7 @@ def send_email(subject, body):
         log(f"email err: {e}")
 
 
-def manage_symbol(api, sym, state, mins_to_close, market_open):
-    positions = [p for p in api.list_positions() if p.symbol == sym]
-    if not positions:
-        if state.get(sym, {}).get('closed'):
-            return  # already handled
-        state.setdefault(sym, {})['closed'] = True
-        log(f"  {sym}: no position (already sold or never filled)")
-        return
-
-    p = positions[0]
+def manage_open_position(api, sym, p, state, mins_to_close, market_open):
     current_px = float(p.market_value) / float(p.qty)
     plpc = float(p.unrealized_plpc) * 100
 
@@ -184,10 +212,11 @@ def manage_symbol(api, sym, state, mins_to_close, market_open):
     sym_state['peak_plpc'] = peak
     sym_state['last_plpc'] = plpc
     sym_state['decline_streak'] = decline_streak
-    downtrend_confirmed = decline_streak >= DOWNTREND_CONFIRM_TICKS
+    confirm_ticks = 3 if peak >= STRONG_MOMENTUM_PEAK_PCT else 2
+    downtrend_confirmed = decline_streak >= confirm_ticks
 
-    log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
-        f"decline_streak={decline_streak}/{DOWNTREND_CONFIRM_TICKS}")
+    log(f"  {sym}: HOLDING qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
+        f"decline_streak={decline_streak}/{confirm_ticks}")
 
     reason = None
     if plpc <= STOP_LOSS_PCT:
@@ -202,14 +231,64 @@ def manage_symbol(api, sym, state, mins_to_close, market_open):
 
     o = api.submit_order(symbol=sym, qty=p.qty, side='sell', type='market', time_in_force='day')
     log(f"  ✓ SOLD {sym} qty={p.qty} @~${current_px:.2f} order={o.id[:8]} — {reason}")
-    sym_state['closed'] = True
-    send_email(f"{'🎯' if plpc > 0 else '🛑'} {sym} 短线交易平仓",
-               f"卖出价 ~${current_px:.2f}\n最终盈亏: {plpc:+.2f}%\n原因: {reason}")
+    # reset per-position tracking so a future re-entry starts fresh, and drop
+    # into "watching for the next dip" rather than marking this symbol done
+    # for the day -- user: "一直关注一直买卖，一直赚钱"
+    state[sym] = {'watch': None}
+    send_email(f"{'🎯' if plpc > 0 else '🛑'} {sym} 短线交易平仓 (继续观察,寻找下次机会)",
+               f"卖出价 ~${current_px:.2f}\n本轮盈亏: {plpc:+.2f}%\n原因: {reason}")
+
+
+def manage_watching(api, sym, state, mins_to_close):
+    if mins_to_close <= REENTRY_CUTOFF_MINS:
+        return  # too close to end of day to open anything new
+
+    import market_data as md
+    q = md.get_stock_quote(sym)
+    px = q['current'] if q and q.get('current') else None
+    if not px:
+        return
+
+    sym_state = state.setdefault(sym, {})
+    watch = sym_state.get('watch')
+    if not watch:
+        sym_state['watch'] = {'lowest_price': px}
+        log(f"  {sym}: FLAT, watching for next dip from ${px:.2f}")
+        return
+
+    watch['lowest_price'] = min(watch['lowest_price'], px)
+    recovery_pct = (px / watch['lowest_price'] - 1) * 100
+    log(f"  {sym}: FLAT, watching — current=${px:.2f} low_seen=${watch['lowest_price']:.2f} "
+        f"recovery={recovery_pct:+.2f}% (need {ENTRY_RECOVERY_FROM_LOW_PCT}%)")
+    sym_state['watch'] = watch
+
+    if recovery_pct < ENTRY_RECOVERY_FROM_LOW_PCT:
+        return
+
+    acc = api.get_account()
+    equity = float(acc.equity)
+    bp = float(acc.buying_power)
+    notional = min(equity * WEIGHTS[sym], bp - 20)
+    if notional < px:
+        log(f"  {sym}: recovered but insufficient buying power (${bp:.2f}) — skipping this round")
+        return
+
+    fractionable = sym != 'SKHY'  # SKHY confirmed not fractionable earlier today
+    qty = round(notional / px, 4) if fractionable else int(notional / px)
+    if qty <= 0:
+        return
+
+    o = api.submit_order(symbol=sym, qty=qty, side='buy', type='market', time_in_force='day')
+    log(f"  ✓ RE-BOUGHT {sym} qty={qty} @~${px:.2f} order={o.id[:8]} (recovered {recovery_pct:+.2f}% off low)")
+    sym_state['watch'] = None
+    send_email(f"📈 {sym} 再次建仓",
+               f"从低点${watch['lowest_price']:.2f}回升{recovery_pct:+.2f}%,再次买入 {qty}股 @~${px:.2f}\n"
+               f"继续沿用同样的止损/趋势退出规则。")
 
 
 def main():
     if os.path.exists(DONE_MARKER):
-        log("all positions already closed out today — nothing more to do")
+        log("today's trading window is done — nothing more to do")
         return
 
     api = get_alpaca()
@@ -220,16 +299,22 @@ def main():
 
     mins_to_close = (clock.next_close - datetime.datetime.now(clock.next_close.tzinfo)).total_seconds() / 60
     state = load_state()
+    held_positions = {p.symbol: p for p in api.list_positions() if p.symbol in SYMBOLS}
 
     for sym in SYMBOLS:
-        manage_symbol(api, sym, state, mins_to_close, clock.is_open)
+        if sym in held_positions:
+            manage_open_position(api, sym, held_positions[sym], state, mins_to_close, clock.is_open)
+        else:
+            manage_watching(api, sym, state, mins_to_close)
 
     save_state(state)
 
-    if all(state.get(sym, {}).get('closed') for sym in SYMBOLS):
+    # Done for the day once we're past the point new entries are allowed AND
+    # nothing is currently held -- everything has been wound down for good.
+    if mins_to_close <= REENTRY_CUTOFF_MINS and not held_positions:
         with open(DONE_MARKER, 'w') as f:
             json.dump({'closed_at': datetime.datetime.utcnow().isoformat()}, f)
-        log("all three positions closed out — marking done")
+        log("past the re-entry cutoff with nothing held — marking today's trading done")
 
 
 if __name__ == '__main__':
