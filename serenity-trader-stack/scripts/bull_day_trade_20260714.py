@@ -69,7 +69,13 @@ if os.path.exists(_ENV_FILE):
                 _k, _, _v = _line.partition('=')
                 os.environ.setdefault(_k.strip(), _v.strip())
 
-SYMBOLS = ['META', 'MU', 'SNDK']
+SYMBOLS = ['META', 'MU', 'SNDK', 'SKHY']
+# SKHY added later same day: user explicitly overrode Claude's own decision to
+# skip it ("168可以买" -- $168 is fine to buy) after it pulled back off its
+# earlier intraday high ($172.79) toward the $168 level. Bought 18sh (whole
+# shares only -- SKHY is not fractionable) @ $168.38, ~5% of equity. Same
+# exit rules apply (trailing-stop/-4% stop/mandatory close-out) -- this is
+# still today's day-trade, not the separate long-term skhy_position.py hold.
 ARM_PCT = 2.0
 TRAIL_PCT = 1.5
 STOP_LOSS_PCT = -4.0
