@@ -14,6 +14,9 @@
 .mu_reentry_state.json
 .mu_reentry_entered
 .meta_longhold_entered
+.meta_longhold_state.json
+.noc_daytrade_state.json
+.noc_daytrade_done
 .weekly_focus_state.json
 .verdict_graded_state.json
 
