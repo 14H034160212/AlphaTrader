@@ -39,24 +39,32 @@ This is entirely SEPARATE from skhy_position.py/mu_reentry.py/meta_longhold.py
 requiring their own .ENTRY_CONFIRMED_<NAME> file, untouched by this script.
 No double-buy risk: this script manages only the shares it itself bought.
 
-Exit rules -- REVISED AGAIN same day. Original version (learned from the
-earlier NOC feedback, "这么快吗？你可以多看看，不要听我") armed a trailing-
-stop at +2% and exited on a >=1.5% pullback from peak. User then said:
-"我觉得要如果涨了超过2%可以不要设限，能多涨更好" (once it's up more than 2%,
-don't cap it -- the more it rises the better). This REMOVES the trailing-
-stop-pullback exit entirely -- no early profit-take of any kind now,
-matching the pattern already settled on for NOC ("不一定1%，不管涨多少").
+Exit rules -- REVISED THREE TIMES same day. (1) Original, learned from the
+earlier NOC feedback ("这么快吗？你可以多看看，不要听我"): armed a trailing-
+stop at +2%, exited on a >=1.5% pullback from peak. (2) User then said:
+"我觉得要如果涨了超过2%可以不要设限，能多涨更好" (once up more than 2%, don't
+cap it -- the more it rises the better) -- removed the trailing-stop
+entirely. (3) User then clarified further: "我觉得只要从最高点开始下跌趋势就
+马上卖了" (as soon as it starts a downtrend from its peak, sell immediately),
+"不要等到亏钱再卖" (don't wait until it's actually losing money to sell) --
+this brings a trailing exit BACK, but trend-confirmed rather than a fixed
+percentage pullback: sell on the first CONFIRMED reversal off the peak
+(2 consecutive declining checks, not a single noisy tick), independent of
+whether P&L is still positive or has gone negative -- the point is to not
+give back a peak, not to hit a specific number first.
 Final rules:
-  - NO profit-take trigger at all -- let a winning position run uncapped all
-    day, no matter how far above +2% it goes.
+  - DOWNTREND_CONFIRM_TICKS = 2: once a new peak P&L% is set, if the next 2
+    checks in a row both come in lower than the one before, that's a
+    confirmed downtrend off the peak -- sell then, whatever the P&L is at
+    that point (could still be positive, could already be negative -- the
+    trigger is the TREND, not a threshold).
   - STOP_LOSS_PCT: -4.0% -- Claude's own downside floor, same judgment basis
     as every other day-trade this account has run (SKHY 2026-07-10, NOC
     2026-07-14) -- the user accepted the risk ("亏钱不要来找我") but going in
     with zero floor while unsupervised (user asleep) is not what "maximize
     profit" requires. Never asked to be removed, so it stays.
   - Mandatory close-out ~15min before market close regardless of P&L -- never
-    held past today, no exceptions. This is now the ONLY thing that caps the
-    upside (or realizes it) -- the position rides until then or the stop.
+    held past today, no exceptions -- backstop in case none of the above fire.
 
 Cron: scoped to 2026-07-14 ONLY -- remove entries after today's close.
 """
@@ -77,8 +85,9 @@ SYMBOLS = ['META', 'MU', 'SNDK', 'SKHY']
 # skip it ("168可以买" -- $168 is fine to buy) after it pulled back off its
 # earlier intraday high ($172.79) toward the $168 level. Bought 18sh (whole
 # shares only -- SKHY is not fractionable) @ $168.38, ~5% of equity. Same
-# exit rules apply (-4% stop/mandatory close-out, no profit cap) -- this is
-# still today's day-trade, not the separate long-term skhy_position.py hold.
+# exit rules apply (trend-confirmed exit/-4% stop/mandatory close-out) --
+# this is still today's day-trade, not the separate long-term skhy_position.py hold.
+DOWNTREND_CONFIRM_TICKS = 2
 STOP_LOSS_PCT = -4.0
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.bull_daytrade_20260714_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.bull_daytrade_20260714_done'
@@ -153,22 +162,38 @@ def manage_symbol(api, sym, state, mins_to_close, market_open):
     current_px = float(p.market_value) / float(p.qty)
     plpc = float(p.unrealized_plpc) * 100
 
-    # peak_plpc kept for logging/context only -- no longer drives an exit.
-    # User: "我觉得要如果涨了超过2%可以不要设限，能多涨更好" (once up more
-    # than 2%, don't cap it, the more it rises the better) -- removed the
-    # trailing-stop-pullback trigger entirely; only the stop-loss and the
-    # mandatory close-out can end this position now.
+    # Trend-confirmed exit off the peak. User: "我觉得只要从最高点开始下跌趋势
+    # 就马上卖了" (sell as soon as a downtrend starts from the peak) + "不要等
+    # 到亏钱再卖" (don't wait until it's losing money) -- track the peak P&L%
+    # seen, and once DOWNTREND_CONFIRM_TICKS consecutive checks each come in
+    # lower than the previous one (a confirmed reversal, not single-tick
+    # noise), sell -- regardless of whether P&L is still positive.
     sym_state = state.setdefault(sym, {})
     peak = sym_state.get('peak_plpc', plpc)
+    last_plpc = sym_state.get('last_plpc', plpc)
+    decline_streak = sym_state.get('decline_streak', 0)
+
     if plpc > peak:
         peak = plpc
-    sym_state['peak_plpc'] = peak
+        decline_streak = 0
+    elif plpc < last_plpc:
+        decline_streak += 1
+    else:
+        decline_streak = 0
 
-    log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}%")
+    sym_state['peak_plpc'] = peak
+    sym_state['last_plpc'] = plpc
+    sym_state['decline_streak'] = decline_streak
+    downtrend_confirmed = decline_streak >= DOWNTREND_CONFIRM_TICKS
+
+    log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
+        f"decline_streak={decline_streak}/{DOWNTREND_CONFIRM_TICKS}")
 
     reason = None
     if plpc <= STOP_LOSS_PCT:
         reason = f"亏损达到 {plpc:+.2f}% (<= {STOP_LOSS_PCT}%),止损离场"
+    elif downtrend_confirmed:
+        reason = f"从峰值 {peak:+.2f}% 开始连续{decline_streak}次走低 (现{plpc:+.2f}%),确认下跌趋势,立即卖出"
     elif market_open and mins_to_close <= 15:
         reason = f"距收盘不到15分钟 (盈亏 {plpc:+.2f}%,曾达到峰值{peak:+.2f}%),按规则强制平仓"
 
