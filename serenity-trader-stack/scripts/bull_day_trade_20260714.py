@@ -353,8 +353,14 @@ def main():
             if sgov_px:
                 qty = int((bp - 20) // sgov_px)
                 if qty > 0:
+                    # Bug fix (caught live, 2026-07-14): Alpaca rejects
+                    # extended_hours=True combined with type='market'
+                    # ("extended hours order must be DAY or GTC limit
+                    # orders") -- this code only runs while main() has
+                    # already confirmed clock.is_open, i.e. regular market
+                    # hours, so extended_hours was unnecessary and wrong here.
                     o = api.submit_order(symbol='SGOV', qty=qty, side='buy', type='market',
-                                          time_in_force='day', extended_hours=True)
+                                          time_in_force='day')
                     log(f"  ✓ parked ${qty*sgov_px:.2f} back into SGOV ({qty}sh @ ~${sgov_px:.2f}) order={o.id[:8]}")
                     send_email("💵 今日交易结束 — 资金已转回美债(SGOV)",
                                f"今天所有短线仓位已清空,剩余资金 {qty}股 SGOV @~${sgov_px:.2f} 已买入停放。")
