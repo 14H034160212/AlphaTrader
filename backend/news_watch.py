@@ -213,6 +213,15 @@ def main():
         ("CHIPS Act semiconductor export control tariff policy AI executive order 2026", "政府政策"),
         ("tech company acquisition merger buyout AI startup 2026", "并购/收购"),
         ("NVIDIA partnership deal collaboration announcement 2026", "NVIDIA 合作伙伴"),
+        # added 2026-07-13 (user request, after asking whether Claude tracks
+        # oil/gold/silver/defense stocks during the Iran/Hormuz escalation):
+        # these move directly on the same crisis driving the Korea/SKHY
+        # volatility this system is already watching, and gold+oil moving in
+        # OPPOSITE directions (oil up, gold down) is itself a signal (market
+        # pricing this as inflationary, not pure flight-to-safety).
+        ("Strait of Hormuz Iran oil price Brent WTI crude news today", "石油/霍尔木兹局势"),
+        ("gold price silver price safe haven news today", "黄金/白银"),
+        ("defense stocks Lockheed Martin Raytheon Northrop Grumman General Dynamics news today", "军工股"),
     ]
     # keep headlines carrying a material keyword (risk OR positive), labeled 🔴/🟢
     alerts = []
