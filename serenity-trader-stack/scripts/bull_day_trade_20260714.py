@@ -334,6 +334,31 @@ def main():
     # Done for the day once we're past the point new entries are allowed AND
     # nothing is currently held -- everything has been wound down for good.
     if mins_to_close <= REENTRY_CUTOFF_MINS and not held_positions:
+        # 2026-07-14: "收盘的时候全部卖出然后买美债" (sell everything at close,
+        # then buy US treasuries) -- once everything is confirmed flat, park
+        # the freed cash back in SGOV rather than leaving it idle, same
+        # instrument used every other time today. Runs once (guarded by
+        # DONE_MARKER not existing yet).
+        acc = api.get_account()
+        bp = float(acc.buying_power)
+        if bp > 50:
+            import requests
+            from database import SessionLocal, get_setting
+            db = SessionLocal()
+            k = get_setting(db, 'alpaca_api_key', 1); s = get_setting(db, 'alpaca_secret_key', 1)
+            db.close()
+            r = requests.get('https://data.alpaca.markets/v2/stocks/SGOV/trades/latest',
+                              headers={'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}, timeout=10)
+            sgov_px = r.json().get('trade', {}).get('p')
+            if sgov_px:
+                qty = int((bp - 20) // sgov_px)
+                if qty > 0:
+                    o = api.submit_order(symbol='SGOV', qty=qty, side='buy', type='market',
+                                          time_in_force='day', extended_hours=True)
+                    log(f"  ✓ parked ${qty*sgov_px:.2f} back into SGOV ({qty}sh @ ~${sgov_px:.2f}) order={o.id[:8]}")
+                    send_email("💵 今日交易结束 — 资金已转回美债(SGOV)",
+                               f"今天所有短线仓位已清空,剩余资金 {qty}股 SGOV @~${sgov_px:.2f} 已买入停放。")
+
         with open(DONE_MARKER, 'w') as f:
             json.dump({'closed_at': datetime.datetime.utcnow().isoformat()}, f)
         log("past the re-entry cutoff with nothing held — marking today's trading done")
