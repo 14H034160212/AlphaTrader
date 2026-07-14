@@ -39,21 +39,24 @@ This is entirely SEPARATE from skhy_position.py/mu_reentry.py/meta_longhold.py
 requiring their own .ENTRY_CONFIRMED_<NAME> file, untouched by this script.
 No double-buy risk: this script manages only the shares it itself bought.
 
-Exit rules (learned from same-day feedback on the earlier NOC trade -- an
-instant "sell at +0.1%" was too hasty and left money on the table; user said
-"这么快吗？你可以多看看，不要听我" -- use more judgment, don't just take the
-first tiny green tick):
-  - ARM_PCT: once unrealized P&L clears +2.0%, start trailing a peak.
-  - TRAIL_PCT: if price then pulls back >=1.5% from the best P&L% seen since
-    arming, exit -- captures the bulk of a real move without demanding the
-    exact top, more patient than NOC's mechanical 0.1% but still disciplined.
+Exit rules -- REVISED AGAIN same day. Original version (learned from the
+earlier NOC feedback, "这么快吗？你可以多看看，不要听我") armed a trailing-
+stop at +2% and exited on a >=1.5% pullback from peak. User then said:
+"我觉得要如果涨了超过2%可以不要设限，能多涨更好" (once it's up more than 2%,
+don't cap it -- the more it rises the better). This REMOVES the trailing-
+stop-pullback exit entirely -- no early profit-take of any kind now,
+matching the pattern already settled on for NOC ("不一定1%，不管涨多少").
+Final rules:
+  - NO profit-take trigger at all -- let a winning position run uncapped all
+    day, no matter how far above +2% it goes.
   - STOP_LOSS_PCT: -4.0% -- Claude's own downside floor, same judgment basis
     as every other day-trade this account has run (SKHY 2026-07-10, NOC
     2026-07-14) -- the user accepted the risk ("亏钱不要来找我") but going in
-    with zero floor while unsupervised overnight-equivalent (user asleep) is
-    not what "maximize profit" requires.
+    with zero floor while unsupervised (user asleep) is not what "maximize
+    profit" requires. Never asked to be removed, so it stays.
   - Mandatory close-out ~15min before market close regardless of P&L -- never
-    held past today, no exceptions.
+    held past today, no exceptions. This is now the ONLY thing that caps the
+    upside (or realizes it) -- the position rides until then or the stop.
 
 Cron: scoped to 2026-07-14 ONLY -- remove entries after today's close.
 """
@@ -74,10 +77,8 @@ SYMBOLS = ['META', 'MU', 'SNDK', 'SKHY']
 # skip it ("168可以买" -- $168 is fine to buy) after it pulled back off its
 # earlier intraday high ($172.79) toward the $168 level. Bought 18sh (whole
 # shares only -- SKHY is not fractionable) @ $168.38, ~5% of equity. Same
-# exit rules apply (trailing-stop/-4% stop/mandatory close-out) -- this is
+# exit rules apply (-4% stop/mandatory close-out, no profit cap) -- this is
 # still today's day-trade, not the separate long-term skhy_position.py hold.
-ARM_PCT = 2.0
-TRAIL_PCT = 1.5
 STOP_LOSS_PCT = -4.0
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.bull_daytrade_20260714_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.bull_daytrade_20260714_done'
@@ -152,22 +153,24 @@ def manage_symbol(api, sym, state, mins_to_close, market_open):
     current_px = float(p.market_value) / float(p.qty)
     plpc = float(p.unrealized_plpc) * 100
 
+    # peak_plpc kept for logging/context only -- no longer drives an exit.
+    # User: "我觉得要如果涨了超过2%可以不要设限，能多涨更好" (once up more
+    # than 2%, don't cap it, the more it rises the better) -- removed the
+    # trailing-stop-pullback trigger entirely; only the stop-loss and the
+    # mandatory close-out can end this position now.
     sym_state = state.setdefault(sym, {})
     peak = sym_state.get('peak_plpc', plpc)
     if plpc > peak:
         peak = plpc
     sym_state['peak_plpc'] = peak
-    armed = peak >= ARM_PCT
 
-    log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% armed={armed}")
+    log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}%")
 
     reason = None
     if plpc <= STOP_LOSS_PCT:
         reason = f"亏损达到 {plpc:+.2f}% (<= {STOP_LOSS_PCT}%),止损离场"
-    elif armed and (peak - plpc) >= TRAIL_PCT:
-        reason = f"浮盈曾达到 {peak:+.2f}%,现回落到 {plpc:+.2f}% (回撤>={TRAIL_PCT}%),止盈离场"
     elif market_open and mins_to_close <= 15:
-        reason = f"距收盘不到15分钟 (盈亏 {plpc:+.2f}%),按规则强制平仓"
+        reason = f"距收盘不到15分钟 (盈亏 {plpc:+.2f}%,曾达到峰值{peak:+.2f}%),按规则强制平仓"
 
     if not reason:
         return
