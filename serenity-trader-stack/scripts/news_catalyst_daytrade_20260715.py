@@ -161,6 +161,7 @@ def enter(api, state):
         if last_px is None:
             sym_state['last_px'] = px
             sym_state['rise_streak'] = 0
+            save_state(state)
             log(f"  {sym}: first price observed ${px:.2f} — watching for a confirmed uptrend before buying")
             continue
 
