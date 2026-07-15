@@ -45,7 +45,12 @@ if os.path.exists(_ENV_FILE):
                 _k, _, _v = _line.partition('=')
                 os.environ.setdefault(_k.strip(), _v.strip())
 
-WEIGHTS = {'PYPL': 0.10, 'ASML': 0.10, 'BABA': 0.08, 'MS': 0.08}
+WEIGHTS = {'PYPL': 0.10, 'ASML': 0.10, 'BABA': 0.08, 'MS': 0.08, 'IBM': 0.06}
+# IBM added: user's technical read -- "股价远离均线，技术上有上涨修复的要求"
+# (price far from moving average after yesterday's -25% crash, technically
+# due for a mean-reversion bounce). Sized smaller (6%) than the forward-
+# catalyst names -- this is a technical rebound thesis on top of genuinely
+# bad news (Q2 miss), not a fresh positive catalyst, so more speculative.
 # 2026-07-15: user said "如果你觉得比买标普500和qqq还好的话可以都卖掉买这些，
 # 你评估" (if you think these are better than SPY/QQQ, feel free to sell all
 # of it and buy these -- you decide). Judgment call: bumped PYPL/ASML to 10%
