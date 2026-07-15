@@ -172,24 +172,35 @@ def enter_chase(api, state, mins_since_open):
 
     acc = api.get_account()
     equity = float(acc.equity)
+    bp = float(acc.buying_power)
     target_notional = equity * CHASE_ALLOCATION_PCT
+    # Bug fix (caught before market open, 2026-07-15): only trim SPY/QQQ for
+    # the SHORTFALL beyond cash already sitting free (e.g. proceeds from a
+    # previous chase's exit) -- the original version trimmed a FULL 15% out
+    # of SPY/QQQ on every rotation regardless of existing cash, which over
+    # many stop-out-and-rotate cycles in a single unsupervised day would
+    # progressively over-deplete SPY/QQQ while leaving prior proceeds sitting
+    # idle uninvested instead of being recycled.
+    shortfall = target_notional - bp
 
-    trim_positions = [p for p in api.list_positions() if p.symbol in TRIM_FROM]
-    total_trimmable = sum(float(p.market_value) for p in trim_positions)
-    if total_trimmable < target_notional:
-        log(f"  not enough in SPY/QQQ to trim (${total_trimmable:.2f} < ${target_notional:.2f}) — skipping chase")
-        return
+    if shortfall > 0:
+        trim_positions = [p for p in api.list_positions() if p.symbol in TRIM_FROM]
+        total_trimmable = sum(float(p.market_value) for p in trim_positions)
+        if total_trimmable < shortfall:
+            log(f"  not enough in SPY/QQQ to trim (${total_trimmable:.2f} < shortfall ${shortfall:.2f}) — skipping chase")
+            return
+        for p in trim_positions:
+            trim_notional = shortfall * (float(p.market_value) / total_trimmable)
+            trim_qty = round(trim_notional / (float(p.market_value) / float(p.qty)), 4)
+            if trim_qty <= 0:
+                continue
+            o = api.submit_order(symbol=p.symbol, qty=trim_qty, side='sell', type='market', time_in_force='day')
+            log(f"  trimmed {p.symbol} qty={trim_qty} order={o.id[:8]} to fund the chase (shortfall ${shortfall:.2f})")
+        import time
+        time.sleep(8)
+    else:
+        log(f"  enough free cash (${bp:.2f}) already to fund this chase — no SPY/QQQ trim needed")
 
-    for p in trim_positions:
-        trim_notional = target_notional * (float(p.market_value) / total_trimmable)
-        trim_qty = round(trim_notional / (float(p.market_value) / float(p.qty)), 4)
-        if trim_qty <= 0:
-            continue
-        o = api.submit_order(symbol=p.symbol, qty=trim_qty, side='sell', type='market', time_in_force='day')
-        log(f"  trimmed {p.symbol} qty={trim_qty} order={o.id[:8]} to fund the chase")
-
-    import time
-    time.sleep(8)
     acc = api.get_account()
     bp = float(acc.buying_power)
     notional = min(target_notional, bp - 20)
