@@ -56,7 +56,9 @@ WEIGHTS = {'PYPL': 0.10, 'ASML': 0.10, 'BABA': 0.08, 'MS': 0.08}
 # real idiosyncratic risk (M&A deals can fall through, earnings pops can
 # reverse); concentrating everything into 4 single stocks isn't proportional
 # even given real conviction. ~36% total across the four, not 100%.
-ENTRY_CONFIRM_TICKS = 2
+ENTRY_CONFIRM_TICKS = 1   # 2026-07-15: 葛兰比法则(Granville's Rules) -- buy on
+# the FIRST bullish tick, not the second -- waiting for 2+ confirmed
+# up-moves raises the odds of buying right before a pullback.
 DOWNTREND_CONFIRM_TICKS = 2
 SAFETY_MARGIN_PCT = 1.0
 TRIM_FROM = ['SPY', 'QQQ']
