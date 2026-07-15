@@ -68,6 +68,7 @@ MIN_MOMENTUM_PCT_LATER = 8.0   # rest of the day -- require a real confirmed sta
 EARLY_WINDOW_MIN = 60
 CHASE_ALLOCATION_PCT = 0.15
 DOWNTREND_CONFIRM_TICKS = 2   # consecutive declining checks off the peak -- no fixed stop-loss ("不要加止损")
+SAFETY_MARGIN_PCT = 1.0   # below this plpc, exit on the FIRST decline tick instead of waiting ("确保...都是赚钱的卖的")
 TRIM_FROM = ['SPY', 'QQQ']
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.momentum_chase_20260715_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.momentum_chase_20260715_done'
@@ -259,10 +260,13 @@ def manage_chase(api, state, mins_to_close):
     state['chase_peak_plpc'] = peak
     state['chase_last_plpc'] = plpc
     state['chase_decline_streak'] = decline_streak
-    downtrend_confirmed = decline_streak >= DOWNTREND_CONFIRM_TICKS
+    # 2026-07-15: "确保每只股票你卖的时候都是赚钱的卖的" -- near breakeven,
+    # exit on the first decline tick instead of waiting for confirmation.
+    required_ticks = 1 if plpc < SAFETY_MARGIN_PCT else DOWNTREND_CONFIRM_TICKS
+    downtrend_confirmed = decline_streak >= required_ticks
 
     log(f"  {sym} (chased): qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
-        f"decline_streak={decline_streak}/{DOWNTREND_CONFIRM_TICKS}")
+        f"decline_streak={decline_streak}/{required_ticks}")
 
     reason = None
     hit_close_cutoff = mins_to_close <= 15
