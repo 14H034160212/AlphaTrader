@@ -66,7 +66,12 @@ MIN_VOLUME = 300_000
 MIN_MOMENTUM_PCT_EARLY = 4.5   # first EARLY_WINDOW_MIN of trading -- catch it sooner
 MIN_MOMENTUM_PCT_LATER = 8.0   # rest of the day -- require a real confirmed standout
 EARLY_WINDOW_MIN = 60
-CHASE_ALLOCATION_PCT = 0.15
+CHASE_ALLOCATION_PCT_BASE = 0.15    # momentum-only, no confirmed news catalyst
+CHASE_ALLOCATION_PCT_HIGH_CONVICTION = 0.30   # real news catalyst found -- user: "标普500和
+# qqq你可以随便拿出来，只要你看重的股票就可以追" (feel free to pull from
+# SPY/QQQ, chase whatever you rate highly) -- size up when there's a real,
+# verified reason behind the move (M&A offer, earnings beat, etc.), not just
+# a bare price/volume screener hit.
 DOWNTREND_CONFIRM_TICKS = 2   # consecutive declining checks off the peak -- no fixed stop-loss ("不要加止损")
 SAFETY_MARGIN_PCT = 1.0   # below this plpc, exit on the FIRST decline tick instead of waiting ("确保...都是赚钱的卖的")
 TRIM_FROM = ['SPY', 'QQQ']
@@ -224,10 +229,13 @@ def enter_chase(api, state, mins_since_open):
         log(f"  no news context found for {sym} (proceeding anyway — momentum-only)")
         candidate['news'] = []
 
+    chase_pct = CHASE_ALLOCATION_PCT_HIGH_CONVICTION if candidate['news'] else CHASE_ALLOCATION_PCT_BASE
+    log(f"  sizing at {chase_pct*100:.0f}% ({'real news catalyst found' if candidate['news'] else 'momentum-only, base size'})")
+
     acc = api.get_account()
     equity = float(acc.equity)
     bp = float(acc.buying_power)
-    target_notional = equity * CHASE_ALLOCATION_PCT
+    target_notional = equity * chase_pct
     # Bug fix (caught before market open, 2026-07-15): only trim SPY/QQQ for
     # the SHORTFALL beyond cash already sitting free (e.g. proceeds from a
     # previous chase's exit) -- the original version trimmed a FULL 15% out
