@@ -74,9 +74,38 @@ STATE_FILE = '/home/qbao775/serenity-trader-stack/.momentum_chase_20260715_state
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.momentum_chase_20260715_done'
 
 
+MCPORTER = "/data/qbao775/miniconda3/bin/mcporter"
+
+
 def log(msg):
     ts = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
     print(f"[{ts}] {msg}", flush=True)
+
+
+def check_news_context(sym):
+    # 2026-07-15: "再结合消息综合判断" (also combine with news for a fuller
+    # judgment) -- a pure price/volume screener doesn't say WHY something is
+    # moving (real catalyst like IBM's earnings miss / PayPal's buyout offer,
+    # vs. a low-quality pump). Quick Exa check for real substantiation before
+    # committing capital, not a hard gate -- if the fetch fails/times out,
+    # don't block the trade on it, just proceed without the extra context.
+    import subprocess
+    try:
+        env = dict(os.environ)
+        env["PATH"] = "/data/qbao775/miniconda3/bin:" + env.get("PATH", "")
+        r = subprocess.run([MCPORTER, "call", "exa.web_search_exa",
+                            f"query=why is {sym} stock up today news", "numResults=3"],
+                           capture_output=True, text=True, timeout=60,
+                           cwd="/data/qbao775/AlphaTrader", env=env)
+        if r.returncode != 0:
+            log(f"  news check failed rc={r.returncode}")
+            return None
+        import re
+        titles = re.findall(r"Title:\s*(.+)", r.stdout)
+        return titles[:3] if titles else None
+    except Exception as e:
+        log(f"  news check error: {e}")
+        return None
 
 
 def load_state():
@@ -187,6 +216,14 @@ def enter_chase(api, state, mins_since_open):
     sym = candidate['symbol']
     log(f"  candidate found: {sym} +{candidate['change_pct']:.1f}% px=${candidate['price']:.2f} vol={candidate['volume']:,}")
 
+    news_titles = check_news_context(sym)
+    if news_titles:
+        log(f"  news context for {sym}: " + " | ".join(t[:100] for t in news_titles))
+        candidate['news'] = news_titles
+    else:
+        log(f"  no news context found for {sym} (proceeding anyway — momentum-only)")
+        candidate['news'] = []
+
     acc = api.get_account()
     equity = float(acc.equity)
     bp = float(acc.buying_power)
@@ -236,7 +273,8 @@ def enter_chase(api, state, mins_since_open):
     state['chase_last_plpc'] = 0.0
     state['chase_decline_streak'] = 0
     save_state(state)
-    record_action(state, f"追涨买入 {sym} {qty}股 @~${candidate['price']:.2f} (当时涨幅+{candidate['change_pct']:.1f}%)")
+    news_note = f" | 消息: {candidate['news'][0][:80]}" if candidate.get('news') else " | 无明确消息面(纯动量)"
+    record_action(state, f"追涨买入 {sym} {qty}股 @~${candidate['price']:.2f} (当时涨幅+{candidate['change_pct']:.1f}%){news_note}")
 
 
 def manage_chase(api, state, mins_to_close):
