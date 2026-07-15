@@ -130,6 +130,22 @@ def send_email(subject, body):
         log(f"email err: {e}")
 
 
+def record_action(state, text):
+    # 2026-07-15: "你不要每次操作就发一封邮件你可以等收盘的时候把今天的战况
+    # 整理一起发" -- accumulate here instead of emailing per-trade.
+    log_entry = f"[{datetime.datetime.utcnow().strftime('%H:%M UTC')}] {text}"
+    state.setdefault('action_log', []).append(log_entry)
+    save_state(state)
+
+
+def send_daily_summary(state):
+    actions = state.get('action_log', [])
+    if not actions:
+        return
+    body = "今天(全市场追涨扫描)战况汇总:\n\n" + "\n".join(actions)
+    send_email(f"📊 追涨交易 - 今日汇总 ({datetime.datetime.utcnow():%Y-%m-%d})", body)
+
+
 def find_candidate(api, already_held, excluded, min_momentum_pct):
     import yfinance as yf
     try:
@@ -220,12 +236,7 @@ def enter_chase(api, state, mins_since_open):
     state['chase_last_plpc'] = 0.0
     state['chase_decline_streak'] = 0
     save_state(state)
-    send_email(f"🚀 追涨建仓: {sym}",
-               f"从SPY/QQQ抽出约{CHASE_ALLOCATION_PCT*100:.0f}%资金,追入当天全市场涨幅最强之一的 {sym}"
-               f"(当时涨幅+{candidate['change_pct']:.1f}%)\n"
-               f"买入 {qty}股 @~${candidate['price']:.2f}\n"
-               f"不设固定止损——判断转跌趋势就离场(并找下一个更强的机会),"
-               f"收盘前15分钟无论如何强制平仓,不会留到明天。")
+    record_action(state, f"追涨买入 {sym} {qty}股 @~${candidate['price']:.2f} (当时涨幅+{candidate['change_pct']:.1f}%)")
 
 
 def manage_chase(api, state, mins_to_close):
@@ -281,9 +292,8 @@ def manage_chase(api, state, mins_to_close):
 
     o = api.submit_order(symbol=sym, qty=p.qty, side='sell', type='market', time_in_force='day')
     log(f"  ✓ SOLD {sym} qty={p.qty} @~${current_px:.2f} order={o.id[:8]} — {reason}")
-    send_email(f"{'🎯' if plpc > 0 else '🛑'} {sym} 追涨仓位平仓" +
-               ("" if hit_close_cutoff else " (继续寻找下一个更强的机会)"),
-               f"卖出价 ~${current_px:.2f}\n最终盈亏: {plpc:+.2f}%\n原因: {reason}")
+    record_action(state, f"追涨卖出 {sym} @~${current_px:.2f} 盈亏{plpc:+.2f}% — {reason}"
+                          + ("" if hit_close_cutoff else " (继续寻找下一个更强的机会)"))
 
     # 2026-07-15: user said "回落的话你要同时看有没有其他涨势更好的，可以接着
     # 买涨势更好的" (if it pulls back, check for a better-momentum name and
@@ -299,6 +309,7 @@ def manage_chase(api, state, mins_to_close):
     if hit_close_cutoff:
         with open(DONE_MARKER, 'w') as f:
             json.dump({'closed_at': datetime.datetime.utcnow().isoformat(), 'symbol': sym, 'final_plpc': plpc}, f)
+        send_daily_summary(state)
         return False
     return True
 
@@ -330,6 +341,7 @@ def main():
         log("  too close to end of day to start a fresh chase — skipping for the rest of today")
         with open(DONE_MARKER, 'w') as f:
             json.dump({'skipped': True, 'reason': 'no qualifying entry before cutoff'}, f)
+        send_daily_summary(state)
         return
     enter_chase(api, state, mins_since_open)
 
