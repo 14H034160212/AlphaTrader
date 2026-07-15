@@ -64,8 +64,7 @@ WEIGHTS = {'PYPL': 0.10, 'ASML': 0.10, 'BABA': 0.08, 'MS': 0.08, 'IBM': 0.06}
 ENTRY_CONFIRM_TICKS = 1   # 2026-07-15: 葛兰比法则(Granville's Rules) -- buy on
 # the FIRST bullish tick, not the second -- waiting for 2+ confirmed
 # up-moves raises the odds of buying right before a pullback.
-DOWNTREND_CONFIRM_TICKS = 2
-SAFETY_MARGIN_PCT = 1.0
+DOWNTREND_CONFIRM_TICKS = 2   # unused now (see manage()) -- kept only so old state files still parse
 TRIM_FROM = ['SPY', 'QQQ']
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.news_catalyst_daytrade_20260715_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.news_catalyst_daytrade_20260715_done'
@@ -238,16 +237,15 @@ def manage(api, state):
         sym_state['peak_plpc'] = peak
         sym_state['last_plpc'] = plpc
         sym_state['decline_streak'] = decline_streak
-        required_ticks = 1 if plpc < SAFETY_MARGIN_PCT else DOWNTREND_CONFIRM_TICKS
-        downtrend_confirmed = decline_streak >= required_ticks
-
-        log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
-            f"decline_streak={decline_streak}/{required_ticks}")
+        # 2026-07-15: intraday exit logic REMOVED entirely (was causing real
+        # churn losses -- exiting almost every position within 1-2 minutes of
+        # buying on normal noise). User: "没必要，你就选好今天利好的股票拿到
+        # 收盘然后卖掉就可以" + "不要这样频繁买卖了". Hold unconditionally
+        # until the mandatory close-out now; peak/decline kept for logging.
+        log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% (holding to close)")
 
         reason = None
-        if downtrend_confirmed:
-            reason = f"从峰值 {peak:+.2f}% 开始连续{decline_streak}次走低 (现{plpc:+.2f}%),判断转跌离场"
-        elif mins_to_close <= 15:
+        if mins_to_close <= 15:
             reason = f"距收盘不到15分钟 (盈亏 {plpc:+.2f}%),按规则强制平仓"
 
         if not reason:
