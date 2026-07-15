@@ -40,11 +40,14 @@ a move earlier, in exchange for a higher false-positive rate), then back to
 the stricter 8% for the rest of the day (require a genuinely confirmed
 standout once the easy early-session edge is gone).
 
-Exit rules for the chased position: -5% stop-loss (wider than SPY/QQQ's
--3% -- individual momentum names are far more volatile, chasing an already-
-extended move carries real reversal risk, Claude's own protective floor
-given no fundamental thesis backs this trade) + the same mandatory
-close-out ~15min before market close as everything else today.
+Exit rules -- REVISED before this had a chance to fire. User: "不要加止损，
+如果下跌就一开始都不要买，买入就要在你判断上升的时候买" (don't add a
+stop-loss; if declining don't buy in the first place; only buy when you
+judge it's rising). No fixed stop-loss percentage: exit on a
+DOWNTREND_CONFIRM_TICKS-consecutive-decline trend reversal off the peak
+(same mechanism as plan_d_daytrade_20260715.py's revised exit), which is
+also what triggers the rotation into the next candidate. Mandatory
+close-out ~15min before market close remains the hard backstop regardless.
 """
 import sys, os, json, datetime
 sys.path.insert(0, '/data/qbao775/AlphaTrader/backend')
@@ -64,7 +67,7 @@ MIN_MOMENTUM_PCT_EARLY = 4.5   # first EARLY_WINDOW_MIN of trading -- catch it s
 MIN_MOMENTUM_PCT_LATER = 8.0   # rest of the day -- require a real confirmed standout
 EARLY_WINDOW_MIN = 60
 CHASE_ALLOCATION_PCT = 0.15
-STOP_LOSS_PCT = -5.0
+DOWNTREND_CONFIRM_TICKS = 2   # consecutive declining checks off the peak -- no fixed stop-loss ("不要加止损")
 TRIM_FROM = ['SPY', 'QQQ']
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.momentum_chase_20260715_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.momentum_chase_20260715_done'
@@ -199,12 +202,18 @@ def enter_chase(api, state, mins_since_open):
     log(f"  ✓ CHASED {sym} qty={qty} @~${candidate['price']:.2f} order={o.id[:8]}")
     state['chased_symbol'] = sym
     state['entered'] = True
+    # reset trend-tracking for the new position -- don't inherit the
+    # previous chase's peak/decline history
+    state['chase_peak_plpc'] = 0.0
+    state['chase_last_plpc'] = 0.0
+    state['chase_decline_streak'] = 0
     save_state(state)
     send_email(f"🚀 追涨建仓: {sym}",
                f"从SPY/QQQ抽出约{CHASE_ALLOCATION_PCT*100:.0f}%资金,追入当天全市场涨幅最强之一的 {sym}"
                f"(当时涨幅+{candidate['change_pct']:.1f}%)\n"
                f"买入 {qty}股 @~${candidate['price']:.2f}\n"
-               f"止损-5%,收盘前15分钟无论如何强制平仓,不会留到明天。")
+               f"不设固定止损——判断转跌趋势就离场(并找下一个更强的机会),"
+               f"收盘前15分钟无论如何强制平仓,不会留到明天。")
 
 
 def manage_chase(api, state, mins_to_close):
@@ -220,16 +229,39 @@ def manage_chase(api, state, mins_to_close):
     p = positions[0]
     current_px = float(p.market_value) / float(p.qty)
     plpc = float(p.unrealized_plpc) * 100
-    log(f"  {sym} (chased): qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}%")
+
+    # Trend-confirmed exit, no fixed stop-loss ("不要加止损") -- track the
+    # peak P&L% and exit once DOWNTREND_CONFIRM_TICKS consecutive checks
+    # each come in lower than the previous one. This is ALSO what triggers
+    # rotating into the next candidate per "回落的话你要同时看有没有其他涨势
+    # 更好的".
+    peak = state.get('chase_peak_plpc', plpc)
+    last_plpc = state.get('chase_last_plpc', plpc)
+    decline_streak = state.get('chase_decline_streak', 0)
+    if plpc > peak:
+        peak = plpc
+        decline_streak = 0
+    elif plpc < last_plpc:
+        decline_streak += 1
+    else:
+        decline_streak = 0
+    state['chase_peak_plpc'] = peak
+    state['chase_last_plpc'] = plpc
+    state['chase_decline_streak'] = decline_streak
+    downtrend_confirmed = decline_streak >= DOWNTREND_CONFIRM_TICKS
+
+    log(f"  {sym} (chased): qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
+        f"decline_streak={decline_streak}/{DOWNTREND_CONFIRM_TICKS}")
 
     reason = None
     hit_close_cutoff = mins_to_close <= 15
-    if plpc <= STOP_LOSS_PCT:
-        reason = f"亏损达到 {plpc:+.2f}% (<= {STOP_LOSS_PCT}%),止损离场"
+    if downtrend_confirmed:
+        reason = f"从峰值 {peak:+.2f}% 开始连续{decline_streak}次走低 (现{plpc:+.2f}%),判断转跌离场(无固定止损)"
     elif hit_close_cutoff:
         reason = f"距收盘不到15分钟 (盈亏 {plpc:+.2f}%),按规则强制平仓"
 
     if not reason:
+        save_state(state)
         return False
 
     o = api.submit_order(symbol=sym, qty=p.qty, side='sell', type='market', time_in_force='day')

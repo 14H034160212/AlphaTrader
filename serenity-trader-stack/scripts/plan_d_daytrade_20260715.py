@@ -25,19 +25,25 @@ deployment, no cash reserve at all: SPY ~83%, QQQ ~17% (same relative
 70:15 tilt as Plan D's original weights, just scaled up to use 100% instead
 of leaving Plan D's usual 3% cash slice). All SGOV sold to fund this.
 
-Rules (identical to the FINAL settled rules from bull_day_trade_20260714.py
-after several rounds of live correction that day -- start from the mature
-version, don't re-litigate):
-  - NO early profit-take / no downtrend-confirmed exit -- ride out normal
-    intraday noise, this is index-level, lower-volatility names anyway.
-  - STOP_LOSS_PCT: -3.0% (tighter than the -4% used for individual
-    momentum stocks earlier this week -- SPY/QQQ are index-level and far
-    less volatile, so a smaller adverse move here is more meaningful and a
-    -4% floor would be needlessly loose for this basket).
-  - Mandatory close-out ~15min before market close regardless of P&L.
+Rules -- REVISED before any entry fired (market hadn't opened yet). User:
+"不要加止损，如果下跌就一开始都不要买，买入就要在你判断上升的时候买" (don't
+add a stop-loss; if it's declining don't buy in the first place; only buy
+when you judge it's rising). This replaces both ends with TREND JUDGMENT
+instead of fixed thresholds:
+  - ENTRY: wait for a confirmed short-term uptrend before buying -- track
+    the price since first observed; only buy once it has risen for
+    ENTRY_CONFIRM_TICKS consecutive checks (a real move, not a single-tick
+    blip). Do NOT buy while it's still flat/declining from where it was
+    first observed.
+  - EXIT: no fixed stop-loss percentage. Track the peak P&L% and exit once
+    DOWNTREND_CONFIRM_TICKS consecutive checks each come in lower than the
+    previous one -- a confirmed reversal off the peak, same trend-judgment
+    principle applied symmetrically to selling.
+  - Mandatory close-out ~15min before market close regardless of P&L --
+    still the hard backstop no matter what the trend logic says.
   - No re-entry cycle (unlike bull_day_trade_20260714.py) -- this is a
     single overnight-risk-driven trade, not meant to be repeatedly rebought
-    all day; once stopped out or closed at end of day, stays flat.
+    all day; once exited (by trend-reversal or close), stays flat.
 
 This does NOT touch the actual Plan D re-entry criteria/reentry_monitor.py
 -- that script's own gates remain unmet and it stays paused; tomorrow, if
@@ -57,7 +63,8 @@ if os.path.exists(_ENV_FILE):
                 os.environ.setdefault(_k.strip(), _v.strip())
 
 WEIGHTS = {'SPY': 0.83, 'QQQ': 0.17}  # no cash reserve -- user: "不要留" / "尽量都买标普500和qqq"
-STOP_LOSS_PCT = -3.0
+ENTRY_CONFIRM_TICKS = 2   # consecutive rising checks required before buying
+DOWNTREND_CONFIRM_TICKS = 2   # consecutive declining checks (off the peak) required to exit
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.plan_d_daytrade_20260715_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.plan_d_daytrade_20260715_done'
 
@@ -125,27 +132,54 @@ def enter(api, state):
     bp = float(acc.buying_power)
 
     for sym, w in WEIGHTS.items():
-        if state.get(sym, {}).get('entered'):
+        sym_state = state.setdefault(sym, {})
+        if sym_state.get('entered'):
             continue
-        notional = min(equity * w, bp - 20)
+
         q = md.get_stock_quote(sym)
         px = q['current'] if q and q.get('current') else None
         if not px:
             log(f"  {sym}: no live price yet — will retry next tick")
             continue
+
+        # Trend-confirmed entry -- user: "如果下跌就一开始都不要买，买入就要在
+        # 你判断上升的时候买". Track price since first observed; only buy once
+        # it has risen for ENTRY_CONFIRM_TICKS consecutive checks.
+        last_px = sym_state.get('last_px')
+        rise_streak = sym_state.get('rise_streak', 0)
+        if last_px is None:
+            sym_state['last_px'] = px
+            sym_state['rise_streak'] = 0
+            log(f"  {sym}: first price observed ${px:.2f} — watching for a confirmed uptrend before buying")
+            continue
+
+        if px > last_px:
+            rise_streak += 1
+        else:
+            rise_streak = 0
+        sym_state['last_px'] = px
+        sym_state['rise_streak'] = rise_streak
+
+        if rise_streak < ENTRY_CONFIRM_TICKS:
+            log(f"  {sym}: px=${px:.2f} rise_streak={rise_streak}/{ENTRY_CONFIRM_TICKS} — not confirmed yet, not buying")
+            save_state(state)
+            continue
+
+        notional = min(equity * w, bp - 20)
         qty = round(notional / px, 4)
         if qty <= 0:
             log(f"  {sym}: insufficient buying power — skipping")
             continue
         o = api.submit_order(symbol=sym, qty=qty, side='buy', type='market', time_in_force='day')
-        log(f"  ✓ BOUGHT {sym} qty={qty} @~${px:.2f} order={o.id[:8]}")
+        log(f"  ✓ BOUGHT {sym} qty={qty} @~${px:.2f} order={o.id[:8]} (confirmed uptrend, {rise_streak} consecutive rises)")
         state[sym] = {'entered': True}
         bp -= notional
         save_state(state)
 
     if all(state.get(sym, {}).get('entered') for sym in WEIGHTS):
         send_email("📈 Plan D 名称短线建仓 (仅今天,非长期入场)",
-                   "已按 SPY 80% / QQQ 17% 买入(BRK.B按你的要求跳过)。\n"
+                   "已按 SPY 83% / QQQ 17% 买入(BRK.B按你的要求跳过,不设现金缓冲)。\n"
+                   "买入时机是等到确认上涨趋势才进场,没有设止损——判断走弱就按趋势离场,不是按固定百分比。\n"
                    "这不是Plan D正式重新入场——韩国稳定性那条门槛还没过,"
                    "这只是借用Plan D的标的做今天一天的短线,收盘前会全部卖出。")
 
@@ -221,11 +255,32 @@ def manage(api, state):
         p = positions[sym]
         current_px = float(p.market_value) / float(p.qty)
         plpc = float(p.unrealized_plpc) * 100
-        log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}%")
+
+        # Trend-confirmed exit, no fixed stop-loss -- user: "不要加止损"。
+        # Track the peak P&L% seen and exit once DOWNTREND_CONFIRM_TICKS
+        # consecutive checks each come in lower than the previous one.
+        sym_state = state.setdefault(sym, {})
+        peak = sym_state.get('peak_plpc', plpc)
+        last_plpc = sym_state.get('last_plpc', plpc)
+        decline_streak = sym_state.get('decline_streak', 0)
+        if plpc > peak:
+            peak = plpc
+            decline_streak = 0
+        elif plpc < last_plpc:
+            decline_streak += 1
+        else:
+            decline_streak = 0
+        sym_state['peak_plpc'] = peak
+        sym_state['last_plpc'] = plpc
+        sym_state['decline_streak'] = decline_streak
+        downtrend_confirmed = decline_streak >= DOWNTREND_CONFIRM_TICKS
+
+        log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
+            f"decline_streak={decline_streak}/{DOWNTREND_CONFIRM_TICKS}")
 
         reason = None
-        if plpc <= STOP_LOSS_PCT:
-            reason = f"亏损达到 {plpc:+.2f}% (<= {STOP_LOSS_PCT}%),止损离场"
+        if downtrend_confirmed:
+            reason = f"从峰值 {peak:+.2f}% 开始连续{decline_streak}次走低 (现{plpc:+.2f}%),判断转跌离场(无固定止损)"
         elif mins_to_close <= 15:
             reason = f"距收盘不到15分钟 (盈亏 {plpc:+.2f}%),按规则强制平仓"
 
