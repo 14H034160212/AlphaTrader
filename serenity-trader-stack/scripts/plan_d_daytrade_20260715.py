@@ -150,10 +150,70 @@ def enter(api, state):
                    "这只是借用Plan D的标的做今天一天的短线,收盘前会全部卖出。")
 
 
+SPY_QQQ_REBALANCE_GAP_PCT = 1.5   # min plpc divergence before shifting capital between them
+SPY_QQQ_REBALANCE_SHARE = 0.30    # move this fraction of the laggard's value to the leader per rebalance
+REBALANCE_COOLDOWN_MIN = 10       # don't re-rebalance within this many minutes of the last one
+
+
+def rebalance_spy_qqq(api, state, mins_to_close):
+    # 2026-07-15: user said "包括如果你觉得qqq涨势更好，也可以卖掉spy买qqq，反之
+    # 也是" (if QQQ's momentum looks better, sell SPY and buy QQQ, and vice
+    # versa) -- dynamic reallocation BETWEEN the two names, same principle as
+    # the momentum-chase script but staying within today's two picks. Only
+    # acts on a real, sustained gap (not single-tick noise) and stays off
+    # once too close to the mandatory close-out.
+    if mins_to_close <= 20:
+        return
+    last_rebalance = state.get('_last_rebalance_mins_ago')
+    now_iso = datetime.datetime.utcnow().isoformat()
+    if last_rebalance:
+        elapsed = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(last_rebalance)).total_seconds() / 60
+        if elapsed < REBALANCE_COOLDOWN_MIN:
+            return
+
+    positions = {p.symbol: p for p in api.list_positions() if p.symbol in WEIGHTS}
+    if len(positions) < 2:
+        return  # need both legs present to compare/rebalance
+
+    plpc = {sym: float(p.unrealized_plpc) * 100 for sym, p in positions.items()}
+    leader = max(plpc, key=plpc.get)
+    laggard = min(plpc, key=plpc.get)
+    gap = plpc[leader] - plpc[laggard]
+    if gap < SPY_QQQ_REBALANCE_GAP_PCT:
+        return
+
+    lag_p = positions[laggard]
+    trim_notional = float(lag_p.market_value) * SPY_QQQ_REBALANCE_SHARE
+    trim_qty = round(trim_notional / (float(lag_p.market_value) / float(lag_p.qty)), 4)
+    if trim_qty <= 0:
+        return
+    o = api.submit_order(symbol=laggard, qty=trim_qty, side='sell', type='market', time_in_force='day')
+    log(f"  ↔ rebalance: {laggard} ({plpc[laggard]:+.2f}%) lagging {leader} ({plpc[leader]:+.2f}%) "
+        f"by {gap:.2f}pp — trimmed {trim_qty}sh order={o.id[:8]}")
+
+    import time
+    time.sleep(6)
+    acc = api.get_account()
+    bp = float(acc.buying_power)
+    import market_data as md
+    q = md.get_stock_quote(leader)
+    px = q['current'] if q and q.get('current') else None
+    if px and bp > 20:
+        add_qty = round((bp - 20) / px, 4)
+        if add_qty > 0:
+            o2 = api.submit_order(symbol=leader, qty=add_qty, side='buy', type='market', time_in_force='day')
+            log(f"  ↔ rebalance: added {add_qty}sh {leader} @~${px:.2f} order={o2.id[:8]}")
+    state['_last_rebalance_mins_ago'] = now_iso
+    save_state(state)
+
+
 def manage(api, state):
     positions = {p.symbol: p for p in api.list_positions() if p.symbol in WEIGHTS}
     clock = api.get_clock()
     mins_to_close = (clock.next_close - datetime.datetime.now(clock.next_close.tzinfo)).total_seconds() / 60
+
+    rebalance_spy_qqq(api, state, mins_to_close)
+    positions = {p.symbol: p for p in api.list_positions() if p.symbol in WEIGHTS}
 
     for sym in WEIGHTS:
         if sym not in positions:
