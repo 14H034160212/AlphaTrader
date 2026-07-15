@@ -63,7 +63,9 @@ if os.path.exists(_ENV_FILE):
                 os.environ.setdefault(_k.strip(), _v.strip())
 
 WEIGHTS = {'SPY': 0.83, 'QQQ': 0.17}  # no cash reserve -- user: "不要留" / "尽量都买标普500和qqq"
-ENTRY_CONFIRM_TICKS = 2   # consecutive rising checks required before buying
+ENTRY_CONFIRM_TICKS = 1   # 2026-07-15: user cited 葛兰比法则(Granville's Rules) --
+# buy on the FIRST bullish tick; 2+ consecutive big up-moves raise pullback
+# risk, so waiting for a second confirmation was buying too late/too extended.
 DOWNTREND_CONFIRM_TICKS = 2   # consecutive declining checks (off the peak) required to exit
 SAFETY_MARGIN_PCT = 1.0   # below this plpc, exit on the FIRST decline tick instead of waiting
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.plan_d_daytrade_20260715_state.json'
