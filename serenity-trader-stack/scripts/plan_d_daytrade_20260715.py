@@ -65,6 +65,7 @@ if os.path.exists(_ENV_FILE):
 WEIGHTS = {'SPY': 0.83, 'QQQ': 0.17}  # no cash reserve -- user: "不要留" / "尽量都买标普500和qqq"
 ENTRY_CONFIRM_TICKS = 2   # consecutive rising checks required before buying
 DOWNTREND_CONFIRM_TICKS = 2   # consecutive declining checks (off the peak) required to exit
+SAFETY_MARGIN_PCT = 1.0   # below this plpc, exit on the FIRST decline tick instead of waiting
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.plan_d_daytrade_20260715_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.plan_d_daytrade_20260715_done'
 
@@ -273,10 +274,18 @@ def manage(api, state):
         sym_state['peak_plpc'] = peak
         sym_state['last_plpc'] = plpc
         sym_state['decline_streak'] = decline_streak
-        downtrend_confirmed = decline_streak >= DOWNTREND_CONFIRM_TICKS
+        # 2026-07-15: "确保每只股票你卖的时候都是赚钱的卖的，如果你觉得马上要
+        # 亏钱了，要在赚钱的时候卖掉" (make sure every sale is profitable; if
+        # it looks about to turn into a loss, sell while still profitable) --
+        # near breakeven, don't wait for 2 confirmed declines, act on the
+        # first one. Can't be a true 100% guarantee (a sudden gap between
+        # 1-min checks could still cross zero before this fires), but this is
+        # the strongest reasonable protection.
+        required_ticks = 1 if plpc < SAFETY_MARGIN_PCT else DOWNTREND_CONFIRM_TICKS
+        downtrend_confirmed = decline_streak >= required_ticks
 
         log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
-            f"decline_streak={decline_streak}/{DOWNTREND_CONFIRM_TICKS}")
+            f"decline_streak={decline_streak}/{required_ticks}")
 
         reason = None
         if downtrend_confirmed:
