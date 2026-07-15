@@ -126,6 +126,23 @@ def send_email(subject, body):
         log(f"email err: {e}")
 
 
+def record_action(state, text):
+    # 2026-07-15: "你不要每次操作就发一封邮件你可以等收盘的时候把今天的战况
+    # 整理一起发" (don't email on every single trade, batch a summary at
+    # close) -- accumulate here instead of emailing per-trade.
+    log_entry = f"[{datetime.datetime.utcnow().strftime('%H:%M UTC')}] {text}"
+    state.setdefault('action_log', []).append(log_entry)
+    save_state(state)
+
+
+def send_daily_summary(state):
+    actions = state.get('action_log', [])
+    if not actions:
+        return
+    body = "今天(Plan D名称短线交易, SPY/QQQ)战况汇总:\n\n" + "\n".join(actions)
+    send_email(f"📊 Plan D 短线交易 - 今日汇总 ({datetime.datetime.utcnow():%Y-%m-%d})", body)
+
+
 def enter(api, state):
     import market_data as md
     acc = api.get_account()
@@ -176,13 +193,7 @@ def enter(api, state):
         state[sym] = {'entered': True}
         bp -= notional
         save_state(state)
-
-    if all(state.get(sym, {}).get('entered') for sym in WEIGHTS):
-        send_email("📈 Plan D 名称短线建仓 (仅今天,非长期入场)",
-                   "已按 SPY 83% / QQQ 17% 买入(BRK.B按你的要求跳过,不设现金缓冲)。\n"
-                   "买入时机是等到确认上涨趋势才进场,没有设止损——判断走弱就按趋势离场,不是按固定百分比。\n"
-                   "这不是Plan D正式重新入场——韩国稳定性那条门槛还没过,"
-                   "这只是借用Plan D的标的做今天一天的短线,收盘前会全部卖出。")
+        record_action(state, f"买入 {sym} {qty}股 @~${px:.2f} (确认{rise_streak}次连续上涨后进场)")
 
 
 SPY_QQQ_REBALANCE_GAP_PCT = 1.5   # min plpc divergence before shifting capital between them
@@ -225,6 +236,8 @@ def rebalance_spy_qqq(api, state, mins_to_close):
     o = api.submit_order(symbol=laggard, qty=trim_qty, side='sell', type='market', time_in_force='day')
     log(f"  ↔ rebalance: {laggard} ({plpc[laggard]:+.2f}%) lagging {leader} ({plpc[leader]:+.2f}%) "
         f"by {gap:.2f}pp — trimmed {trim_qty}sh order={o.id[:8]}")
+    record_action(state, f"调仓: {laggard}({plpc[laggard]:+.2f}%)落后{leader}({plpc[leader]:+.2f}%){gap:.1f}个百分点,"
+                          f"减仓{laggard} {trim_qty}股转投{leader}")
 
     import time
     time.sleep(6)
@@ -299,8 +312,7 @@ def manage(api, state):
         o = api.submit_order(symbol=sym, qty=p.qty, side='sell', type='market', time_in_force='day')
         log(f"  ✓ SOLD {sym} qty={p.qty} @~${current_px:.2f} order={o.id[:8]} — {reason}")
         state.setdefault(sym, {})['closed'] = True
-        send_email(f"{'🎯' if plpc > 0 else '🛑'} {sym} 短线交易平仓",
-                   f"卖出价 ~${current_px:.2f}\n最终盈亏: {plpc:+.2f}%\n原因: {reason}")
+        record_action(state, f"卖出 {sym} @~${current_px:.2f} 盈亏{plpc:+.2f}% — {reason}")
 
     save_state(state)
 
@@ -309,6 +321,7 @@ def manage(api, state):
         with open(DONE_MARKER, 'w') as f:
             json.dump({'closed_at': datetime.datetime.utcnow().isoformat()}, f)
         log("today's Plan-D-names day-trade fully wound down — marking done")
+        send_daily_summary(state)
 
 
 def main():
