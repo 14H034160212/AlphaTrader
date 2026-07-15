@@ -66,8 +66,7 @@ WEIGHTS = {'SPY': 0.83, 'QQQ': 0.17}  # no cash reserve -- user: "不要留" / "
 ENTRY_CONFIRM_TICKS = 1   # 2026-07-15: user cited 葛兰比法则(Granville's Rules) --
 # buy on the FIRST bullish tick; 2+ consecutive big up-moves raise pullback
 # risk, so waiting for a second confirmation was buying too late/too extended.
-DOWNTREND_CONFIRM_TICKS = 2   # consecutive declining checks (off the peak) required to exit
-SAFETY_MARGIN_PCT = 1.0   # below this plpc, exit on the FIRST decline tick instead of waiting
+DOWNTREND_CONFIRM_TICKS = 2   # unused now (see manage()) -- kept only so old state files still parse
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.plan_d_daytrade_20260715_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.plan_d_daytrade_20260715_done'
 
@@ -263,8 +262,9 @@ def manage(api, state):
     clock = api.get_clock()
     mins_to_close = (clock.next_close - datetime.datetime.now(clock.next_close.tzinfo)).total_seconds() / 60
 
-    rebalance_spy_qqq(api, state, mins_to_close)
-    positions = {p.symbol: p for p in api.list_positions() if p.symbol in WEIGHTS}
+    # rebalance_spy_qqq() call REMOVED 2026-07-15 -- user: "不要这样频繁买卖了"
+    # (stop trading this frequently). Hold to close now, no intraday
+    # rebalancing between SPY/QQQ either.
 
     for sym in WEIGHTS:
         if sym not in positions:
@@ -290,23 +290,17 @@ def manage(api, state):
         sym_state['peak_plpc'] = peak
         sym_state['last_plpc'] = plpc
         sym_state['decline_streak'] = decline_streak
-        # 2026-07-15: "确保每只股票你卖的时候都是赚钱的卖的，如果你觉得马上要
-        # 亏钱了，要在赚钱的时候卖掉" (make sure every sale is profitable; if
-        # it looks about to turn into a loss, sell while still profitable) --
-        # near breakeven, don't wait for 2 confirmed declines, act on the
-        # first one. Can't be a true 100% guarantee (a sudden gap between
-        # 1-min checks could still cross zero before this fires), but this is
-        # the strongest reasonable protection.
-        required_ticks = 1 if plpc < SAFETY_MARGIN_PCT else DOWNTREND_CONFIRM_TICKS
-        downtrend_confirmed = decline_streak >= required_ticks
-
-        log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% "
-            f"decline_streak={decline_streak}/{required_ticks}")
+        # 2026-07-15: REMOVED entirely (was causing real churn losses -- see
+        # commit history). User: "没必要，你就选好今天利好的股票拿到收盘然后
+        # 卖掉就可以" + "不要这样频繁买卖了" (no need for all that, just pick
+        # good stocks and hold to close, then sell -- stop trading this
+        # frequently). No more intraday exit logic at all now -- once bought,
+        # hold unconditionally until the mandatory close-out. peak/decline
+        # tracking kept for logging only.
+        log(f"  {sym}: qty={p.qty} px=${current_px:.2f} plpc={plpc:+.2f}% peak={peak:+.2f}% (holding to close)")
 
         reason = None
-        if downtrend_confirmed:
-            reason = f"从峰值 {peak:+.2f}% 开始连续{decline_streak}次走低 (现{plpc:+.2f}%),判断转跌离场(无固定止损)"
-        elif mins_to_close <= 15:
+        if mins_to_close <= 15:
             reason = f"距收盘不到15分钟 (盈亏 {plpc:+.2f}%),按规则强制平仓"
 
         if not reason:
