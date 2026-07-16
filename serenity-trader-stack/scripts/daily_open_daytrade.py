@@ -97,8 +97,16 @@ MAX_PICKS = 6                  # 2026-07-16: raised 5->6 for more diversificatio
                                # probability of clearing a small threshold like +0.1% without
                                # adding any leverage or risk per name (user: "优化系统提升
                                # 至少0.1%的概率" -- diversify/improve quality, don't escalate risk)
-MAX_TOTAL_DEPLOY_PCT = 0.50    # raised 0.40->0.50 same reasoning -- more names sharing the
-                               # exposure means each dollar carries less idiosyncratic risk
+MAX_TOTAL_DEPLOY_PCT = 0.10    # 2026-07-16 (night): user asked to start the system's real,
+                               # live first days at only 10-20% of total equity as a testing
+                               # phase ("刚开始就用10%或者20%的总资金用来买美股测试这个系统")
+                               # -- chose the more conservative end (10%) since this is a
+                               # brand-new autonomous mechanism's first live run. Revisit
+                               # raising this only after the system has proven itself over
+                               # some real days -- don't creep it back up to 0.50 silently.
+                               # The 6-name/50%-cap reasoning above still holds for WHY more
+                               # names lowers variance; this just scales the whole thing down
+                               # while trust is being built.
 MAX_CHASE_GAP_PCT = 5.0        # 2026-07-16: skip a pick that's already up more than this much
                                # from its prior close before we even get to buy it -- a
                                # mechanical backstop for feedback_buy_dips_sell_strength.md
