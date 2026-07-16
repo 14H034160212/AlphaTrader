@@ -82,6 +82,14 @@ if os.path.exists(_ENV_FILE):
 MCPORTER = "/data/qbao775/miniconda3/bin/mcporter"
 CLAUDE_BIN = "/home/qbao775/.local/bin/claude"
 
+# 2026-07-16: user asked to paper-simulate before the market opens ("你可以
+# 在模拟盘上先操盘模拟"). Rather than a separate reimplementation that could
+# drift from the real logic, DRY_RUN reuses the EXACT same code path --
+# picker, entry-confirm, floor/ceiling exits -- against a virtual cash/
+# position ledger priced with real live market data, so tonight's rehearsal
+# is testing the actual thing that goes live tomorrow, not an approximation.
+DRY_RUN = os.environ.get('DOD_DRY_RUN') == '1'
+
 ENTRY_CONFIRM_TICKS = 1        # Granville's Rules -- buy on the first confirmed bullish tick
 MAX_PICKS = 6                  # 2026-07-16: raised 5->6 for more diversification -- more
                                # independent real-catalyst bets lowers the VARIANCE of the
@@ -103,8 +111,10 @@ SECOND_SCAN_AFTER_MIN = 90     # 2026-07-16: if the floor hasn't been touched af
 FLOOR_PCT = 0.1                # protect this once reached (2026-07-15 night instruction)
 CEILING_PCT = 2.0              # stop everything once reached (2026-07-15 night instruction)
 
-STATE_FILE = '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_state.json'
-HISTORY_FILE = '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_history.jsonl'
+STATE_FILE = ('/home/qbao775/serenity-trader-stack/.daily_open_daytrade_DRYRUN_state.json' if DRY_RUN
+              else '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_state.json')
+HISTORY_FILE = ('/home/qbao775/serenity-trader-stack/.daily_open_daytrade_DRYRUN_history.jsonl' if DRY_RUN
+                else '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_history.jsonl')
 # 2026-07-16: user asked every step to "串联" (chain together) and use past
 # operating info, not treat each day as an isolated fresh start. Unlike
 # STATE_FILE (which resets every trading day), this file is APPEND-ONLY
@@ -389,11 +399,30 @@ def pick_todays_stocks(api, exclude=None):
     return picks, cost
 
 
+def get_account_view(api, state):
+    # Real (equity, buying_power) normally; a virtual ledger priced with
+    # real live quotes in DRY_RUN, so the simulation and the live script
+    # share every line of decision logic downstream of this call.
+    if not DRY_RUN:
+        acc = api.get_account()
+        return float(acc.equity), float(acc.buying_power)
+    if state.get('sim_cash') is None:
+        acc = api.get_account()
+        state['sim_cash'] = float(acc.equity)  # seed the virtual ledger once
+        save_state(state)
+    import market_data as md
+    positions_value = 0.0
+    for sym, pos in state.get('sim_positions', {}).items():
+        q = md.get_stock_quote(sym)
+        px = q['current'] if q and q.get('current') else pos['entry_price']
+        positions_value += pos['qty'] * px
+    cash = state['sim_cash']
+    return cash + positions_value, cash
+
+
 def enter(api, state):
     import market_data as md
-    acc = api.get_account()
-    equity = float(acc.equity)
-    bp = float(acc.buying_power)
+    equity, bp = get_account_view(api, state)
 
     for sym, w in state['weights'].items():
         sym_state = state['symbols'].setdefault(sym, {})
@@ -432,18 +461,25 @@ def enter(api, state):
         if qty <= 0:
             log(f"  {sym}: insufficient buying power — skipping")
             continue
-        try:
-            a = api.get_asset(sym)
-            if not a.tradable:
-                log(f"  {sym}: not tradable on Alpaca — skipping (bad pick from screen)")
-                sym_state['entered'] = True  # don't keep retrying a dead pick all day
-                save_state(state)
+
+        if DRY_RUN:
+            state.setdefault('sim_positions', {})[sym] = {'qty': qty, 'entry_price': px}
+            state['sim_cash'] = bp - notional
+            log(f"  [DRY-RUN] ✓ BOUGHT {sym} qty={qty} @~${px:.2f} (confirmed uptrend, {rise_streak} consecutive rises)")
+        else:
+            try:
+                a = api.get_asset(sym)
+                if not a.tradable:
+                    log(f"  {sym}: not tradable on Alpaca — skipping (bad pick from screen)")
+                    sym_state['entered'] = True  # don't keep retrying a dead pick all day
+                    save_state(state)
+                    continue
+                o = api.submit_order(symbol=sym, qty=qty, side='buy', type='market', time_in_force='day')
+            except Exception as e:
+                log(f"  {sym}: buy order failed ({e}) — will retry next tick")
                 continue
-            o = api.submit_order(symbol=sym, qty=qty, side='buy', type='market', time_in_force='day')
-        except Exception as e:
-            log(f"  {sym}: buy order failed ({e}) — will retry next tick")
-            continue
-        log(f"  ✓ BOUGHT {sym} qty={qty} @~${px:.2f} order={o.id[:8]} (confirmed uptrend, {rise_streak} consecutive rises)")
+            log(f"  ✓ BOUGHT {sym} qty={qty} @~${px:.2f} order={o.id[:8]} (confirmed uptrend, {rise_streak} consecutive rises)")
+
         state['symbols'][sym] = {'entered': True}
         bp -= notional
         save_state(state)
@@ -451,6 +487,18 @@ def enter(api, state):
 
 
 def liquidate_all(api, reason, state):
+    if DRY_RUN:
+        import market_data as md
+        for sym, pos in list(state.get('sim_positions', {}).items()):
+            q = md.get_stock_quote(sym)
+            px = q['current'] if q and q.get('current') else pos['entry_price']
+            plpc = (px - pos['entry_price']) / pos['entry_price'] * 100
+            state['sim_cash'] = state.get('sim_cash', 0) + pos['qty'] * px
+            log(f"  [DRY-RUN] ✓ SOLD {sym} qty={pos['qty']} @~${px:.2f} — {reason}")
+            record_action(state, f"卖出 {sym} qty={pos['qty']} 盈亏{plpc:+.2f}% — {reason}")
+        state['sim_positions'] = {}
+        save_state(state)
+        return
     positions = api.list_positions()
     for p in positions:
         try:
@@ -463,6 +511,9 @@ def liquidate_all(api, reason, state):
 
 
 def park_to_sgov():
+    if DRY_RUN:
+        log("  [DRY-RUN] skipping SGOV park-back (simulation only, no real cash)")
+        return
     api = get_alpaca()
     import time
     time.sleep(8)  # let sell fills settle
@@ -486,19 +537,26 @@ def park_to_sgov():
 
 
 def manage(api, state):
-    acc = api.get_account()
-    equity = float(acc.equity)
+    equity, bp = get_account_view(api, state)
     day_start_equity = state['day_start_equity']
     day_pl_pct = (equity - day_start_equity) / day_start_equity * 100
 
     clock = api.get_clock()
     mins_to_close = (clock.next_close - datetime.datetime.now(clock.next_close.tzinfo)).total_seconds() / 60
 
-    for sym in state['weights']:
+    if DRY_RUN:
+        import market_data as md
+        for sym, pos in state.get('sim_positions', {}).items():
+            q = md.get_stock_quote(sym)
+            px = q['current'] if q and q.get('current') else pos['entry_price']
+            plpc = (px - pos['entry_price']) / pos['entry_price'] * 100
+            log(f"  [DRY-RUN] {sym}: qty={pos['qty']} plpc={plpc:+.2f}% (holding to close)")
+    else:
         positions = {p.symbol: p for p in api.list_positions()}
-        if sym in positions:
-            p = positions[sym]
-            log(f"  {sym}: qty={p.qty} plpc={float(p.unrealized_plpc)*100:+.2f}% (holding to close)")
+        for sym in state['weights']:
+            if sym in positions:
+                p = positions[sym]
+                log(f"  {sym}: qty={p.qty} plpc={float(p.unrealized_plpc)*100:+.2f}% (holding to close)")
 
     reason = None
     if day_pl_pct >= CEILING_PCT:
@@ -526,7 +584,6 @@ def manage(api, state):
             and elapsed_min >= SECOND_SCAN_AFTER_MIN and mins_to_close > 30):
         state['second_scan_done'] = True
         save_state(state)
-        bp = float(acc.buying_power)
         if bp > equity * 0.05:  # only bother if there's meaningful room left
             log(f"  floor not yet touched after {elapsed_min:.0f}min -- running a second-chance scan")
             exclude = already_held_elsewhere(api) | set(state['weights'].keys())
