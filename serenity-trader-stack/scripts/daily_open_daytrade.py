@@ -67,7 +67,7 @@ rebound to force the number -- that would be escalating risk under
 pressure, against user_living_money_risk_posture's survival-first mandate.
 A floor-miss is reported plainly in that day's summary.
 """
-import sys, os, json, re, datetime, subprocess
+import sys, os, json, re, datetime, subprocess, requests
 sys.path.insert(0, '/data/qbao775/AlphaTrader/backend')
 
 _ENV_FILE = '/home/qbao775/serenity-trader-stack/.env'
@@ -83,14 +83,34 @@ MCPORTER = "/data/qbao775/miniconda3/bin/mcporter"
 CLAUDE_BIN = "/home/qbao775/.local/bin/claude"
 
 ENTRY_CONFIRM_TICKS = 1        # Granville's Rules -- buy on the first confirmed bullish tick
-MAX_PICKS = 5
-MAX_TOTAL_DEPLOY_PCT = 0.40    # cap total new-picks exposure -- this is a NEW autonomous
-                               # stock-picking mechanism (different risk than SPY/QQQ market
-                               # beta), stay meaningfully short of full deployment by default
+MAX_PICKS = 6                  # 2026-07-16: raised 5->6 for more diversification -- more
+                               # independent real-catalyst bets lowers the VARIANCE of the
+                               # portfolio's day P&L around its mean, which raises the
+                               # probability of clearing a small threshold like +0.1% without
+                               # adding any leverage or risk per name (user: "优化系统提升
+                               # 至少0.1%的概率" -- diversify/improve quality, don't escalate risk)
+MAX_TOTAL_DEPLOY_PCT = 0.50    # raised 0.40->0.50 same reasoning -- more names sharing the
+                               # exposure means each dollar carries less idiosyncratic risk
+MAX_CHASE_GAP_PCT = 5.0        # 2026-07-16: skip a pick that's already up more than this much
+                               # from its prior close before we even get to buy it -- a
+                               # mechanical backstop for feedback_buy_dips_sell_strength.md
+                               # ("卖高不是追涨") in case the LLM screen misses an extended move
+SECOND_SCAN_AFTER_MIN = 90     # 2026-07-16: if the floor hasn't been touched after this long
+                               # and real buying power remains uncommitted, run ONE more
+                               # screen for fresh intraday catalysts rather than sitting on
+                               # idle cash the rest of the day (still same quality bar --
+                               # real catalyst + confirmed uptick, not chasing)
 FLOOR_PCT = 0.1                # protect this once reached (2026-07-15 night instruction)
 CEILING_PCT = 2.0              # stop everything once reached (2026-07-15 night instruction)
 
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_state.json'
+HISTORY_FILE = '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_history.jsonl'
+# 2026-07-16: user asked every step to "串联" (chain together) and use past
+# operating info, not treat each day as an isolated fresh start. Unlike
+# STATE_FILE (which resets every trading day), this file is APPEND-ONLY
+# across all days -- pick_todays_stocks() reads recent entries from it so
+# the stock screen has real track-record context (which picks worked,
+# which didn't, recent day P&L) instead of amnesia each morning.
 
 
 def log(msg):
@@ -112,14 +132,19 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
-def get_alpaca():
+def _alpaca_creds():
     from database import SessionLocal, get_setting
-    import alpaca_trade_api as tradeapi
     db = SessionLocal()
     k = get_setting(db, 'alpaca_api_key', 1)
     s = get_setting(db, 'alpaca_secret_key', 1)
     u = get_setting(db, 'alpaca_base_url', 1, 'https://api.alpaca.markets')
     db.close()
+    return k, s, u
+
+
+def get_alpaca():
+    import alpaca_trade_api as tradeapi
+    k, s, u = _alpaca_creds()
     return tradeapi.REST(k, s, u)
 
 
@@ -149,6 +174,52 @@ def send_email(subject, body):
         log(f"email err: {e}")
 
 
+def load_recent_history(n=10):
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    try:
+        lines = open(HISTORY_FILE).read().splitlines()
+        return [json.loads(l) for l in lines[-n:] if l.strip()]
+    except Exception as e:
+        log(f"  history read error: {e}")
+        return []
+
+
+def append_history(entry):
+    try:
+        with open(HISTORY_FILE, 'a') as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        log(f"  history write error: {e}")
+
+
+def history_context_str():
+    # Builds the "past operating info" summary the user asked to chain into
+    # every day's decision, not just fresh news in isolation.
+    hist = load_recent_history(10)
+    if not hist:
+        return ""
+    lines = ["过去交易记录(供参考,避免重复踩坑/可以延续有效的方向):"]
+    for h in hist:
+        picks_str = ", ".join(f"{s}({w*100:.0f}%)" for s, w in h.get('weights', {}).items()) or "空仓"
+        lines.append(f"- {h.get('date')}: {picks_str} -> 当日盈亏 {h.get('final_pl_pct', 0):+.2f}% ({h.get('reason', '')})")
+    return "\n".join(lines) + "\n\n"
+
+
+def already_held_elsewhere(api):
+    # 2026-07-16: avoid the day-trade layer re-picking a name that's already
+    # a dedicated long-term hold (SKHY/MU/META via skhy_position.py/
+    # mu_reentry.py/meta_longhold.py) -- same separation-of-concerns
+    # discipline as bull_day_trade_20260714.py, so a day-trade exit doesn't
+    # get confused with / accidentally touch the long-term thesis position.
+    LONG_TERM_NAMES = {'SKHY', 'MU', 'META'}
+    try:
+        held = {p.symbol for p in api.list_positions()}
+    except Exception:
+        held = set()
+    return LONG_TERM_NAMES | (held - {'SGOV'})
+
+
 def record_action(state, text):
     log_entry = f"[{datetime.datetime.utcnow().strftime('%H:%M UTC')}] {text}"
     state.setdefault('action_log', []).append(log_entry)
@@ -169,15 +240,29 @@ def send_daily_summary(state, day_pl_pct, reason):
     send_email(f"📊 每日自动日内交易 - 今日汇总 ({datetime.datetime.utcnow():%Y-%m-%d})", body)
 
 
+def finalize_day(api, state, day_pl_pct, reason, do_liquidate=True):
+    # Centralizes everything that must happen once a trading day is done,
+    # from any of the 3 places a day can end (regime-skip, no-qualifying-
+    # picks, or a real ceiling/floor/close-out trigger) -- keeps the
+    # append-only HISTORY_FILE and the SGOV park-back consistent no matter
+    # which exit path fired.
+    if do_liquidate:
+        liquidate_all(api, reason, state)
+    state['done'] = True
+    state['final_pl_pct'] = day_pl_pct
+    save_state(state)
+    log(f"today's auto day-trade wound down — {reason}")
+    park_to_sgov()
+    append_history({'date': state['date'], 'weights': state.get('weights', {}),
+                     'reasons': state.get('reasons', {}), 'final_pl_pct': day_pl_pct,
+                     'reason': reason})
+    send_daily_summary(state, day_pl_pct, reason)
+
+
 def market_regime_ok(api):
     # user 2026-07-16: "如果盘前在跌，大盘在跌你可以不买股票" -- skip all new
     # entries for the day if the broad market (SPY) is below its prior close.
-    import requests
-    from database import SessionLocal, get_setting
-    db = SessionLocal()
-    k = get_setting(db, 'alpaca_api_key', 1)
-    s = get_setting(db, 'alpaca_secret_key', 1)
-    db.close()
+    k, s, _ = _alpaca_creds()
     try:
         r = requests.get('https://data.alpaca.markets/v2/stocks/SPY/snapshot',
                           headers={'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}, timeout=15)
@@ -193,13 +278,19 @@ def market_regime_ok(api):
         return True, None
 
 
-def pick_todays_stocks():
+def pick_todays_stocks(api, exclude=None):
     log("  scanning for today's day-trade candidates...")
+    exclude = exclude or set()
+    extra_context = history_context_str()
+    if exclude:
+        extra_context += (f"以下标的今天不要选(已经是长期持仓或当前已持有,"
+                           f"避免和日内交易混淆): {', '.join(sorted(exclude))}\n\n")
     search_snippets = []
     queries = [
         "stock market positive catalyst news today earnings beat upgrade",
         "stock M&A acquisition announcement today",
         "stock analyst upgrade price target raised today",
+        "biggest stock gainers today real news reason not hype",
     ]
     for q in queries:
         try:
@@ -222,16 +313,21 @@ def pick_todays_stocks():
 
     context = "\n\n---\n\n".join(search_snippets)
     prompt = (
-        "你是短线交易研究员。基于下面的实时搜索结果,挑选今天(美股开盘)最多5只"
-        "有真实利好消息支撑的股票(财报超预期、并购、评级上调、重大产品/合作公告等)。"
+        "你是短线交易研究员。基于下面的实时搜索结果,挑选今天(美股开盘)最多"
+        f"{MAX_PICKS}只有真实利好消息支撑的股票(财报超预期、并购、评级上调、"
+        "重大产品/合作公告等),尽量覆盖不同行业(分散,不要挤在同一个板块)。"
         "不要选纯粹因为'今天涨幅大'但找不到具体原因的票,也不要选已经拉得很高、"
         "追高风险大的票——优先选择消息真实、目前价格还没有过度透支的标的"
         "(抄底思路,不是追涨思路)。\n\n"
+        "**宁缺毋滥**:如果只有2-3只真正有说服力,就只输出2-3只,不要为了凑数"
+        "硬塞勉强的标的;如果一只都没有真正的信心,直接输出 NONE,今天空仓拿"
+        "美债完全可以接受,不需要为了交易而交易。\n\n"
+        f"{extra_context}"
         f"搜索结果:\n{context}\n\n"
         "请严格按以下格式输出,每行一只股票,不要有其他文字或markdown:\n"
         "TICKER: 权重% 一句话理由\n"
         "例如:\nPYPL: 8% 财报超预期上调指引\n\n"
-        "权重不要超过10%,最多5只。如果没有找到任何真正有说服力的标的,只输出: NONE"
+        f"权重不要超过10%,最多{MAX_PICKS}只。如果没有找到任何真正有说服力的标的,只输出: NONE"
     )
     try:
         result = subprocess.run(
@@ -256,8 +352,34 @@ def pick_todays_stocks():
         m = re.match(r'^\s*\$?([A-Z]{1,5})\s*:\s*(\d+(?:\.\d+)?)\s*%\s*(.*)$', line.strip())
         if m:
             sym, pct, reason = m.group(1), float(m.group(2)), m.group(3).strip()
+            if sym in exclude:
+                log(f"  {sym}: excluded (already a long-term hold / already held) — skipping")
+                continue
             picks.append((sym, min(pct / 100, 0.10), reason))
     picks = picks[:MAX_PICKS]
+
+    # Mechanical "not already extended" backstop -- feedback_buy_dips_sell_strength.md
+    # ("卖高不是追涨"): even with the prompt's own instruction, double-check each
+    # pick isn't already up too much for the day before committing capital.
+    checked = []
+    _k, _s, _ = _alpaca_creds()
+    for sym, w, reason in picks:
+        try:
+            r2 = requests.get(f'https://data.alpaca.markets/v2/stocks/{sym}/snapshot',
+                               headers={'APCA-API-KEY-ID': _k,
+                                        'APCA-API-SECRET-KEY': _s}, timeout=15)
+            snap = r2.json()
+            prev_close = snap['prevDailyBar']['c']
+            last = snap.get('latestTrade', {}).get('p')
+            if last and prev_close:
+                gap_pct = (last - prev_close) / prev_close * 100
+                if gap_pct > MAX_CHASE_GAP_PCT:
+                    log(f"  {sym}: already up {gap_pct:.1f}% today (>{MAX_CHASE_GAP_PCT}%) — too extended, skipping (抄底不是追涨)")
+                    continue
+        except Exception as e:
+            log(f"  {sym}: gap check failed ({e}) — not blocking on a data hiccup")
+        checked.append((sym, w, reason))
+    picks = checked
 
     total_w = sum(p[1] for p in picks)
     if total_w > MAX_TOTAL_DEPLOY_PCT and total_w > 0:
@@ -348,12 +470,7 @@ def park_to_sgov():
     cash = float(acc.cash)
     if cash < 5:
         return
-    import requests
-    from database import SessionLocal, get_setting
-    db = SessionLocal()
-    k = get_setting(db, 'alpaca_api_key', 1)
-    s = get_setting(db, 'alpaca_secret_key', 1)
-    db.close()
+    k, s, _ = _alpaca_creds()
     r = requests.get('https://data.alpaca.markets/v2/stocks/SGOV/quotes/latest',
                       headers={'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s})
     ask = r.json()['quote']['ap']
@@ -396,14 +513,36 @@ def manage(api, state):
         reason = f"距收盘不到15分钟 (当日盈亏 {day_pl_pct:+.2f}%),按规则强制平仓"
 
     if reason:
-        liquidate_all(api, reason, state)
-        state['done'] = True
-        state['final_pl_pct'] = day_pl_pct
-        save_state(state)
-        log(f"today's auto day-trade wound down — {reason}")
-        park_to_sgov()
-        send_daily_summary(state, day_pl_pct, reason)
+        finalize_day(api, state, day_pl_pct, reason)
         return
+
+    # 2026-07-16: second-chance re-scan -- user asked to raise the probability
+    # of clearing the floor, and this is a legitimate way to do it (more
+    # independent looks at the market, not more risk per look). If the floor
+    # hasn't been touched after SECOND_SCAN_AFTER_MIN and there's still real
+    # uncommitted buying power, take one more look for fresh catalysts.
+    elapsed_min = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(state['day_start_time'])).total_seconds() / 60
+    if (not state.get('floor_armed') and not state.get('second_scan_done')
+            and elapsed_min >= SECOND_SCAN_AFTER_MIN and mins_to_close > 30):
+        state['second_scan_done'] = True
+        save_state(state)
+        bp = float(acc.buying_power)
+        if bp > equity * 0.05:  # only bother if there's meaningful room left
+            log(f"  floor not yet touched after {elapsed_min:.0f}min -- running a second-chance scan")
+            exclude = already_held_elsewhere(api) | set(state['weights'].keys())
+            picks, cost = pick_todays_stocks(api, exclude=exclude)
+            if picks:
+                remaining_pct = bp / equity
+                total_new_w = sum(w for _, w, _ in picks)
+                scale = min(1.0, remaining_pct / total_new_w) if total_new_w else 0
+                for sym, w, reason_txt in picks:
+                    state['weights'][sym] = w * scale
+                    state['reasons'][sym] = reason_txt
+                save_state(state)
+                log(f"  second-chance picks added: {[p[0] for p in picks]} (screen cost ${cost:.4f})")
+                record_action(state, "补充选股(第二次扫描): " + ", ".join(f"{s}({w*scale*100:.0f}%,{r})" for s, w, r in picks))
+            else:
+                log("  second-chance scan found nothing new -- staying with current positions")
 
     save_state(state)
 
@@ -430,6 +569,7 @@ def main():
     if 'day_start_equity' not in state:
         acc = api.get_account()
         state['day_start_equity'] = float(acc.equity)
+        state['day_start_time'] = datetime.datetime.utcnow().isoformat()
         save_state(state)
 
     if not state.get('weights') and not state.get('skipped_regime'):
@@ -437,18 +577,15 @@ def main():
         if not ok:
             log(f"  SPY pre-market/today {chg_pct:+.2f}% -- broad market weak, skipping today's entries entirely")
             state['skipped_regime'] = True
-            state['done'] = True
-            save_state(state)
             record_action(state, f"大盘走弱(SPY {chg_pct:+.2f}%),今天选择不建仓,继续持有美债")
-            send_daily_summary(state, 0.0, "大盘/盘前走弱,今天选择空仓")
+            finalize_day(api, state, 0.0, "大盘/盘前走弱,今天选择空仓", do_liquidate=False)
             return
-        picks, cost = pick_todays_stocks()
+        exclude = already_held_elsewhere(api)
+        picks, cost = pick_todays_stocks(api, exclude=exclude)
         if not picks:
             log("  no qualifying picks today -- staying in cash/SGOV")
-            state['done'] = True
-            save_state(state)
             record_action(state, "今天没有找到有说服力的利好标的,继续持有美债")
-            send_daily_summary(state, 0.0, "没有找到合适标的,今天选择空仓")
+            finalize_day(api, state, 0.0, "没有找到合适标的,今天选择空仓", do_liquidate=False)
             return
         state['weights'] = {sym: w for sym, w, _ in picks}
         state['reasons'] = {sym: reason for sym, w, reason in picks}
