@@ -118,6 +118,10 @@ SECOND_SCAN_AFTER_MIN = 90     # 2026-07-16: if the floor hasn't been touched af
                                # real catalyst + confirmed uptick, not chasing)
 FLOOR_PCT = 0.1                # protect this once reached (2026-07-15 night instruction)
 CEILING_PCT = 2.0              # stop everything once reached (2026-07-15 night instruction)
+NO_PRICE_GIVEUP_TICKS = 15     # 2026-07-17: found via the dry-run -- ABB had no live price
+                               # (yfinance: "possibly delisted") for the ENTIRE rest of a
+                               # trading day, retried every tick with no cap. Give up after
+                               # this many failed ticks instead of retrying forever.
 
 STATE_FILE = ('/home/qbao775/serenity-trader-stack/.daily_open_daytrade_DRYRUN_state.json' if DRY_RUN
               else '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_state.json')
@@ -440,7 +444,14 @@ def enter(api, state):
         q = md.get_stock_quote(sym)
         px = q['current'] if q and q.get('current') else None
         if not px:
-            log(f"  {sym}: no live price yet — will retry next tick")
+            sym_state['no_price_ticks'] = sym_state.get('no_price_ticks', 0) + 1
+            if sym_state['no_price_ticks'] >= NO_PRICE_GIVEUP_TICKS:
+                log(f"  {sym}: no live price for {sym_state['no_price_ticks']} ticks — giving up on this pick for today (bad data)")
+                sym_state['entered'] = True  # stop retrying; never actually bought
+                save_state(state)
+                continue
+            log(f"  {sym}: no live price yet ({sym_state['no_price_ticks']}/{NO_PRICE_GIVEUP_TICKS}) — will retry next tick")
+            save_state(state)
             continue
 
         last_px = sym_state.get('last_px')
@@ -658,9 +669,21 @@ def main():
         log(f"  today's picks: {state['weights']} (screen cost ${cost:.4f})")
         record_action(state, "今日选股: " + ", ".join(f"{s}({w*100:.0f}%,{state['reasons'][s]})" for s, w in state['weights'].items()))
 
-    if not all(state['symbols'].get(sym, {}).get('entered') for sym in state['weights']):
-        enter(api, state)
-    else:
+    # 2026-07-17: BUG FOUND VIA THE DRY-RUN (exactly why the user insisted on
+    # testing this way first) -- this used to be if/else: as long as ANY
+    # symbol had never entered, only enter() ran and manage() NEVER did, for
+    # the rest of the day. ABB had no live price all day (yfinance: "possibly
+    # delisted") and got retried every single tick from 15:01 to market
+    # close at 20:00 UTC -- meanwhile RKT/UNH/CRWD were already bought and
+    # manage() never got called once, so the mandatory close-out, the +2%
+    # ceiling, and the +0.1% floor protection NEVER RAN for the whole
+    # afternoon. In live mode this would have held real positions overnight
+    # with zero exit monitoring -- exactly the risk the close-out exists to
+    # prevent. Fix: always attempt entries for whatever hasn't entered yet,
+    # AND always manage whatever IS currently held, every single tick --
+    # these are not mutually exclusive phases.
+    enter(api, state)
+    if any(state['symbols'].get(sym, {}).get('entered') for sym in state['weights']):
         manage(api, state)
 
 
