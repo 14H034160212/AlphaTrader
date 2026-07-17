@@ -603,14 +603,25 @@ def manage(api, state):
             and elapsed_min >= SECOND_SCAN_AFTER_MIN and mins_to_close > 30):
         state['second_scan_done'] = True
         save_state(state)
-        if bp > equity * 0.05:  # only bother if there's meaningful room left
-            log(f"  floor not yet touched after {elapsed_min:.0f}min -- running a second-chance scan")
+        # 2026-07-17: BUG FOUND VIA THE DRY-RUN -- this used to scale new picks
+        # against `bp/equity` (raw uncommitted CASH), which is nearly always
+        # large since MAX_TOTAL_DEPLOY_PCT intentionally leaves most of the
+        # account in cash/SGOV. That let the second scan add picks totalling
+        # up to another full MAX_TOTAL_DEPLOY_PCT on TOP of what was already
+        # deployed -- 2026-07-16 real example: RKT already used 5%, then the
+        # second scan added UNH+ABB+CRWD (its own internal 10% cap) with
+        # barely any additional scaling, pushing intended exposure to 12-15%,
+        # over the 10% ceiling. The correct constraint is remaining ROOM
+        # under the total cap, not remaining cash.
+        current_total_w = sum(state['weights'].values())
+        room = max(0.0, MAX_TOTAL_DEPLOY_PCT - current_total_w)
+        if room > 0.01:  # only bother if there's meaningful cap room left
+            log(f"  floor not yet touched after {elapsed_min:.0f}min -- running a second-chance scan (room={room*100:.1f}%)")
             exclude = already_held_elsewhere(api) | set(state['weights'].keys())
             picks, cost = pick_todays_stocks(api, exclude=exclude)
             if picks:
-                remaining_pct = bp / equity
                 total_new_w = sum(w for _, w, _ in picks)
-                scale = min(1.0, remaining_pct / total_new_w) if total_new_w else 0
+                scale = min(1.0, room / total_new_w) if total_new_w else 0
                 for sym, w, reason_txt in picks:
                     state['weights'][sym] = w * scale
                     state['reasons'][sym] = reason_txt
