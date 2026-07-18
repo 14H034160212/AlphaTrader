@@ -21,3 +21,26 @@
   - 2026 Work Trend Index report: Agents, human agency, and opportunity
   - State of AI Usage Report 2026 - LayerXLayerX
   - Google Gemini vs. Microsoft Copilot: Who Owns Enterprise AI in 2026? – USA Business Times
+
+## 2026-07-18
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(5), Google/GOOGL(3), Microsoft/MSFT(2), Meta/META(1), Anthropic (via GOOGL/AMZN investment)(1)
+- 消费端App排名:
+  - ‎iPhone Top Games & Apps - App Store
+  - ChatGPT Loses Share of App Downloads As Competition Intensifies
+  - ChatGPT vs Meta AI: App Store Comparison
+  - AI Assistant Apps Take Over App Store Charts in 2026
+- 开发者/API调用份额:
+  - LLM Rankings
+  - OpenRouter Models Leaderboard: Adoption, Spend, Price and Context | CodeSOTA | CodeSOTA
+  - The Most-Used AI Models in 2026 Aren't the Famous Ones
+  - LLM Rankings | OpenRouter
+- 网站流量对比:
+  - July 2026 Top Generative AI Chatbots & LLMs by Market Share | Momentic
+  - ChatGPT, Gemini, and Claude: How Generative AI Web Traffic Is Redistributing Across Three Distinct Moats - FourWeekMBA
+  - ChatGPT Lost 24 Points of Market Share in 12 Months — Here's Who Took It - FourWeekMBA
+  - ChatGPT Maintains Over 50% Market Share As Google Gemini's Growth Slows In June
+- 企业级采用率:
+  - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
+  - State of AI Usage Report 2026 - LayerX
+  - Microsoft Copilot Usage Statistics 2026 | Presenc AI
+  - Microsoft Copilot Usage Falls Sharply as Google's Gemini Gains Ground | Technobezz
