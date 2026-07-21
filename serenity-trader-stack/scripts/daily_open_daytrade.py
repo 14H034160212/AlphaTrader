@@ -117,10 +117,21 @@ MAX_TOTAL_DEPLOY_PCT_SIM = 1.0     # 2026-07-18: user first said the paper/dry-r
                                # -- left as-is since the user's instruction was specifically
                                # about "仓位限制" in the total-cap sense just discussed.
 MAX_TOTAL_DEPLOY_PCT = MAX_TOTAL_DEPLOY_PCT_SIM if DRY_RUN else MAX_TOTAL_DEPLOY_PCT_LIVE
-MAX_CHASE_GAP_PCT = 5.0        # 2026-07-16: skip a pick that's already up more than this much
+MAX_CHASE_GAP_PCT_LIVE = 5.0   # 2026-07-16: skip a pick that's already up more than this much
                                # from its prior close before we even get to buy it -- a
                                # mechanical backstop for feedback_buy_dips_sell_strength.md
                                # ("卖高不是追涨") in case the LLM screen misses an extended move
+MAX_CHASE_GAP_PCT_SIM = 1000.0 # 2026-07-21: user pushed back hard on paper-side timidity --
+                               # "你胆子可以大一些，我现在让你放开手脚在模拟盘练习，你还胆子
+                               # 这么小吗" (be bolder, I've let you loose on paper, why still
+                               # so timid) -- triggered by this exact mechanical gap filter
+                               # killing an otherwise-good pick (MMM, +7.3%, real earnings
+                               # beat). Effectively disabled on the sim side, same pattern as
+                               # the total-exposure cap and the regime gate above -- the
+                               # picker's OWN prompt-level "don't chase an extended move"
+                               # instruction is still there, just no longer double-enforced by
+                               # a rigid number. Live path unaffected, still 5%.
+MAX_CHASE_GAP_PCT = MAX_CHASE_GAP_PCT_SIM if DRY_RUN else MAX_CHASE_GAP_PCT_LIVE
 SECOND_SCAN_AFTER_MIN = 90     # 2026-07-16: if the floor hasn't been touched after this long
                                # and real buying power remains uncommitted, run ONE more
                                # screen for fresh intraday catalysts rather than sitting on
