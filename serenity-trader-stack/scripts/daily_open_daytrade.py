@@ -310,10 +310,10 @@ def market_regime_ok(api):
         return True, None
 
 
-def pick_todays_stocks(api, exclude=None):
+def pick_todays_stocks(api, exclude=None, extra_note=""):
     log("  scanning for today's day-trade candidates...")
     exclude = exclude or set()
-    extra_context = history_context_str()
+    extra_context = history_context_str() + extra_note
     if exclude:
         extra_context += (f"以下标的今天不要选(已经是长期持仓或当前已持有,"
                            f"避免和日内交易混淆): {', '.join(sorted(exclude))}\n\n")
@@ -671,14 +671,27 @@ def main():
 
     if not state.get('weights') and not state.get('skipped_regime'):
         ok, chg_pct = market_regime_ok(api)
+        # 2026-07-21: user wants full AI judgment tested on the paper account
+        # -- "不管什么情况都是让ai自己决定买卖，先在模拟盘上练习" (no matter
+        # the conditions, let the AI decide buy/sell itself -- practice this
+        # on paper first). On DRY_RUN, the SPY-down gate no longer hard-skips
+        # the day; instead it's passed as CONTEXT into the picker so the AI
+        # weighs it itself (it can still return NONE via "宁缺毋滥" if it
+        # judges conditions too weak -- the point is it's the AI's call every
+        # time, not a fixed mechanical rule). LIVE keeps the hard gate
+        # unchanged -- real money still gets the mechanical safety net.
+        regime_note = ""
         if not ok:
-            log(f"  SPY pre-market/today {chg_pct:+.2f}% -- broad market weak, skipping today's entries entirely")
-            state['skipped_regime'] = True
-            record_action(state, f"大盘走弱(SPY {chg_pct:+.2f}%),今天选择不建仓,继续持有美债")
-            finalize_day(api, state, 0.0, "大盘/盘前走弱,今天选择空仓", do_liquidate=False)
-            return
+            regime_note = f"注意:大盘今天走弱(SPY {chg_pct:+.2f}%),请自行判断是否仍要建仓。\n\n"
+            if not DRY_RUN:
+                log(f"  SPY pre-market/today {chg_pct:+.2f}% -- broad market weak, skipping today's entries entirely")
+                state['skipped_regime'] = True
+                record_action(state, f"大盘走弱(SPY {chg_pct:+.2f}%),今天选择不建仓,继续持有美债")
+                finalize_day(api, state, 0.0, "大盘/盘前走弱,今天选择空仓", do_liquidate=False)
+                return
+            log(f"  SPY pre-market/today {chg_pct:+.2f}% -- weak, but DRY_RUN lets the AI itself decide")
         exclude = already_held_elsewhere(api)
-        picks, cost = pick_todays_stocks(api, exclude=exclude)
+        picks, cost = pick_todays_stocks(api, exclude=exclude, extra_note=regime_note)
         if not picks:
             log("  no qualifying picks today -- staying in cash/SGOV")
             record_action(state, "今天没有找到有说服力的利好标的,继续持有美债")
