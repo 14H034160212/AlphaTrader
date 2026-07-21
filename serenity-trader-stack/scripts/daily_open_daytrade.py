@@ -104,12 +104,18 @@ MAX_TOTAL_DEPLOY_PCT_LIVE = 0.10   # 2026-07-16 (night): user asked to start the
                                # this is a brand-new autonomous mechanism's first live run.
                                # Revisit raising this only after the system has proven itself
                                # over some real live days -- don't creep it back up silently.
-MAX_TOTAL_DEPLOY_PCT_SIM = 0.50    # 2026-07-18: user said the paper/dry-run side can run
-                               # WITHOUT that live-money caution -- "你在模拟盘上可以不受
-                               # 限制每天练习" (no restriction on the simulated account,
-                               # practice every day) -- no real money at risk there, so let
-                               # it exercise the fuller design (more names, more diversified
-                               # exposure) to build track record faster.
+MAX_TOTAL_DEPLOY_PCT_SIM = 1.0     # 2026-07-18: user first said the paper/dry-run side can
+                               # run WITHOUT the live-money caution ("你在模拟盘上可以不受
+                               # 限制每天练习"), then explicitly: **"模拟盘不要设置任何仓位
+                               # 限制"** (don't set ANY position limit on the simulated
+                               # account) -- removed the cap entirely (1.0 = up to 100% of
+                               # virtual equity may be deployed). No real money at risk on
+                               # this side, so let it exercise the system's full range
+                               # unconstrained to build track record faster. The per-name
+                               # cap in pick_todays_stocks() (currently 10%/name) is a
+                               # separate conviction-sizing bucket, not a total-exposure cap
+                               # -- left as-is since the user's instruction was specifically
+                               # about "仓位限制" in the total-cap sense just discussed.
 MAX_TOTAL_DEPLOY_PCT = MAX_TOTAL_DEPLOY_PCT_SIM if DRY_RUN else MAX_TOTAL_DEPLOY_PCT_LIVE
 MAX_CHASE_GAP_PCT = 5.0        # 2026-07-16: skip a pick that's already up more than this much
                                # from its prior close before we even get to buy it -- a
