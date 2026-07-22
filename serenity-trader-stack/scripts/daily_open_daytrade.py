@@ -151,8 +151,18 @@ SECOND_SCAN_AFTER_MIN = 90     # 2026-07-16: if the floor hasn't been touched af
                                # screen for fresh intraday catalysts rather than sitting on
                                # idle cash the rest of the day (still same quality bar --
                                # real catalyst + confirmed uptick, not chasing)
-FLOOR_PCT = 0.1                # protect this once reached (2026-07-15 night instruction)
-CEILING_PCT = 2.0              # stop everything once reached (2026-07-15 night instruction)
+FLOOR_PCT = 0.1                # LIVE only: protect this once reached (2026-07-15 night)
+CEILING_PCT = 2.0              # LIVE only: stop everything once reached (2026-07-15 night)
+# 2026-07-22: user, after Claude flagged this as a separate/higher-stakes decision from
+# "let the AI pick its own stocks" -- **"全部去掉"** (remove all of it) then
+# **"让ai自己判断"** (let the AI judge for itself). On DRY_RUN, FLOOR_PCT/CEILING_PCT
+# above are no longer used as hard sell triggers -- replaced by ai_judge_positions()
+# below, a periodic claude -p call that decides HOLD / SELL_ALL / HOLD_OVERNIGHT with
+# no fixed percentage rule at all. LIVE path is completely unaffected -- still the
+# fixed +0.1%/+2%/mandatory-close-out numbers, unchanged.
+POSITION_JUDGE_COOLDOWN_MIN = 20   # don't re-ask more often than this (cost control),
+                                    # except when close is near -- then ask every tick
+                                    # until it gives an unambiguous HOLD_OVERNIGHT/SELL_ALL
 NO_PRICE_GIVEUP_TICKS = 15     # 2026-07-17: found via the dry-run -- ABB had no live price
                                # (yfinance: "possibly delisted") for the ENTIRE rest of a
                                # trading day, retried every tick with no cap. Give up after
@@ -594,6 +604,76 @@ def park_to_sgov():
     log(f"  parked ${cash:.2f} cash into {qty} SGOV @~${limit_px} order={o.id[:8]}")
 
 
+def ai_judge_positions(state, day_pl_pct, mins_to_close):
+    # DRY_RUN only -- replaces the fixed FLOOR_PCT/CEILING_PCT/mandatory-close-out
+    # numbers with the AI's own judgment call, per "全部去掉" + "让ai自己判断".
+    # Returns (action, detail) where action in {'hold','sell_all','hold_overnight'}.
+    sim_positions = state.get('sim_positions', {})
+    if not sim_positions:
+        return 'hold', None
+
+    near_close = mins_to_close <= 20
+    now = datetime.datetime.utcnow()
+    if not near_close:
+        last_judge = state.get('_last_judge_time')
+        if last_judge:
+            elapsed = (now - datetime.datetime.fromisoformat(last_judge)).total_seconds() / 60
+            if elapsed < POSITION_JUDGE_COOLDOWN_MIN:
+                return 'hold', None
+    state['_last_judge_time'] = now.isoformat()
+    save_state(state)
+
+    import market_data as md
+    lines = []
+    for sym, pos in sim_positions.items():
+        q = md.get_stock_quote(sym)
+        px = q['current'] if q and q.get('current') else pos['entry_price']
+        plpc = (px - pos['entry_price']) / pos['entry_price'] * 100
+        lines.append(f"{sym}: 入价${pos['entry_price']:.2f} 现价${px:.2f} 盈亏{plpc:+.2f}% "
+                     f"理由:{state.get('reasons', {}).get(sym, '')}")
+
+    near_close_note = ("现在快收盘了,必须在 HOLD_OVERNIGHT 和 SELL_ALL 之间二选一,"
+                        "不能只说HOLD。\n" if near_close else "")
+    prompt = (
+        "你在管理一个模拟盘(无真实资金风险)的日内交易组合,不受任何固定百分比"
+        "止盈止损规则限制,完全靠你自己的判断决定接下来怎么做。\n\n"
+        f"当日账户总盈亏: {day_pl_pct:+.2f}%\n距收盘约{mins_to_close:.0f}分钟\n"
+        f"持仓明细:\n" + "\n".join(lines) + "\n\n"
+        f"{near_close_note}"
+        "请从下面选项中选一个,第一行只写选项名称,第二行写一句话理由:\n"
+        "HOLD(继续持有,不操作)\nSELL_ALL(现在全部平仓)\n"
+        "HOLD_OVERNIGHT(收盘后继续持有到下一个交易日)"
+    )
+    try:
+        result = subprocess.run([CLAUDE_BIN, '-p', prompt, '--output-format', 'json'],
+                                 capture_output=True, text=True, timeout=120,
+                                 cwd='/data/qbao775/AlphaTrader')
+        if result.returncode != 0:
+            log(f"  ai_judge_positions failed: {result.stderr[:200]}")
+            return ('sell_all' if near_close else 'hold'), '(AI判断调用失败,安全默认)'
+        data = json.loads(result.stdout)
+        answer = data.get('result', '').strip()
+        cost = data.get('total_cost_usd', 0)
+        log(f"  AI持仓判断(cost ${cost:.4f}):\n{answer}")
+        resp_lines = [l.strip() for l in answer.splitlines() if l.strip()]
+        action_line = resp_lines[0].upper() if resp_lines else ''
+        detail = resp_lines[1] if len(resp_lines) > 1 else ''
+        if 'SELL_ALL' in action_line:
+            action = 'sell_all'
+        elif 'HOLD_OVERNIGHT' in action_line:
+            action = 'hold_overnight'
+        else:
+            action = 'hold'
+    except Exception as e:
+        log(f"  ai_judge_positions exception: {e}")
+        action, detail = ('sell_all' if near_close else 'hold'), '(AI判断异常,安全默认)'
+
+    if near_close and action == 'hold':
+        log("  近收盘AI未给出明确隔夜/平仓决定 -- 安全默认为平仓")
+        action, detail = 'sell_all', detail or '(近收盘判断不明确,安全默认平仓)'
+    return action, detail
+
+
 def manage(api, state):
     equity, bp = get_account_view(api, state)
     day_start_equity = state['day_start_equity']
@@ -616,21 +696,46 @@ def manage(api, state):
                 p = positions[sym]
                 log(f"  {sym}: qty={p.qty} plpc={float(p.unrealized_plpc)*100:+.2f}% (holding to close)")
 
-    reason = None
-    if day_pl_pct >= CEILING_PCT:
-        reason = f"当日盈亏达到 {day_pl_pct:+.2f}%,触及 {CEILING_PCT}% 天花板,全部锁定离场"
-    elif not state.get('floor_armed') and day_pl_pct >= FLOOR_PCT:
-        state['floor_armed'] = True
-        save_state(state)
-        log(f"  floor armed: day P&L {day_pl_pct:+.2f}% cleared the {FLOOR_PCT}% floor")
-    elif state.get('floor_armed') and day_pl_pct <= FLOOR_PCT:
-        reason = f"当日盈亏从高于{FLOOR_PCT}%回落到 {day_pl_pct:+.2f}%,保护底线离场"
-    elif mins_to_close <= 15:
-        reason = f"距收盘不到15分钟 (当日盈亏 {day_pl_pct:+.2f}%),按规则强制平仓"
+    if DRY_RUN:
+        if state.get('hold_overnight'):
+            # Already decided this session -- don't re-ask every tick in the
+            # last 20 minutes (wasteful + risks a flip-flopping answer).
+            # Just wait for the close to actually arrive, then stop ticking.
+            if mins_to_close <= 2:
+                state['done'] = True
+                save_state(state)
+            return
+        action, detail = ai_judge_positions(state, day_pl_pct, mins_to_close)
+        if action == 'sell_all':
+            reason = f"AI判断: {detail or '主动平仓'} (当日盈亏 {day_pl_pct:+.2f}%)"
+            finalize_day(api, state, day_pl_pct, reason)
+            return
+        if action == 'hold_overnight':
+            state['hold_overnight'] = True
+            save_state(state)
+            log(f"  AI决定隔夜持有: {detail}")
+            record_action(state, f"AI判断隔夜持有: {detail} (当日盈亏 {day_pl_pct:+.2f}%)")
+            if mins_to_close <= 2:
+                state['done'] = True  # stop ticking for today; positions carry to tomorrow
+                save_state(state)
+            return
+        # action == 'hold': fall through, keep ticking
+    else:
+        reason = None
+        if day_pl_pct >= CEILING_PCT:
+            reason = f"当日盈亏达到 {day_pl_pct:+.2f}%,触及 {CEILING_PCT}% 天花板,全部锁定离场"
+        elif not state.get('floor_armed') and day_pl_pct >= FLOOR_PCT:
+            state['floor_armed'] = True
+            save_state(state)
+            log(f"  floor armed: day P&L {day_pl_pct:+.2f}% cleared the {FLOOR_PCT}% floor")
+        elif state.get('floor_armed') and day_pl_pct <= FLOOR_PCT:
+            reason = f"当日盈亏从高于{FLOOR_PCT}%回落到 {day_pl_pct:+.2f}%,保护底线离场"
+        elif mins_to_close <= 15:
+            reason = f"距收盘不到15分钟 (当日盈亏 {day_pl_pct:+.2f}%),按规则强制平仓"
 
-    if reason:
-        finalize_day(api, state, day_pl_pct, reason)
-        return
+        if reason:
+            finalize_day(api, state, day_pl_pct, reason)
+            return
 
     # 2026-07-16: second-chance re-scan -- user asked to raise the probability
     # of clearing the floor, and this is a legitimate way to do it (more
@@ -638,7 +743,7 @@ def manage(api, state):
     # hasn't been touched after SECOND_SCAN_AFTER_MIN and there's still real
     # uncommitted buying power, take one more look for fresh catalysts.
     elapsed_min = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(state['day_start_time'])).total_seconds() / 60
-    if (not state.get('floor_armed') and not state.get('second_scan_done')
+    if (day_pl_pct < FLOOR_PCT and not state.get('second_scan_done')
             and elapsed_min >= SECOND_SCAN_AFTER_MIN and mins_to_close > 30):
         state['second_scan_done'] = True
         save_state(state)
@@ -680,10 +785,25 @@ def main():
     state = load_state()
 
     if state.get('date') != today:
-        state = {'date': today, 'symbols': {}, 'weights': {}, 'reasons': {},
-                  'action_log': [], 'done': False}
+        if state.get('hold_overnight'):
+            # 2026-07-22: AI chose to carry positions into the next trading
+            # day instead of a forced close-out (see ai_judge_positions) --
+            # keep symbols/weights/reasons/sim_positions/sim_cash, only reset
+            # the per-day bookkeeping (P&L baseline resets so "today's P&L"
+            # reflects just today, not a stale multi-day mix).
+            log(f"=== new trading day {today} -- carrying over overnight positions per AI judgment ===")
+            state['date'] = today
+            state['done'] = False
+            state['hold_overnight'] = False
+            state['action_log'] = []
+            for k in ('day_start_equity', 'day_start_time', 'floor_armed',
+                      'second_scan_done', '_last_judge_time', 'skipped_regime'):
+                state.pop(k, None)
+        else:
+            state = {'date': today, 'symbols': {}, 'weights': {}, 'reasons': {},
+                      'action_log': [], 'done': False}
+            log(f"=== new trading day {today} -- state reset ===")
         save_state(state)
-        log(f"=== new trading day {today} -- state reset ===")
 
     if state.get('done'):
         return  # already wound down for today
