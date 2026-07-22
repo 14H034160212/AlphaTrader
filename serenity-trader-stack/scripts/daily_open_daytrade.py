@@ -91,75 +91,37 @@ CLAUDE_BIN = "/home/qbao775/.local/bin/claude"
 DRY_RUN = os.environ.get('DOD_DRY_RUN') == '1'
 
 ENTRY_CONFIRM_TICKS = 1        # Granville's Rules -- buy on the first confirmed bullish tick
-MAX_PICKS_LIVE = 6             # 2026-07-16: raised 5->6 for more diversification -- more
-                               # independent real-catalyst bets lowers the VARIANCE of the
-                               # portfolio's day P&L around its mean, which raises the
-                               # probability of clearing a small threshold like +0.1% without
-                               # adding any leverage or risk per name (user: "优化系统提升
-                               # 至少0.1%的概率" -- diversify/improve quality, don't escalate risk)
-MAX_PICKS_SIM = 20             # 2026-07-22: user: "请你把系统所有这些规则的限定都清除，以后
-                               # 全部让ai自己决定，我相信ai的判断" (clear out all these rule
-                               # limits, let the AI decide everything from now on, I trust
-                               # the AI's judgment) -- removed the arbitrary pick-count
-                               # ceiling on the sim side (20 is a generous practical bound,
-                               # not a judgment-limiting number); the LLM's own "宁缺毋滥"
-                               # prompt instruction is what actually governs how many it
-                               # picks. Live path unaffected, still capped at 6.
-MAX_PICKS = MAX_PICKS_SIM if DRY_RUN else MAX_PICKS_LIVE
-MAX_PICK_WEIGHT_LIVE = 0.10    # per-name conviction-sizing ceiling
-MAX_PICK_WEIGHT_SIM = 1.0      # 2026-07-22: same instruction as above -- no per-name cap on
-                               # the sim side either; the AI's own conviction (expressed as
-                               # its requested %) is trusted directly. Live path unaffected.
-MAX_PICK_WEIGHT = MAX_PICK_WEIGHT_SIM if DRY_RUN else MAX_PICK_WEIGHT_LIVE
-MAX_TOTAL_DEPLOY_PCT_LIVE = 0.10   # 2026-07-16 (night): user asked to start the system's
-                               # real, live first days at only 10-20% of total equity as a
-                               # testing phase ("刚开始就用10%或者20%的总资金用来买美股测试
-                               # 这个系统") -- chose the more conservative end (10%) since
-                               # this is a brand-new autonomous mechanism's first live run.
-                               # Revisit raising this only after the system has proven itself
-                               # over some real live days -- don't creep it back up silently.
-MAX_TOTAL_DEPLOY_PCT_SIM = 1.0     # 2026-07-18: user first said the paper/dry-run side can
-                               # run WITHOUT the live-money caution ("你在模拟盘上可以不受
-                               # 限制每天练习"), then explicitly: **"模拟盘不要设置任何仓位
-                               # 限制"** (don't set ANY position limit on the simulated
-                               # account) -- removed the cap entirely (1.0 = up to 100% of
-                               # virtual equity may be deployed). No real money at risk on
-                               # this side, so let it exercise the system's full range
-                               # unconstrained to build track record faster. The per-name
-                               # cap in pick_todays_stocks() (currently 10%/name) is a
-                               # separate conviction-sizing bucket, not a total-exposure cap
-                               # -- left as-is since the user's instruction was specifically
-                               # about "仓位限制" in the total-cap sense just discussed.
-MAX_TOTAL_DEPLOY_PCT = MAX_TOTAL_DEPLOY_PCT_SIM if DRY_RUN else MAX_TOTAL_DEPLOY_PCT_LIVE
-MAX_CHASE_GAP_PCT_LIVE = 5.0   # 2026-07-16: skip a pick that's already up more than this much
-                               # from its prior close before we even get to buy it -- a
-                               # mechanical backstop for feedback_buy_dips_sell_strength.md
-                               # ("卖高不是追涨") in case the LLM screen misses an extended move
-MAX_CHASE_GAP_PCT_SIM = 1000.0 # 2026-07-21: user pushed back hard on paper-side timidity --
-                               # "你胆子可以大一些，我现在让你放开手脚在模拟盘练习，你还胆子
-                               # 这么小吗" (be bolder, I've let you loose on paper, why still
-                               # so timid) -- triggered by this exact mechanical gap filter
-                               # killing an otherwise-good pick (MMM, +7.3%, real earnings
-                               # beat). Effectively disabled on the sim side, same pattern as
-                               # the total-exposure cap and the regime gate above -- the
-                               # picker's OWN prompt-level "don't chase an extended move"
-                               # instruction is still there, just no longer double-enforced by
-                               # a rigid number. Live path unaffected, still 5%.
-MAX_CHASE_GAP_PCT = MAX_CHASE_GAP_PCT_SIM if DRY_RUN else MAX_CHASE_GAP_PCT_LIVE
-SECOND_SCAN_AFTER_MIN = 90     # 2026-07-16: if the floor hasn't been touched after this long
+# 2026-07-22: user asked to clear out every numeric rule constant and let the AI decide
+# everything ("请你把系统所有这些规则的限定都清除，以后全部让ai自己决定，我相信ai的判断",
+# then "实盘也删除" / "全部去掉" / "让ai自己判断" for the exit side too). Claude pushed back
+# on flipping the LIVE CRON on with zero track record for the new AI-judged-exit logic;
+# user agreed to keep the live cron paused until the paper side has real results
+# ("等模拟盘有结果再放实盘") -- see project_management_mandate memory. This cleanup pass
+# removes the now-dead LIVE/SIM constant split from the CODE (the numbers themselves,
+# not the live cron switch) per the user's explicit clarification that this is a code
+# cleanup, not turning live trading back on: "只是把代码里那些旧的数字常量清理干净,但
+# 实盘的cron还是保持暂停、不会真的开始拿真钱交易". IMPORTANT: whenever the live cron is
+# re-enabled in the future, it will run with these SAME unconstrained numbers -- there is
+# no longer a separate conservative live path in this file. If a future session is asked
+# to re-enable live trading, flag this explicitly before doing so.
+MAX_PICKS = 20                 # generous practical bound, not a judgment limit -- the
+                               # LLM's own "宁缺毋滥" prompt instruction governs how many
+                               # it actually picks
+MAX_PICK_WEIGHT = 1.0          # no per-name cap -- the AI's own requested conviction % is
+                               # trusted directly
+MAX_TOTAL_DEPLOY_PCT = 1.0     # no total-exposure cap
+MAX_CHASE_GAP_PCT = 1000.0     # effectively disabled -- the picker's own prompt-level
+                               # "don't chase an extended move" instruction is what's left
+SECOND_SCAN_AFTER_MIN = 90     # if the day's P&L hasn't cleared FLOOR_PCT after this long
                                # and real buying power remains uncommitted, run ONE more
                                # screen for fresh intraday catalysts rather than sitting on
                                # idle cash the rest of the day (still same quality bar --
                                # real catalyst + confirmed uptick, not chasing)
-FLOOR_PCT = 0.1                # LIVE only: protect this once reached (2026-07-15 night)
-CEILING_PCT = 2.0              # LIVE only: stop everything once reached (2026-07-15 night)
-# 2026-07-22: user, after Claude flagged this as a separate/higher-stakes decision from
-# "let the AI pick its own stocks" -- **"全部去掉"** (remove all of it) then
-# **"让ai自己判断"** (let the AI judge for itself). On DRY_RUN, FLOOR_PCT/CEILING_PCT
-# above are no longer used as hard sell triggers -- replaced by ai_judge_positions()
-# below, a periodic claude -p call that decides HOLD / SELL_ALL / HOLD_OVERNIGHT with
-# no fixed percentage rule at all. LIVE path is completely unaffected -- still the
-# fixed +0.1%/+2%/mandatory-close-out numbers, unchanged.
+FLOOR_PCT = 0.1                # used only as the second-chance-scan trigger threshold now
+                               # (see manage()) -- no longer a hard sell trigger anywhere;
+                               # ai_judge_positions() decides all holds/sells/exits
+CEILING_PCT = 2.0              # UNUSED -- kept only so old state files referencing it (if
+                               # any) don't error; exits are entirely AI-judged now
 POSITION_JUDGE_COOLDOWN_MIN = 20   # don't re-ask more often than this (cost control),
                                     # except when close is near -- then ask every tick
                                     # until it gives an unambiguous HOLD_OVERNIGHT/SELL_ALL
@@ -604,12 +566,18 @@ def park_to_sgov():
     log(f"  parked ${cash:.2f} cash into {qty} SGOV @~${limit_px} order={o.id[:8]}")
 
 
-def ai_judge_positions(state, day_pl_pct, mins_to_close):
-    # DRY_RUN only -- replaces the fixed FLOOR_PCT/CEILING_PCT/mandatory-close-out
-    # numbers with the AI's own judgment call, per "全部去掉" + "让ai自己判断".
+def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
+    # Replaces the fixed FLOOR_PCT/CEILING_PCT/mandatory-close-out numbers with
+    # the AI's own judgment call, per "全部去掉" + "让ai自己判断". Works for
+    # both the virtual (DRY_RUN) and real (live, currently paused) ledger.
     # Returns (action, detail) where action in {'hold','sell_all','hold_overnight'}.
-    sim_positions = state.get('sim_positions', {})
-    if not sim_positions:
+    if DRY_RUN:
+        held = {sym: {'entry_price': pos['entry_price'], 'qty': pos['qty']}
+                for sym, pos in state.get('sim_positions', {}).items()}
+    else:
+        held = {p.symbol: {'entry_price': float(p.avg_entry_price), 'qty': float(p.qty)}
+                for p in api.list_positions()}
+    if not held:
         return 'hold', None
 
     near_close = mins_to_close <= 20
@@ -625,7 +593,7 @@ def ai_judge_positions(state, day_pl_pct, mins_to_close):
 
     import market_data as md
     lines = []
-    for sym, pos in sim_positions.items():
+    for sym, pos in held.items():
         q = md.get_stock_quote(sym)
         px = q['current'] if q and q.get('current') else pos['entry_price']
         plpc = (px - pos['entry_price']) / pos['entry_price'] * 100
@@ -634,8 +602,9 @@ def ai_judge_positions(state, day_pl_pct, mins_to_close):
 
     near_close_note = ("现在快收盘了,必须在 HOLD_OVERNIGHT 和 SELL_ALL 之间二选一,"
                         "不能只说HOLD。\n" if near_close else "")
+    account_note = "一个模拟盘(无真实资金风险)" if DRY_RUN else "一个真实资金账户"
     prompt = (
-        "你在管理一个模拟盘(无真实资金风险)的日内交易组合,不受任何固定百分比"
+        f"你在管理{account_note}的日内交易组合,不受任何固定百分比"
         "止盈止损规则限制,完全靠你自己的判断决定接下来怎么做。\n\n"
         f"当日账户总盈亏: {day_pl_pct:+.2f}%\n距收盘约{mins_to_close:.0f}分钟\n"
         f"持仓明细:\n" + "\n".join(lines) + "\n\n"
@@ -696,46 +665,31 @@ def manage(api, state):
                 p = positions[sym]
                 log(f"  {sym}: qty={p.qty} plpc={float(p.unrealized_plpc)*100:+.2f}% (holding to close)")
 
-    if DRY_RUN:
-        if state.get('hold_overnight'):
-            # Already decided this session -- don't re-ask every tick in the
-            # last 20 minutes (wasteful + risks a flip-flopping answer).
-            # Just wait for the close to actually arrive, then stop ticking.
-            if mins_to_close <= 2:
-                state['done'] = True
-                save_state(state)
-            return
-        action, detail = ai_judge_positions(state, day_pl_pct, mins_to_close)
-        if action == 'sell_all':
-            reason = f"AI判断: {detail or '主动平仓'} (当日盈亏 {day_pl_pct:+.2f}%)"
-            finalize_day(api, state, day_pl_pct, reason)
-            return
-        if action == 'hold_overnight':
-            state['hold_overnight'] = True
+    # Exits are entirely AI-judged now (no fixed floor/ceiling/close-out numbers --
+    # see ai_judge_positions()), for both the paper and (currently paused) live path.
+    if state.get('hold_overnight'):
+        # Already decided this session -- don't re-ask every tick in the
+        # last 20 minutes (wasteful + risks a flip-flopping answer).
+        # Just wait for the close to actually arrive, then stop ticking.
+        if mins_to_close <= 2:
+            state['done'] = True
             save_state(state)
-            log(f"  AI决定隔夜持有: {detail}")
-            record_action(state, f"AI判断隔夜持有: {detail} (当日盈亏 {day_pl_pct:+.2f}%)")
-            if mins_to_close <= 2:
-                state['done'] = True  # stop ticking for today; positions carry to tomorrow
-                save_state(state)
-            return
-        # action == 'hold': fall through, keep ticking
-    else:
-        reason = None
-        if day_pl_pct >= CEILING_PCT:
-            reason = f"当日盈亏达到 {day_pl_pct:+.2f}%,触及 {CEILING_PCT}% 天花板,全部锁定离场"
-        elif not state.get('floor_armed') and day_pl_pct >= FLOOR_PCT:
-            state['floor_armed'] = True
+        return
+    action, detail = ai_judge_positions(api, state, day_pl_pct, mins_to_close)
+    if action == 'sell_all':
+        reason = f"AI判断: {detail or '主动平仓'} (当日盈亏 {day_pl_pct:+.2f}%)"
+        finalize_day(api, state, day_pl_pct, reason)
+        return
+    if action == 'hold_overnight':
+        state['hold_overnight'] = True
+        save_state(state)
+        log(f"  AI决定隔夜持有: {detail}")
+        record_action(state, f"AI判断隔夜持有: {detail} (当日盈亏 {day_pl_pct:+.2f}%)")
+        if mins_to_close <= 2:
+            state['done'] = True  # stop ticking for today; positions carry to tomorrow
             save_state(state)
-            log(f"  floor armed: day P&L {day_pl_pct:+.2f}% cleared the {FLOOR_PCT}% floor")
-        elif state.get('floor_armed') and day_pl_pct <= FLOOR_PCT:
-            reason = f"当日盈亏从高于{FLOOR_PCT}%回落到 {day_pl_pct:+.2f}%,保护底线离场"
-        elif mins_to_close <= 15:
-            reason = f"距收盘不到15分钟 (当日盈亏 {day_pl_pct:+.2f}%),按规则强制平仓"
-
-        if reason:
-            finalize_day(api, state, day_pl_pct, reason)
-            return
+        return
+    # action == 'hold': fall through, keep ticking
 
     # 2026-07-16: second-chance re-scan -- user asked to raise the probability
     # of clearing the floor, and this is a legitimate way to do it (more
@@ -820,25 +774,16 @@ def main():
 
     if not state.get('weights') and not state.get('skipped_regime'):
         ok, chg_pct = market_regime_ok(api)
-        # 2026-07-21: user wants full AI judgment tested on the paper account
-        # -- "不管什么情况都是让ai自己决定买卖，先在模拟盘上练习" (no matter
-        # the conditions, let the AI decide buy/sell itself -- practice this
-        # on paper first). On DRY_RUN, the SPY-down gate no longer hard-skips
-        # the day; instead it's passed as CONTEXT into the picker so the AI
-        # weighs it itself (it can still return NONE via "宁缺毋滥" if it
-        # judges conditions too weak -- the point is it's the AI's call every
-        # time, not a fixed mechanical rule). LIVE keeps the hard gate
-        # unchanged -- real money still gets the mechanical safety net.
+        # 2026-07-21/22: user wants full AI judgment -- "不管什么情况都是让ai自己决定
+        # 买卖" then "全部去掉"/"让ai自己判断" for the live path too. The SPY-down
+        # gate no longer hard-skips the day for either path; it's passed as CONTEXT
+        # into the picker so the AI weighs it itself (it can still return NONE via
+        # "宁缺毋滥" if it judges conditions too weak -- the point is it's the AI's
+        # call every time, not a fixed mechanical rule).
         regime_note = ""
         if not ok:
             regime_note = f"注意:大盘今天走弱(SPY {chg_pct:+.2f}%),请自行判断是否仍要建仓。\n\n"
-            if not DRY_RUN:
-                log(f"  SPY pre-market/today {chg_pct:+.2f}% -- broad market weak, skipping today's entries entirely")
-                state['skipped_regime'] = True
-                record_action(state, f"大盘走弱(SPY {chg_pct:+.2f}%),今天选择不建仓,继续持有美债")
-                finalize_day(api, state, 0.0, "大盘/盘前走弱,今天选择空仓", do_liquidate=False)
-                return
-            log(f"  SPY pre-market/today {chg_pct:+.2f}% -- weak, but DRY_RUN lets the AI itself decide")
+            log(f"  SPY pre-market/today {chg_pct:+.2f}% -- weak, letting the AI itself decide")
         exclude = already_held_elsewhere(api)
         picks, cost = pick_todays_stocks(api, exclude=exclude, extra_note=regime_note)
         if not picks:
