@@ -91,12 +91,26 @@ CLAUDE_BIN = "/home/qbao775/.local/bin/claude"
 DRY_RUN = os.environ.get('DOD_DRY_RUN') == '1'
 
 ENTRY_CONFIRM_TICKS = 1        # Granville's Rules -- buy on the first confirmed bullish tick
-MAX_PICKS = 6                  # 2026-07-16: raised 5->6 for more diversification -- more
+MAX_PICKS_LIVE = 6             # 2026-07-16: raised 5->6 for more diversification -- more
                                # independent real-catalyst bets lowers the VARIANCE of the
                                # portfolio's day P&L around its mean, which raises the
                                # probability of clearing a small threshold like +0.1% without
                                # adding any leverage or risk per name (user: "优化系统提升
                                # 至少0.1%的概率" -- diversify/improve quality, don't escalate risk)
+MAX_PICKS_SIM = 20             # 2026-07-22: user: "请你把系统所有这些规则的限定都清除，以后
+                               # 全部让ai自己决定，我相信ai的判断" (clear out all these rule
+                               # limits, let the AI decide everything from now on, I trust
+                               # the AI's judgment) -- removed the arbitrary pick-count
+                               # ceiling on the sim side (20 is a generous practical bound,
+                               # not a judgment-limiting number); the LLM's own "宁缺毋滥"
+                               # prompt instruction is what actually governs how many it
+                               # picks. Live path unaffected, still capped at 6.
+MAX_PICKS = MAX_PICKS_SIM if DRY_RUN else MAX_PICKS_LIVE
+MAX_PICK_WEIGHT_LIVE = 0.10    # per-name conviction-sizing ceiling
+MAX_PICK_WEIGHT_SIM = 1.0      # 2026-07-22: same instruction as above -- no per-name cap on
+                               # the sim side either; the AI's own conviction (expressed as
+                               # its requested %) is trusted directly. Live path unaffected.
+MAX_PICK_WEIGHT = MAX_PICK_WEIGHT_SIM if DRY_RUN else MAX_PICK_WEIGHT_LIVE
 MAX_TOTAL_DEPLOY_PCT_LIVE = 0.10   # 2026-07-16 (night): user asked to start the system's
                                # real, live first days at only 10-20% of total equity as a
                                # testing phase ("刚开始就用10%或者20%的总资金用来买美股测试
@@ -354,6 +368,10 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         log("  no search results at all -- skipping today's picks")
         return [], 0.0
 
+    weight_rule = (f"每只权重不要超过{MAX_PICK_WEIGHT*100:.0f}%,最多{MAX_PICKS}只。"
+                   if MAX_PICK_WEIGHT < 1.0 else
+                   "权重按你自己的把握程度定,没有固定上限——但仍然要体现真实的相对置信度"
+                   f"(比如高确信可以明显重一些),不是无脑平均分配。最多{MAX_PICKS}只。")
     context = "\n\n---\n\n".join(search_snippets)
     prompt = (
         "你是短线交易研究员。基于下面的实时搜索结果,挑选今天(美股开盘)最多"
@@ -370,7 +388,7 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         "请严格按以下格式输出,每行一只股票,不要有其他文字或markdown:\n"
         "TICKER: 权重% 一句话理由\n"
         "例如:\nPYPL: 8% 财报超预期上调指引\n\n"
-        f"权重不要超过10%,最多{MAX_PICKS}只。如果没有找到任何真正有说服力的标的,只输出: NONE"
+        f"{weight_rule}如果没有找到任何真正有说服力的标的,只输出: NONE"
     )
     try:
         result = subprocess.run(
@@ -398,7 +416,7 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
             if sym in exclude:
                 log(f"  {sym}: excluded (already a long-term hold / already held) — skipping")
                 continue
-            picks.append((sym, min(pct / 100, 0.10), reason))
+            picks.append((sym, min(pct / 100, MAX_PICK_WEIGHT), reason))
     picks = picks[:MAX_PICKS]
 
     # Mechanical "not already extended" backstop -- feedback_buy_dips_sell_strength.md
