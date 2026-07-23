@@ -357,10 +357,14 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         "美债完全可以接受,不需要为了交易而交易。\n\n"
         f"{extra_context}"
         f"搜索结果:\n{context}\n\n"
-        "请严格按以下格式输出,每行一只股票,不要有其他文字或markdown:\n"
+        "请严格按以下格式输出,不要有markdown:\n"
+        "先按每行一只股票列出你选中的:\n"
         "TICKER: 权重% 一句话理由\n"
         "例如:\nPYPL: 8% 财报超预期上调指引\n\n"
-        f"{weight_rule}如果没有找到任何真正有说服力的标的,只输出: NONE"
+        f"{weight_rule}如果没有找到任何真正有说服力的标的,只输出: NONE\n\n"
+        "选完之后另起一行,以 REJECTED: 开头,简要列出你在搜索结果里看到但没有选的"
+        "其他标的和理由(比如'追高风险大'、'消息不够具体'、'已经在长期持仓里'等),"
+        "方便事后复盘对比。如果搜索结果里没有其他候选,写 REJECTED: 无。"
     )
     try:
         result = subprocess.run(
