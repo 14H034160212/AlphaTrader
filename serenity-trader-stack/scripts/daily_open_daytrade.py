@@ -314,12 +314,25 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
     if exclude:
         extra_context += (f"以下标的今天不要选(已经是长期持仓或当前已持有,"
                            f"避免和日内交易混淆): {', '.join(sorted(exclude))}\n\n")
+    # 2026-07-23: user said the search scope was too narrow ("请你搜索的更广") --
+    # widened from 4 queries covering only earnings/M&A/upgrades/generic gainers
+    # to a much broader sweep across sectors and catalyst types, plus a real
+    # market-wide screener (not just text search) for actual price-mover
+    # coverage the queries alone might miss.
     search_snippets = []
     queries = [
         "stock market positive catalyst news today earnings beat upgrade",
         "stock M&A acquisition announcement today",
         "stock analyst upgrade price target raised today",
         "biggest stock gainers today real news reason not hype",
+        "biotech FDA approval drug trial results today",
+        "semiconductor AI chip company news today",
+        "energy oil gas utility company news today",
+        "financial services bank insurance earnings news today",
+        "government contract award defense aerospace news today",
+        "retail consumer company earnings guidance news today",
+        "small cap stock breakout news today",
+        "insider buying stock news today",
     ]
     for q in queries:
         try:
@@ -335,6 +348,27 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
                 log(f"  search failed rc={r.returncode} for: {q}")
         except Exception as e:
             log(f"  search error for '{q}': {e}")
+
+    # Real market-wide screener supplement (actual price/volume movers, not text
+    # search) -- labeled clearly so the AI verifies the REASON itself rather than
+    # chasing a bare mover, per feedback_buy_dips_sell_strength.md.
+    try:
+        import yfinance as yf
+        gainers = yf.screen('day_gainers', count=25)
+        rows = gainers.get('quotes', [])
+        mover_lines = []
+        for row in rows[:25]:
+            sym = row.get('symbol')
+            chg = row.get('regularMarketChangePercent')
+            price = row.get('regularMarketPrice')
+            vol = row.get('regularMarketVolume')
+            if sym and chg is not None and price and price >= 10 and vol and vol >= 300_000:
+                mover_lines.append(f"{sym}: {chg:+.1f}% (现价${price:.2f})")
+        if mover_lines:
+            search_snippets.append("实时全市场涨幅榜(仅供参考,自己判断消息是否真实,"
+                                    "不要单纯因为涨幅大就选):\n" + "\n".join(mover_lines))
+    except Exception as e:
+        log(f"  market screener error: {e}")
 
     if not search_snippets:
         log("  no search results at all -- skipping today's picks")
