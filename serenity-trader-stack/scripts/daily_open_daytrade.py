@@ -139,6 +139,16 @@ NO_PRICE_GIVEUP_TICKS = 15     # 2026-07-17: found via the dry-run -- ABB had no
                                # trading day, retried every tick with no cap. Give up after
                                # this many failed ticks instead of retrying forever.
 
+NEW_ENTRIES_PAUSED_FILE = '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_NEW_ENTRIES_PAUSED'
+# 2026-07-23: user, right as the idle-capital rescan fix above was about to fire for the
+# first time -- "我建议不要再加仓位了，因为代码还在更新" + "尽量稳一些" (don't add more
+# positions while the code is still being actively changed, stay stable). Rather than
+# reverting the fix (which is correct and should stay), this marker file (created
+# out-of-band, not by this script) gates NEW position additions only (both the initial
+# daily pick and the second-chance rescan) -- existing positions (e.g. TEL) still get
+# managed normally by ai_judge_positions(). Delete this file only once the user says the
+# code has stabilized and new entries can resume -- don't remove it on your own judgment.
+
 STATE_FILE = ('/home/qbao775/serenity-trader-stack/.daily_open_daytrade_DRYRUN_state.json' if DRY_RUN
               else '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_state.json')
 HISTORY_FILE = ('/home/qbao775/serenity-trader-stack/.daily_open_daytrade_DRYRUN_history.jsonl' if DRY_RUN
@@ -747,7 +757,8 @@ def manage(api, state):
     current_total_w = sum(state['weights'].values())
     underperforming = day_pl_pct < FLOOR_PCT
     idle_capital = current_total_w < MIN_DEPLOYED_PCT_BEFORE_RESCAN
-    if ((underperforming or idle_capital) and not state.get('second_scan_done')
+    if (not os.path.exists(NEW_ENTRIES_PAUSED_FILE)
+            and (underperforming or idle_capital) and not state.get('second_scan_done')
             and elapsed_min >= SECOND_SCAN_AFTER_MIN and mins_to_close > 30):
         state['second_scan_done'] = True
         save_state(state)
@@ -821,6 +832,12 @@ def main():
         state['day_start_equity'] = float(acc.equity)
         state['day_start_time'] = datetime.datetime.utcnow().isoformat()
         save_state(state)
+
+    if not state.get('weights') and not state.get('skipped_regime') and os.path.exists(NEW_ENTRIES_PAUSED_FILE):
+        log("  new entries paused (code under active development) -- staying in cash/SGOV")
+        record_action(state, "新开仓已暂停(代码还在更新),今天继续持有美债")
+        finalize_day(api, state, 0.0, "代码更新期间暂停新开仓", do_liquidate=False)
+        return
 
     if not state.get('weights') and not state.get('skipped_regime'):
         ok, chg_pct = market_regime_ok(api)
