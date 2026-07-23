@@ -117,6 +117,15 @@ SECOND_SCAN_AFTER_MIN = 90     # if the day's P&L hasn't cleared FLOOR_PCT after
                                # screen for fresh intraday catalysts rather than sitting on
                                # idle cash the rest of the day (still same quality bar --
                                # real catalyst + confirmed uptick, not chasing)
+MIN_DEPLOYED_PCT_BEFORE_RESCAN = 0.30  # 2026-07-23: user asked "你的持仓还需要调整吗" after
+                               # the widened search found 6 good diversified picks while
+                               # the account sat >85% idle in cash/SGOV with only one
+                               # position (already profitable, so the P&L-based rescan
+                               # trigger below never fired). Added a SECOND, independent
+                               # reason to rescan: if still under this much total exposure
+                               # after SECOND_SCAN_AFTER_MIN, look for more regardless of
+                               # current P&L -- idle capital + good opportunities elsewhere
+                               # is its own reason to diversify, not just underperformance.
 FLOOR_PCT = 0.1                # used only as the second-chance-scan trigger threshold now
                                # (see manage()) -- no longer a hard sell trigger anywhere;
                                # ai_judge_positions() decides all holds/sells/exits
@@ -735,10 +744,14 @@ def manage(api, state):
     # hasn't been touched after SECOND_SCAN_AFTER_MIN and there's still real
     # uncommitted buying power, take one more look for fresh catalysts.
     elapsed_min = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(state['day_start_time'])).total_seconds() / 60
-    if (day_pl_pct < FLOOR_PCT and not state.get('second_scan_done')
+    current_total_w = sum(state['weights'].values())
+    underperforming = day_pl_pct < FLOOR_PCT
+    idle_capital = current_total_w < MIN_DEPLOYED_PCT_BEFORE_RESCAN
+    if ((underperforming or idle_capital) and not state.get('second_scan_done')
             and elapsed_min >= SECOND_SCAN_AFTER_MIN and mins_to_close > 30):
         state['second_scan_done'] = True
         save_state(state)
+        why = "underperforming" if underperforming else "idle capital, current picks already doing fine"
         # 2026-07-17: BUG FOUND VIA THE DRY-RUN -- this used to scale new picks
         # against `bp/equity` (raw uncommitted CASH), which is nearly always
         # large since MAX_TOTAL_DEPLOY_PCT intentionally leaves most of the
@@ -749,10 +762,9 @@ def manage(api, state):
         # barely any additional scaling, pushing intended exposure to 12-15%,
         # over the 10% ceiling. The correct constraint is remaining ROOM
         # under the total cap, not remaining cash.
-        current_total_w = sum(state['weights'].values())
         room = max(0.0, MAX_TOTAL_DEPLOY_PCT - current_total_w)
         if room > 0.01:  # only bother if there's meaningful cap room left
-            log(f"  floor not yet touched after {elapsed_min:.0f}min -- running a second-chance scan (room={room*100:.1f}%)")
+            log(f"  {why} after {elapsed_min:.0f}min -- running a second-chance scan (room={room*100:.1f}%)")
             exclude = already_held_elsewhere(api) | set(state['weights'].keys())
             picks, cost = pick_todays_stocks(api, exclude=exclude)
             if picks:
