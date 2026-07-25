@@ -1145,3 +1145,17 @@ REASON: short-term Treasury yields remain elevated and stable
 OVERALL: BULLISH
 
 
+### 2026-07-25 08:00 UTC 自动交叉验证
+- P&L: +0.1%
+- 4大师速览: NEUTRAL
+BUFFETT: HOLD — cash equivalent with negligible business risk
+MUNGER: Mistake if US sovereign credit collapses or hyperinflation occurs
+DUAN(段永平): No — lacks the competitive advantage of a great business
+LI_LU(李录): Minimal compounding, but negligible risk of permanent loss
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: US Treasury bills continue to provide stable, low-risk short-term yields
+OVERALL: BULLISH
+
+
