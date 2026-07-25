@@ -44,3 +44,26 @@
   - State of AI Usage Report 2026 - LayerX
   - Microsoft Copilot Usage Statistics 2026 | Presenc AI
   - Microsoft Copilot Usage Falls Sharply as Google's Gemini Gains Ground | Technobezz
+
+## 2026-07-25
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(7), Google/GOOGL(5), Anthropic (via GOOGL/AMZN investment)(5), Meta/META(3), Microsoft/MSFT(1)
+- 消费端App排名:
+  - Meta AI, ChatGPT, and DramaWave lead June 2026 global app rankings | Games Industry Network | Türkiye, Europe, MENA & Asia
+  - ChatGPT still leads chatbot app downloads, but Gemini and Claude are closing the gap
+  - Meta AI - Assistant & Glasses - Apple App Store - US - Category Rankings, Keyword Rankings, Sales Rankings, Research, Performance, and Growt
+  - ChatGPT Tops iPhone App Store as AI Apps Dominate Free Charts Alongside Puzzle Games - HINO9
+- 开发者/API调用份额:
+  - LLM Rankings
+  - AI Model Leaderboard 2026 - Ranked by Usage | whatstrending.ai
+  - AI Market Share 2026 - Provider Share of OpenRouter Usage | whatstrending.ai
+  - OpenRouter Models Leaderboard: Adoption, Spend, Price and Context | CodeSOTA | CodeSOTA
+- 网站流量对比:
+  - ChatGPT, Gemini, and Claude: How Generative AI Web Traffic Is Redistributing Across Three Distinct Moats - FourWeekMBA
+  - ChatGPT vs Gemini vs Claude Usage Market Share: 2026 Statistics and Demographics
+  - Anthropic's Claude captures 9% of global generative AI traffic in June
+  - ChatGPT Lost 24 Points of Market Share in 12 Months — Here's Who Took It - FourWeekMBA
+- 企业级采用率:
+  - Google’s AI & Economy ATLAS v1.0: Mapping Gemini Usage in the
+  - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
+  - State of AI Usage Report 2026 - LayerX
+  - Microsoft Copilot Usage Statistics 2026 | Presenc AI
