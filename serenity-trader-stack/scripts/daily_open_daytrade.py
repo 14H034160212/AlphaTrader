@@ -89,6 +89,15 @@ CLAUDE_BIN = "/home/qbao775/.local/bin/claude"
 # position ledger priced with real live market data, so tonight's rehearsal
 # is testing the actual thing that goes live tomorrow, not an approximation.
 DRY_RUN = os.environ.get('DOD_DRY_RUN') == '1'
+# 2026-07-28: user's standing principle, stated after the live TEL position failed to
+# follow the paper account's AI exit -- **"实盘的操作应该和模拟盘一致"** (the live
+# account's operations must be consistent with the paper account). With this flag on,
+# every sim trade the paper loop executes is immediately mirrored on the REAL account:
+# sim buy -> real buy (same weight of real equity, funded by trimming SGOV if needed);
+# sim sell -> real sell of the same symbol; after mirrored sells, real proceeds are
+# parked into SGOV per the standing rule. A mirror failure never breaks the paper loop
+# (each mirror op is individually try/except'd) -- divergence is logged loudly instead.
+MIRROR_TO_LIVE = os.environ.get('DOD_MIRROR_LIVE') == '1'
 
 ENTRY_CONFIRM_TICKS = 1        # Granville's Rules -- buy on the first confirmed bullish tick
 # 2026-07-22: user asked to clear out every numeric rule constant and let the AI decide
@@ -294,13 +303,14 @@ def finalize_day(api, state, day_pl_pct, reason, do_liquidate=True):
     # picks, or a real ceiling/floor/close-out trigger) -- keeps the
     # append-only HISTORY_FILE and the SGOV park-back consistent no matter
     # which exit path fired.
+    live_sold = 0
     if do_liquidate:
-        liquidate_all(api, reason, state)
+        live_sold = liquidate_all(api, reason, state) or 0
     state['done'] = True
     state['final_pl_pct'] = day_pl_pct
     save_state(state)
     log(f"today's auto day-trade wound down — {reason}")
-    park_to_sgov()
+    park_to_sgov(mirror_live=(DRY_RUN and MIRROR_TO_LIVE and live_sold > 0))
     append_history({'date': state['date'], 'weights': state.get('weights', {}),
                      'reasons': state.get('reasons', {}), 'final_pl_pct': day_pl_pct,
                      'reason': reason})
@@ -553,6 +563,14 @@ def enter(api, state):
             state.setdefault('sim_positions', {})[sym] = {'qty': qty, 'entry_price': px}
             state['sim_cash'] = bp - notional
             log(f"  [DRY-RUN] ✓ BOUGHT {sym} qty={qty} @~${px:.2f} (confirmed uptrend, {rise_streak} consecutive rises)")
+            if MIRROR_TO_LIVE:
+                try:
+                    live_qty = mirror_live_buy(api, sym, w, px)
+                    if live_qty:
+                        record_action(state, f"[实盘同步] 买入 {sym} {live_qty}股 @~${px:.2f}")
+                except Exception as e:
+                    log(f"  [LIVE-MIRROR] buy {sym} FAILED -- live has DIVERGED from paper: {e}")
+                    record_action(state, f"[实盘同步失败] {sym} 实盘买入失败,实盘与模拟盘出现偏差: {e}")
         else:
             try:
                 a = api.get_asset(sym)
@@ -573,9 +591,50 @@ def enter(api, state):
         record_action(state, f"买入 {sym} {qty}股 @~${px:.2f} (确认{rise_streak}次连续上涨后进场) -- {state['reasons'].get(sym, '')}")
 
 
+def mirror_live_buy(api, sym, w, px):
+    # LIVE mirror of a sim buy: same weight applied to REAL equity, funded by
+    # trimming SGOV if free buying power is short ("实盘的操作应该和模拟盘一致").
+    acct = api.get_account()
+    equity = float(acct.equity)
+    notional = equity * w
+    bp = float(acct.buying_power)
+    if bp < notional + 5:
+        shortfall = notional + 5 - bp
+        k, s, _ = _alpaca_creds()
+        r = requests.get('https://data.alpaca.markets/v2/stocks/SGOV/trades/latest',
+                          headers={'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}, timeout=15)
+        sgov_px = r.json()['trade']['p']
+        try:
+            held_sgov = float(api.get_position('SGOV').qty)
+        except Exception:
+            held_sgov = 0.0
+        sq = min(round(shortfall / sgov_px + 0.01, 4), held_sgov)
+        if sq > 0:
+            api.submit_order(symbol='SGOV', qty=sq, side='sell', type='market', time_in_force='day')
+            log(f"  [LIVE-MIRROR] sold {sq} SGOV to fund {sym} buy")
+            import time
+            time.sleep(6)
+            bp = float(api.get_account().buying_power)
+    qty = round(min(notional, max(bp - 5, 0)) / px, 4)
+    if qty <= 0:
+        log(f"  [LIVE-MIRROR] {sym}: no buying power even after SGOV trim -- skipped")
+        return None
+    try:
+        o = api.submit_order(symbol=sym, qty=qty, side='buy', type='market', time_in_force='day')
+    except Exception as e:
+        if 'fractionable' in str(e).lower() and int(qty) > 0:
+            o = api.submit_order(symbol=sym, qty=int(qty), side='buy', type='market', time_in_force='day')
+            qty = int(qty)
+        else:
+            raise
+    log(f"  [LIVE-MIRROR] ✓ BOUGHT {sym} qty={qty} @~${px:.2f} order={o.id[:8]}")
+    return qty
+
+
 def liquidate_all(api, reason, state):
     if DRY_RUN:
         import market_data as md
+        sold_syms = []
         for sym, pos in list(state.get('sim_positions', {}).items()):
             q = md.get_stock_quote(sym)
             px = q['current'] if q and q.get('current') else pos['entry_price']
@@ -583,9 +642,21 @@ def liquidate_all(api, reason, state):
             state['sim_cash'] = state.get('sim_cash', 0) + pos['qty'] * px
             log(f"  [DRY-RUN] ✓ SOLD {sym} qty={pos['qty']} @~${px:.2f} — {reason}")
             record_action(state, f"卖出 {sym} qty={pos['qty']} 盈亏{plpc:+.2f}% — {reason}")
+            sold_syms.append(sym)
         state['sim_positions'] = {}
         save_state(state)
-        return
+        live_sold = 0
+        if MIRROR_TO_LIVE:
+            for sym in sold_syms:
+                try:
+                    p = api.get_position(sym)
+                    o = api.submit_order(symbol=sym, qty=p.qty, side='sell', type='market', time_in_force='day')
+                    log(f"  [LIVE-MIRROR] ✓ SOLD {sym} qty={p.qty} order={o.id[:8]} — {reason}")
+                    record_action(state, f"[实盘同步] 卖出 {sym} qty={p.qty} — {reason}")
+                    live_sold += 1
+                except Exception as e:
+                    log(f"  [LIVE-MIRROR] sell {sym} failed/none held: {e}")
+        return live_sold
     positions = api.list_positions()
     for p in positions:
         try:
@@ -597,8 +668,8 @@ def liquidate_all(api, reason, state):
             log(f"  sell {p.symbol} failed: {e}")
 
 
-def park_to_sgov():
-    if DRY_RUN:
+def park_to_sgov(mirror_live=False):
+    if DRY_RUN and not mirror_live:
         log("  [DRY-RUN] skipping SGOV park-back (simulation only, no real cash)")
         return
     api = get_alpaca()
@@ -659,7 +730,9 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
 
     near_close_note = ("现在快收盘了,必须在 HOLD_OVERNIGHT 和 SELL_ALL 之间二选一,"
                         "不能只说HOLD。\n" if near_close else "")
-    account_note = "一个模拟盘(无真实资金风险)" if DRY_RUN else "一个真实资金账户"
+    account_note = ("一个模拟盘(其每笔操作会同步镜像到真实资金账户,请按真实资金的审慎程度判断)"
+                    if (DRY_RUN and MIRROR_TO_LIVE)
+                    else ("一个模拟盘(无真实资金风险)" if DRY_RUN else "一个真实资金账户"))
     prompt = (
         f"你在管理{account_note}的日内交易组合,不受任何固定百分比"
         "止盈止损规则限制,完全靠你自己的判断决定接下来怎么做。\n\n"
