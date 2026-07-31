@@ -880,6 +880,27 @@ def manage(api, state):
     save_state(state)
 
 
+def acquire_singleton_lock():
+    # 2026-07-31: REAL-MONEY INCIDENT -- the rate-limit pacing added earlier today
+    # made the 13:30 picker run take >4 minutes, so the 13:31-13:34 cron ticks all
+    # started their own overlapping processes: each re-ran the picker on stale
+    # state, LMT got bought TWICE on the live account (double the intended 7%),
+    # a stale re-pick bought CELC on paper that live never held, and concurrent
+    # save_state() writers clobbered each other's position records. Same failure
+    # class as the 2026-07-15 AEHR manual/cron race, now made structurally
+    # impossible: only one instance may run at a time -- later ticks exit
+    # immediately instead of queueing (the next minute's tick picks up anyway).
+    # The cron line ALSO wraps with flock -n; this in-code guard survives someone
+    # copying the cron line without it.
+    import fcntl
+    lockf = open('/tmp/dod_daytrade_singleton.lock', 'w')
+    try:
+        fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return None
+    return lockf  # keep the handle alive for the process lifetime
+
+
 def main():
     api = get_alpaca()
     clock = api.get_clock()
@@ -970,6 +991,11 @@ def main():
 
 
 if __name__ == '__main__':
+    _lock = acquire_singleton_lock()
+    if _lock is None:
+        # Another instance is mid-run (e.g. a slow picker) -- skip this tick
+        # silently; the next minute's tick will land once it finishes.
+        sys.exit(0)
     try:
         main()
     except Exception:
