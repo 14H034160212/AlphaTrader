@@ -76,7 +76,7 @@ def snapshot_capabilities():
         from ib_insync import IB, Stock
         ib = IB()
         ib.connect("127.0.0.1", 4001, clientId=99, timeout=10)
-        acc = "[ibkr-acct-redacted]"
+        acc = os.environ.get("IBKR_ACCOUNT_ID", "")
         # Buying power + funded status
         s_map = {s.tag: s for s in ib.accountSummary(acc)}
         nl = float(s_map.get("NetLiquidation").value) if s_map.get("NetLiquidation") else 0.0

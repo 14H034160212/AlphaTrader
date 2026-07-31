@@ -49,7 +49,7 @@ Plan D delivers ~2-3pp higher CAGR + lower drawdown + significantly better Sharp
 - **Cron**: every 30 min
 - **Trigger**: Alpaca `cash > $30,000` (NZ$100k arrival threshold)
 - **Marker**: `~/serenity-trader-stack/.nz100k-deployed` (prevents re-run)
-- **Email**: `[email-redacted]` (Resend API — currently returning 403; fix pending)
+- **Email**: `<email-redacted>` (Resend API — currently returning 403; fix pending)
 
 ## What Plan D is NOT
 

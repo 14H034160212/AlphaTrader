@@ -62,7 +62,22 @@ STALE_DEEPDIVE_DAYS = 7         # force a paid check-in even if nothing else fir
 # Needs to be >= the cron interval to do anything; 5h gives one real cycle of
 # headroom without silencing a genuinely new escalation for too long.
 INFRA_FAILURE_COOLDOWN_HOURS = 5
-USER_EMAIL = '[email-redacted]'
+# 2026-07-31: personal address removed from the public repo -- resolved from
+# the local DB (email_recipient) with an env-var fallback, never hardcoded.
+def _user_email():
+    try:
+        from database import SessionLocal, get_setting
+        db = SessionLocal()
+        v = get_setting(db, 'email_recipient', 1, '')
+        db.close()
+        if v:
+            return v
+    except Exception:
+        pass
+    import os as _os
+    return _os.environ.get('ALPHATRADER_USER_EMAIL', '')
+
+USER_EMAIL = _user_email()
 
 # 2026-07-07: user asked to also proactively screen NEW buy candidates every
 # 4h, not just recheck existing satellite holdings — starting with Korea/

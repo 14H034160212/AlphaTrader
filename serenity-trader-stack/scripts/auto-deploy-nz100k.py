@@ -31,7 +31,22 @@ if os.path.exists(_ENV_FILE):
 MARKER = '/home/qbao775/serenity-trader-stack/.nz100k-deployed'
 LOG = '/home/qbao775/serenity-trader-stack/auto-deploy.log'
 THRESHOLD = 30000.0
-USER_EMAIL = '[email-redacted]'
+# 2026-07-31: personal address removed from the public repo -- resolved from
+# the local DB (email_recipient) with an env-var fallback, never hardcoded.
+def _user_email():
+    try:
+        from database import SessionLocal, get_setting
+        db = SessionLocal()
+        v = get_setting(db, 'email_recipient', 1, '')
+        db.close()
+        if v:
+            return v
+    except Exception:
+        pass
+    import os as _os
+    return _os.environ.get('ALPHATRADER_USER_EMAIL', '')
+
+USER_EMAIL = _user_email()
 
 TARGETS = {
     'SPY':   0.70,

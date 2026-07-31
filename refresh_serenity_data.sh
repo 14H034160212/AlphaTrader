@@ -62,7 +62,7 @@ git -C "$REPO" pull -q --no-rebase origin main || true
 sync_into "$REPO/serenity-aleabitoreddit"
 if [ -n "$(git -C "$REPO" status --porcelain)" ]; then
     git -C "$REPO" add -A
-    git -C "$REPO" -c user.name="Qiming Bao" -c user.email="[email-redacted]" \
+    git -C "$REPO" -c user.name="AlphaTrader Bot" -c user.email="14H034160212+bot@users.noreply.github.com" \
         commit -q -m "chore: auto-sync Serenity data from yan-labs upstream ($(date -u +%FT%TZ))"
     if git -C "$REPO" push -q origin main; then
         echo "pushed serenity-skills update"
