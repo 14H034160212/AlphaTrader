@@ -1,0 +1,40 @@
+name: deadman-failsafe
+
+# Dead-man's switch: if the trading server stops heartbeating for 30+ min
+# during US market hours while stock positions are open, liquidate everything
+# to SGOV. Runs on GitHub's infrastructure, so it survives the trading
+# server going down entirely. See scripts/deadman_liquidate.py.
+
+on:
+  schedule:
+    # every 15 min, 13:00-21:59 UTC, weekdays (covers US market hours in
+    # both EDT and EST; the script itself checks the real market clock)
+    - cron: '*/15 13-21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (check + log only, never trade)'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deadman
+  cancel-in-progress: false
+
+jobs:
+  failsafe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: run failsafe check
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          STALE_MINUTES: '30'
+          HEARTBEAT_REPO: ${{ github.repository }}
+        run: python3 scripts/deadman_liquidate.py
