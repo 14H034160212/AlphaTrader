@@ -310,7 +310,16 @@ def finalize_day(api, state, day_pl_pct, reason, do_liquidate=True):
     state['final_pl_pct'] = day_pl_pct
     save_state(state)
     log(f"today's auto day-trade wound down — {reason}")
-    park_to_sgov(mirror_live=(DRY_RUN and MIRROR_TO_LIVE and live_sold > 0))
+    # 2026-07-31: a park_to_sgov crash (insufficient buying power -- sell fills
+    # hadn't settled yet) used to abort the rest of finalize_day, silently
+    # skipping the history append AND the daily summary email. Never let the
+    # park kill the bookkeeping: it gets its own try/except, and the history/
+    # email always run.
+    try:
+        park_to_sgov(mirror_live=(DRY_RUN and MIRROR_TO_LIVE and live_sold > 0))
+    except Exception as e:
+        log(f"  park_to_sgov FAILED ({e}) -- cash left unparked, continuing with bookkeeping")
+        record_action(state, f"⚠️ 收盘后停美债失败({e}),现金暂未停放,需要人工处理")
     append_history({'date': state['date'], 'weights': state.get('weights', {}),
                      'reasons': state.get('reasons', {}), 'final_pl_pct': day_pl_pct,
                      'reason': reason})
@@ -688,24 +697,37 @@ def park_to_sgov(mirror_live=False):
         return
     api = get_alpaca()
     import time
-    time.sleep(8)  # let sell fills settle
-    acc = api.get_account()
-    cash = float(acc.cash)
-    if cash < 5:
-        return
     k, s, _ = _alpaca_creds()
-    r = requests.get('https://data.alpaca.markets/v2/stocks/SGOV/quotes/latest',
-                      headers={'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s})
-    ask = r.json()['quote']['ap']
-    limit_px = round(ask + 0.05, 2)
-    qty = round(cash / limit_px, 4)  # no buffer -- user: "不要留缓冲现金"
-    if qty <= 0:
-        return
-    ext = api.get_clock().is_open
-    o = api.submit_order(symbol='SGOV', qty=qty, side='buy', type='limit',
-                          limit_price=limit_px, time_in_force='day',
-                          extended_hours=not ext)
-    log(f"  parked ${cash:.2f} cash into {qty} SGOV @~${limit_px} order={o.id[:8]}")
+    # 2026-07-31: after a mass close-out, sell fills take a while to settle into
+    # buying power -- a single fixed 8s sleep raced that and the SGOV buy died
+    # with "insufficient buying power" (leaving $34k in raw cash over a weekend).
+    # Retry with backoff, recomputing available funds fresh each attempt, and
+    # size against the LOWER of cash and buying_power.
+    for attempt in range(1, 5):
+        time.sleep(8 * attempt)
+        acc = api.get_account()
+        avail = min(float(acc.cash), float(acc.buying_power))
+        if avail < 5:
+            return
+        r = requests.get('https://data.alpaca.markets/v2/stocks/SGOV/quotes/latest',
+                          headers={'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s})
+        ask = r.json()['quote']['ap']
+        if not ask or ask < 50:
+            ask = 100.80  # sanity guard against a stale/empty after-hours book
+        limit_px = round(ask + 0.05, 2)
+        qty = round((avail - 2) / limit_px, 4)
+        if qty <= 0:
+            return
+        try:
+            ext = api.get_clock().is_open
+            o = api.submit_order(symbol='SGOV', qty=qty, side='buy', type='limit',
+                                  limit_price=limit_px, time_in_force='day',
+                                  extended_hours=not ext)
+            log(f"  parked ${avail:.2f} cash into {qty} SGOV @~${limit_px} order={o.id[:8]}")
+            return
+        except Exception as e:
+            log(f"  SGOV park attempt {attempt} failed: {e}")
+    raise RuntimeError("SGOV park failed after 4 attempts")
 
 
 def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
