@@ -363,20 +363,34 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         "small cap stock breakout news today",
         "insider buying stock news today",
     ]
-    for q in queries:
-        try:
-            env = dict(os.environ)
-            env["PATH"] = "/data/qbao775/miniconda3/bin:" + env.get("PATH", "")
-            r = subprocess.run([MCPORTER, "call", "exa.web_search_exa",
-                                f"query={q}", "numResults=5"],
-                               capture_output=True, text=True, timeout=60,
-                               cwd="/data/qbao775/AlphaTrader", env=env)
-            if r.returncode == 0:
-                search_snippets.append(r.stdout[:3000])
-            else:
-                log(f"  search failed rc={r.returncode} for: {q}")
-        except Exception as e:
-            log(f"  search error for '{q}': {e}")
+    # 2026-07-31: found post-reboot that firing all queries back-to-back trips the
+    # Exa endpoint's rate limit (HTTP 429) and ALL searches fail -- space them out
+    # and retry once with a longer pause. The picker degraded gracefully that day
+    # (market-screener supplement + the LLM's own knowledge still produced a sound
+    # NONE call), but at 4x the claude -p cost -- fix the input pipe, not just rely
+    # on the fallback.
+    import time as _time
+    for qi, q in enumerate(queries):
+        for attempt in (1, 2):
+            try:
+                env = dict(os.environ)
+                env["PATH"] = "/data/qbao775/miniconda3/bin:" + env.get("PATH", "")
+                r = subprocess.run([MCPORTER, "call", "exa.web_search_exa",
+                                    f"query={q}", "numResults=5"],
+                                   capture_output=True, text=True, timeout=60,
+                                   cwd="/data/qbao775/AlphaTrader", env=env)
+                if r.returncode == 0:
+                    search_snippets.append(r.stdout[:3000])
+                    break
+                rate_limited = '429' in (r.stderr or '')
+                log(f"  search failed rc={r.returncode}{' (rate-limited)' if rate_limited else ''} "
+                    f"attempt {attempt} for: {q}")
+                if attempt == 1:
+                    _time.sleep(12 if rate_limited else 3)
+            except Exception as e:
+                log(f"  search error for '{q}': {e}")
+                break
+        _time.sleep(4)  # pace queries so we don't trip the rate limit again
 
     # Real market-wide screener supplement (actual price/volume movers, not text
     # search) -- labeled clearly so the AI verifies the REASON itself rather than
