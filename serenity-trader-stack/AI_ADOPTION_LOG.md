@@ -67,3 +67,26 @@
   - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
   - State of AI Usage Report 2026 - LayerX
   - Microsoft Copilot Usage Statistics 2026 | Presenc AI
+
+## 2026-08-01
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(6), Google/GOOGL(4), Meta/META(3), Anthropic (via GOOGL/AMZN investment)(3), Microsoft/MSFT(1)
+- 消费端App排名:
+  - Meta AI by Meta Platforms, Inc. — install & rank tracking · AppDashboard
+  - ChatGPT Tops iPhone App Store as AI Apps Dominate Free Charts Alongside Puzzle Games - HINO9
+  - ChatGPT still leads chatbot app downloads, but Gemini and Claude are closing the gap
+  - ChatGPT vs Meta AI: App Store Comparison
+- 开发者/API调用份额:
+  - LLM Rankings
+  - AI Market Share 2026 - Provider Share of OpenRouter Usage | whatstrending.ai
+  - AI Model Leaderboard 2026 - Ranked by Usage | whatstrending.ai
+  - LLM Rankings | OpenRouter
+- 网站流量对比:
+  - AI Search Stats in 2026 | Similarweb
+  - ChatGPT, Gemini, and Claude: How Generative AI Web Traffic Is Redistributing Across Three Distinct Moats - FourWeekMBA
+  - ChatGPT vs Gemini vs Claude Usage Market Share: 2026 Statistics and Demographics
+  - Top AI Chatbots and Tools Websites Ranking in United States | Similarweb
+- 企业级采用率:
+  - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
+  - State of AI Usage Report 2026 - LayerX
+  - Xensam Insights: Enterprise AI Adoption Report, H1 2026 - Xensam
+  - Microsoft 365 Copilot adoption jumps 50% over prior quarter
