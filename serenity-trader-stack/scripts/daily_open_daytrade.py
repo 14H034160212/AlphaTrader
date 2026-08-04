@@ -633,11 +633,26 @@ def mirror_live_buy(api, sym, w, px):
             held_sgov = 0.0
         sq = min(round(shortfall / sgov_px + 0.01, 4), held_sgov)
         if sq > 0:
-            api.submit_order(symbol='SGOV', qty=sq, side='sell', type='market', time_in_force='day')
+            so = api.submit_order(symbol='SGOV', qty=sq, side='sell', type='market', time_in_force='day')
             log(f"  [LIVE-MIRROR] sold {sq} SGOV to fund {sym} buy")
+            # 2026-08-03: a fixed 6s sleep raced fill settlement and FIVE mirror
+            # buys died with "insufficient buying power" in one session (BABA/
+            # ABT/DBD/FTK/SUPN), leaving live badly diverged from paper. Wait
+            # for the funding sale to actually FILL, then for buying power to
+            # actually reflect the proceeds, up to ~45s total.
             import time
-            time.sleep(6)
-            bp = float(api.get_account().buying_power)
+            for _ in range(15):
+                time.sleep(3)
+                try:
+                    if api.get_order(so.id).status == 'filled':
+                        break
+                except Exception:
+                    pass
+            for _ in range(10):
+                bp = float(api.get_account().buying_power)
+                if bp >= notional + 5:
+                    break
+                time.sleep(3)
     qty = round(min(notional, max(bp - 5, 0)) / px, 4)
     if qty <= 0:
         log(f"  [LIVE-MIRROR] {sym}: no buying power even after SGOV trim -- skipped")
@@ -809,6 +824,52 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
     return action, detail
 
 
+RECONCILE_RETRY_SECONDS = 240   # per-symbol cooldown between live re-buy attempts
+LONG_TERM_NAMES_NEVER_TOUCH = {'SGOV', 'SKHY', 'MU', 'META'}
+
+
+def reconcile_live_with_paper(api, state, mins_to_close):
+    # 2026-08-04: self-healing sync -- a failed mirror buy used to stay failed
+    # forever (5 in one session on 08-03: live ended up missing BABA/ABT/DBD/
+    # FTK/SUPN while paper was fully deployed). Every managed tick now compares
+    # live holdings against the paper ledger and retries any missing buy at the
+    # current price (per-symbol cooldown so a genuinely-broken symbol doesn't
+    # get hammered). Never touches SGOV or the long-term thesis names; never
+    # opens new positions in the final minutes before close.
+    if not (DRY_RUN and MIRROR_TO_LIVE) or mins_to_close <= 25:
+        return
+    sim = state.get('sim_positions', {})
+    try:
+        live_syms = {p.symbol for p in api.list_positions()}
+    except Exception:
+        return
+    now = datetime.datetime.utcnow()
+    attempts = state.setdefault('_reconcile_attempts', {})
+    for sym, pos in sim.items():
+        if sym in live_syms or sym in LONG_TERM_NAMES_NEVER_TOUCH:
+            continue
+        last = attempts.get(sym)
+        if last and (now - datetime.datetime.fromisoformat(last)).total_seconds() < RECONCILE_RETRY_SECONDS:
+            continue
+        attempts[sym] = now.isoformat()
+        save_state(state)
+        w = state.get('weights', {}).get(sym)
+        if not w:
+            continue
+        import market_data as md
+        q = md.get_stock_quote(sym)
+        px = q['current'] if q and q.get('current') else None
+        if not px:
+            continue
+        log(f"  [RECONCILE] live is missing {sym} (paper holds it) -- retrying the mirror buy")
+        try:
+            live_qty = mirror_live_buy(api, sym, w, px)
+            if live_qty:
+                record_action(state, f"[实盘同步补齐] 买入 {sym} {live_qty}股 @~${px:.2f} (此前同步失败,已自动补上)")
+        except Exception as e:
+            log(f"  [RECONCILE] retry buy {sym} failed again: {e}")
+
+
 def manage(api, state):
     equity, bp = get_account_view(api, state)
     day_start_equity = state['day_start_equity']
@@ -816,6 +877,8 @@ def manage(api, state):
 
     clock = api.get_clock()
     mins_to_close = (clock.next_close - datetime.datetime.now(clock.next_close.tzinfo)).total_seconds() / 60
+
+    reconcile_live_with_paper(api, state, mins_to_close)
 
     if DRY_RUN:
         import market_data as md
@@ -833,13 +896,27 @@ def manage(api, state):
 
     # Exits are entirely AI-judged now (no fixed floor/ceiling/close-out numbers --
     # see ai_judge_positions()), for both the paper and (currently paused) live path.
+    def _end_holdover_day():
+        # 2026-08-04: hold-overnight days used to end silently -- finalize_day
+        # never runs, so NO summary email and NO history entry were produced
+        # (user got nothing on 08-03's -0.64% overnight-hold day). Close the
+        # day's books explicitly while keeping the positions.
+        state['done'] = True
+        save_state(state)
+        if not state.get('_eod_reported'):
+            state['_eod_reported'] = True
+            save_state(state)
+            append_history({'date': state['date'], 'weights': state.get('weights', {}),
+                             'reasons': state.get('reasons', {}), 'final_pl_pct': round(day_pl_pct, 2),
+                             'reason': 'AI判断隔夜持有,仓位带入下一交易日'})
+            send_daily_summary(state, day_pl_pct, "AI判断隔夜持有,仓位带入下一交易日(未平仓,盈亏为浮动值)")
+
     if state.get('hold_overnight'):
         # Already decided this session -- don't re-ask every tick in the
         # last 20 minutes (wasteful + risks a flip-flopping answer).
-        # Just wait for the close to actually arrive, then stop ticking.
+        # Just wait for the close to actually arrive, then close the books.
         if mins_to_close <= 2:
-            state['done'] = True
-            save_state(state)
+            _end_holdover_day()
         return
     action, detail = ai_judge_positions(api, state, day_pl_pct, mins_to_close)
     if action == 'sell_all':
@@ -852,8 +929,7 @@ def manage(api, state):
         log(f"  AI决定隔夜持有: {detail}")
         record_action(state, f"AI判断隔夜持有: {detail} (当日盈亏 {day_pl_pct:+.2f}%)")
         if mins_to_close <= 2:
-            state['done'] = True  # stop ticking for today; positions carry to tomorrow
-            save_state(state)
+            _end_holdover_day()
         return
     # action == 'hold': fall through, keep ticking
 
