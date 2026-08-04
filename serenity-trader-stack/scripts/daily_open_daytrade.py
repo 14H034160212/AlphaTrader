@@ -1073,9 +1073,27 @@ def main():
         # into the picker so the AI weighs it itself (it can still return NONE via
         # "宁缺毋滥" if it judges conditions too weak -- the point is it's the AI's
         # call every time, not a fixed mechanical rule).
-        regime_note = ""
+        # 2026-08-04: on 08-03 SPY rose ~+2% while the all-single-name catalyst
+        # basket LOST -0.64% -- the picker structurally had no "just hold the
+        # index" option, so it was forced into stock-picking even on a broad
+        # macro-rally day when index exposure was the obvious baseline (user:
+        # "大盘都在涨，我们还在亏这个错误不应该啊"). The index is now always a
+        # first-class candidate: the picker sees SPY's live change either way
+        # and is explicitly told SPY/QQQ are valid picks that individual names
+        # must BEAT, not just match.
+        if chg_pct is not None:
+            direction = "走强" if chg_pct >= 0 else "走弱"
+            regime_note = (
+                f"大盘实时状态: SPY 今日{direction} {chg_pct:+.2f}%。\n"
+                "重要: SPY 和 QQQ 本身永远是备选标的——个股候选必须让你相信能明显"
+                "跑赢直接持有大盘,才值得替代大盘仓位。如果今天是宏观驱动的普涨日"
+                "而个股催化并不特别突出,直接配置 SPY/QQQ(可以占大部分仓位)是完全"
+                "正确的答案;也可以大盘做底仓+少数最有把握的个股做增强。反之大盘"
+                "走弱时,请自行判断是否仍要建仓或空仓持有美债。\n\n"
+            )
+        else:
+            regime_note = ""
         if not ok:
-            regime_note = f"注意:大盘今天走弱(SPY {chg_pct:+.2f}%),请自行判断是否仍要建仓。\n\n"
             log(f"  SPY pre-market/today {chg_pct:+.2f}% -- weak, letting the AI itself decide")
         exclude = already_held_elsewhere(api)
         picks, cost = pick_todays_stocks(api, exclude=exclude, extra_note=regime_note)
