@@ -779,6 +779,26 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
         lines.append(f"{sym}: 入价${pos['entry_price']:.2f} 现价${px:.2f} 盈亏{plpc:+.2f}% "
                      f"理由:{state.get('reasons', {}).get(sym, '')}")
 
+    # 2026-08-04: give the judge the MARKET benchmark alongside portfolio P&L.
+    # On 08-03 it reasoned "-0.78% is normal fluctuation, hold" without knowing
+    # SPY was +2% the same day -- lagging a strong tape by ~3pp is a materially
+    # different situation than drifting with a flat one, and the judge couldn't
+    # see that.
+    spy_note = ""
+    try:
+        k2, s2, _ = _alpaca_creds()
+        rs = requests.get('https://data.alpaca.markets/v2/stocks/SPY/snapshot',
+                           headers={'APCA-API-KEY-ID': k2, 'APCA-API-SECRET-KEY': s2}, timeout=10)
+        snap = rs.json()
+        prev = snap['prevDailyBar']['c']
+        lastpx = snap.get('latestTrade', {}).get('p')
+        if prev and lastpx:
+            spy_chg = (lastpx - prev) / prev * 100
+            spy_note = (f"今日大盘(SPY): {spy_chg:+.2f}% -- 请把组合表现和大盘对比着判断:"
+                        f"跑输强势大盘和跟随弱势大盘回调,是性质不同的两种情况。\n")
+    except Exception:
+        pass
+
     near_close_note = ("现在快收盘了,必须在 HOLD_OVERNIGHT 和 SELL_ALL 之间二选一,"
                         "不能只说HOLD。\n" if near_close else "")
     account_note = ("一个模拟盘(其每笔操作会同步镜像到真实资金账户,请按真实资金的审慎程度判断)"
@@ -787,7 +807,7 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
     prompt = (
         f"你在管理{account_note}的日内交易组合,不受任何固定百分比"
         "止盈止损规则限制,完全靠你自己的判断决定接下来怎么做。\n\n"
-        f"当日账户总盈亏: {day_pl_pct:+.2f}%\n距收盘约{mins_to_close:.0f}分钟\n"
+        f"当日账户总盈亏: {day_pl_pct:+.2f}%\n{spy_note}距收盘约{mins_to_close:.0f}分钟\n"
         f"持仓明细:\n" + "\n".join(lines) + "\n\n"
         f"{near_close_note}"
         "请从下面选项中选一个,第一行只写选项名称,第二行写一句话理由:\n"
