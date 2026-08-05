@@ -622,6 +622,15 @@ def mirror_live_buy(api, sym, w, px):
     notional = equity * w
     bp = float(acct.buying_power)
     if bp < notional + 5:
+        # Proceeds from a just-executed sell may simply still be settling --
+        # poll briefly before deciding we actually need to trim SGOV.
+        import time as _t
+        for _ in range(8):
+            _t.sleep(3)
+            bp = float(api.get_account().buying_power)
+            if bp >= notional + 5:
+                break
+    if bp < notional + 5:
         shortfall = notional + 5 - bp
         k, s, _ = _alpaca_creds()
         r = requests.get('https://data.alpaca.markets/v2/stocks/SGOV/trades/latest',
@@ -810,9 +819,12 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
         f"当日账户总盈亏: {day_pl_pct:+.2f}%\n{spy_note}距收盘约{mins_to_close:.0f}分钟\n"
         f"持仓明细:\n" + "\n".join(lines) + "\n\n"
         f"{near_close_note}"
-        "请从下面选项中选一个,第一行只写选项名称,第二行写一句话理由:\n"
-        "HOLD(继续持有,不操作)\nSELL_ALL(现在全部平仓)\n"
-        "HOLD_OVERNIGHT(收盘后继续持有到下一个交易日)"
+        "请从下面选项中选一个,第一行只写选项名称(带符号列表时严格按示例格式),第二行写一句话理由:\n"
+        "HOLD(继续持有,不操作)\n"
+        "SELL_ALL(现在全部平仓)\n"
+        "HOLD_OVERNIGHT(收盘后继续持有到下一个交易日)\n"
+        "SELL_SOME: SYM1,SYM2(只卖掉指定的弱势持仓,其余继续持有——腾出的资金可能被重新配置)\n"
+        "ROTATE_TO_SPY: SYM1,SYM2(卖掉指定持仓并把腾出的资金立即换成SPY大盘——适合个股论文走坏但大盘强势时)"
     )
     try:
         result = subprocess.run([CLAUDE_BIN, '-p', prompt, '--output-format', 'json'],
@@ -832,6 +844,17 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
             action = 'sell_all'
         elif 'HOLD_OVERNIGHT' in action_line:
             action = 'hold_overnight'
+        elif 'SELL_SOME' in action_line or 'ROTATE_TO_SPY' in action_line:
+            # e.g. "SELL_SOME: DBD,SUPN" / "ROTATE_TO_SPY: COLM, HII" -- only
+            # accept symbols we actually hold, ignore everything else.
+            import re as _re
+            listed = set(_re.findall(r'\b[A-Z]{1,5}\b', action_line.split(':', 1)[-1]))
+            syms = sorted(listed & set(held.keys()))
+            if syms:
+                action = ('rotate_to_spy' if 'ROTATE_TO_SPY' in action_line else 'sell_some', syms)
+            else:
+                log("  SELL_SOME/ROTATE_TO_SPY named no held symbols -- treating as HOLD")
+                action = 'hold'
         else:
             action = 'hold'
     except Exception as e:
@@ -842,6 +865,72 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
         log("  近收盘AI未给出明确隔夜/平仓决定 -- 安全默认为平仓")
         action, detail = 'sell_all', detail or '(近收盘判断不明确,安全默认平仓)'
     return action, detail
+
+
+def sell_selected(api, state, syms, rotate_to_spy, reason):
+    # 2026-08-05: per-position exits ("继续优化") -- the judge used to be
+    # all-or-nothing (HOLD / SELL_ALL / HOLD_OVERNIGHT), so it couldn't cut a
+    # -3% laggard while a +13% winner kept running, or rotate weak names into
+    # a strong index. Sells the named positions on both ledgers; with
+    # rotate_to_spy=True the freed capital immediately buys SPY instead of
+    # sitting idle.
+    import market_data as md
+    freed_w = 0.0
+    equity_paper, _ = get_account_view(api, state)
+    for sym in syms:
+        pos = state.get('sim_positions', {}).get(sym)
+        if not pos:
+            continue
+        q = md.get_stock_quote(sym)
+        px = q['current'] if q and q.get('current') else pos['entry_price']
+        plpc = (px - pos['entry_price']) / pos['entry_price'] * 100
+        state['sim_cash'] = state.get('sim_cash', 0) + pos['qty'] * px
+        freed_w += (pos['qty'] * px) / equity_paper
+        del state['sim_positions'][sym]
+        log(f"  [DRY-RUN] ✓ SOLD {sym} qty={pos['qty']} @~${px:.2f} — {reason}")
+        record_action(state, f"卖出 {sym} 盈亏{plpc:+.2f}% — {reason}")
+        state.setdefault('weights', {}).pop(sym, None)
+        save_state(state)
+        if MIRROR_TO_LIVE:
+            try:
+                p = api.get_position(sym)
+                o = api.submit_order(symbol=sym, qty=p.qty, side='sell', type='market', time_in_force='day')
+                log(f"  [LIVE-MIRROR] ✓ SOLD {sym} qty={p.qty} order={o.id[:8]}")
+            except Exception as e:
+                log(f"  [LIVE-MIRROR] sell {sym} failed/none held: {e}")
+    if not rotate_to_spy or freed_w <= 0:
+        # freed capital may be redeployed -- let the idle-capital rescan look again
+        state['second_scan_done'] = False
+        save_state(state)
+        return
+    q = md.get_stock_quote('SPY')
+    spy_px = q['current'] if q and q.get('current') else None
+    if not spy_px:
+        log("  rotate_to_spy: no SPY quote, leaving freed capital in cash")
+        return
+    notional = equity_paper * freed_w
+    add_qty = round(notional / spy_px, 4)
+    sp = state.setdefault('sim_positions', {})
+    if 'SPY' in sp:
+        old = sp['SPY']
+        new_qty = old['qty'] + add_qty
+        sp['SPY'] = {'qty': new_qty,
+                     'entry_price': round((old['qty']*old['entry_price'] + add_qty*spy_px) / new_qty, 4)}
+    else:
+        sp['SPY'] = {'qty': add_qty, 'entry_price': spy_px}
+    state['sim_cash'] = state.get('sim_cash', 0) - notional
+    state.setdefault('weights', {})['SPY'] = state.get('weights', {}).get('SPY', 0) + freed_w
+    state.setdefault('reasons', {})['SPY'] = '弱势个股轮换为大盘敞口(ROTATE_TO_SPY)'
+    save_state(state)
+    log(f"  [DRY-RUN] ✓ ROTATED into SPY qty={add_qty} @~${spy_px:.2f} (freed {freed_w*100:.1f}%)")
+    record_action(state, f"轮换买入 SPY {add_qty}股 @~${spy_px:.2f} (弱势个股换大盘)")
+    if MIRROR_TO_LIVE:
+        try:
+            live_qty = mirror_live_buy(api, 'SPY', freed_w, spy_px)
+            if live_qty:
+                record_action(state, f"[实盘同步] 轮换买入 SPY {live_qty}股")
+        except Exception as e:
+            log(f"  [LIVE-MIRROR] rotate buy SPY FAILED -- reconciler will retry: {e}")
 
 
 RECONCILE_RETRY_SECONDS = 240   # per-symbol cooldown between live re-buy attempts
@@ -888,6 +977,25 @@ def reconcile_live_with_paper(api, state, mins_to_close):
                 record_action(state, f"[实盘同步补齐] 买入 {sym} {live_qty}股 @~${px:.2f} (此前同步失败,已自动补上)")
         except Exception as e:
             log(f"  [RECONCILE] retry buy {sym} failed again: {e}")
+
+    # Opposite direction (2026-08-05): paper sold something but the live mirror
+    # sell failed -- live would otherwise keep an unmanaged extra forever. Sell
+    # any live position the paper ledger no longer holds (long-term names and
+    # SGOV excluded).
+    for sym in sorted(live_syms - set(sim.keys()) - LONG_TERM_NAMES_NEVER_TOUCH):
+        key = f"extra:{sym}"
+        last = attempts.get(key)
+        if last and (now - datetime.datetime.fromisoformat(last)).total_seconds() < RECONCILE_RETRY_SECONDS:
+            continue
+        attempts[key] = now.isoformat()
+        save_state(state)
+        log(f"  [RECONCILE] live holds {sym} that paper does not -- selling the orphan")
+        try:
+            p = api.get_position(sym)
+            o = api.submit_order(symbol=sym, qty=p.qty, side='sell', type='market', time_in_force='day')
+            record_action(state, f"[实盘同步纠偏] 卖出多余持仓 {sym} {p.qty}股 (模拟盘已不持有)")
+        except Exception as e:
+            log(f"  [RECONCILE] orphan sell {sym} failed: {e}")
 
 
 def manage(api, state):
@@ -950,6 +1058,15 @@ def manage(api, state):
         record_action(state, f"AI判断隔夜持有: {detail} (当日盈亏 {day_pl_pct:+.2f}%)")
         if mins_to_close <= 2:
             _end_holdover_day()
+        return
+    if isinstance(action, tuple):
+        kind, syms = action
+        reason = f"AI判断({kind}): {detail or '部分调仓'}"
+        log(f"  AI decided {kind}: {syms} -- {detail}")
+        sell_selected(api, state, syms, rotate_to_spy=(kind == 'rotate_to_spy'), reason=reason)
+        if not state.get('sim_positions'):
+            # partial sell emptied the whole book -- close the day's books properly
+            finalize_day(api, state, day_pl_pct, reason, do_liquidate=False)
         return
     # action == 'hold': fall through, keep ticking
 
