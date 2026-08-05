@@ -270,21 +270,35 @@ def history_context_str():
     # concrete lessons; feed the recent ones into every morning's pick so
     # yesterday's mistake is part of tomorrow's decision context (user: "你
     # 需要有这样的反思能力...不要等我给你授权").
-    try:
-        if os.path.exists(LESSONS_FILE):
-            lesson_lines = []
-            for line in open(LESSONS_FILE).read().splitlines()[-7:]:
-                try:
-                    e = json.loads(line)
-                    for les in e.get('lessons', []):
-                        lesson_lines.append(f"- ({e.get('date')}) {les}")
-                except Exception:
-                    continue
-            if lesson_lines:
-                parts.append("历史复盘教训(必须在今天的选择中体现,不要重复犯):\n" + "\n".join(lesson_lines[-8:]))
-    except Exception:
-        pass
+    lc = lessons_context_str()
+    if lc:
+        parts.append(lc)
     return ("\n\n".join(parts) + "\n\n") if parts else ""
+
+
+def lessons_context_str(max_lines=10):
+    # 2026-08-05: shared by BOTH the morning picker and the intraday position
+    # judge (user: "好的和坏的投资都要吸取经验"). Before this, lessons only
+    # reached the picker -- the judge kept holding COLM even though the ledger
+    # already said its one-off-refund catalyst was invalid, because it never
+    # saw the ledger.
+    try:
+        if not os.path.exists(LESSONS_FILE):
+            return ""
+        lesson_lines = []
+        for line in open(LESSONS_FILE).read().splitlines()[-10:]:
+            try:
+                e = json.loads(line)
+                for les in e.get('lessons', []):
+                    lesson_lines.append(f"- ({e.get('date')}) {les}")
+            except Exception:
+                continue
+        if not lesson_lines:
+            return ""
+        return ("历史复盘教训(好的经验要复制,坏的错误不要重复;逐条对照当前决定):\n"
+                + "\n".join(lesson_lines[-max_lines:]))
+    except Exception:
+        return ""
 
 
 def already_held_elsewhere(api):
@@ -845,13 +859,16 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
         "止盈止损规则限制,完全靠你自己的判断决定接下来怎么做。\n\n"
         f"当日账户总盈亏: {day_pl_pct:+.2f}%\n{spy_note}距收盘约{mins_to_close:.0f}分钟\n"
         f"持仓明细:\n" + "\n".join(lines) + "\n\n"
-        f"{near_close_note}"
+        + (lessons_context_str(8) + "\n\n" if lessons_context_str(8) else "")
+        + f"{near_close_note}"
         "请从下面选项中选一个,第一行只写选项名称(带符号列表时严格按示例格式),第二行写一句话理由:\n"
         "HOLD(继续持有,不操作)\n"
         "SELL_ALL(现在全部平仓)\n"
         "HOLD_OVERNIGHT(收盘后继续持有到下一个交易日)\n"
         "SELL_SOME: SYM1,SYM2(只卖掉指定的弱势持仓,其余继续持有——腾出的资金可能被重新配置)\n"
-        "ROTATE_TO_SPY: SYM1,SYM2(卖掉指定持仓并把腾出的资金立即换成SPY大盘——适合个股论文走坏但大盘强势时)"
+        "ROTATE_TO_SPY: SYM1,SYM2(卖掉指定持仓,腾出的资金立即换成SPY大盘——适合个股论文走坏但大盘强势时)\n"
+        "ROTATE_TO 目标代码: SYM1,SYM2(卖掉指定弱势持仓,腾出的资金加仓到某只已持有的强势标的——"
+        "当组合中出现催化剂持续兑现、明显领跑的赢家时,把弱势仓位的资金向它集中,不要让最强的仓位一直是最小的)"
     )
     try:
         result = subprocess.run([CLAUDE_BIN, '-p', prompt, '--output-format', 'json'],
@@ -871,16 +888,29 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
             action = 'sell_all'
         elif 'HOLD_OVERNIGHT' in action_line:
             action = 'hold_overnight'
-        elif 'SELL_SOME' in action_line or 'ROTATE_TO_SPY' in action_line:
-            # e.g. "SELL_SOME: DBD,SUPN" / "ROTATE_TO_SPY: COLM, HII" -- only
-            # accept symbols we actually hold, ignore everything else.
+        elif 'SELL_SOME' in action_line or 'ROTATE_TO' in action_line:
+            # Formats: "SELL_SOME: DBD,SUPN" / "ROTATE_TO_SPY: COLM,HII" /
+            # "ROTATE_TO FTK: COLM,HII" (rotate weak names into a held winner).
+            # Only symbols we actually hold are accepted; unknown target -> SPY.
             import re as _re
             listed = set(_re.findall(r'\b[A-Z]{1,5}\b', action_line.split(':', 1)[-1]))
             syms = sorted(listed & set(held.keys()))
-            if syms:
-                action = ('rotate_to_spy' if 'ROTATE_TO_SPY' in action_line else 'sell_some', syms)
+            if 'ROTATE_TO' in action_line:
+                m = _re.search(r'ROTATE_TO[ _]([A-Z]{1,5})\s*:', action_line)
+                target = m.group(1) if m else 'SPY'
+                if target != 'SPY' and target not in held:
+                    log(f"  ROTATE_TO target {target} not held -- defaulting to SPY")
+                    target = 'SPY'
+                syms = [s3 for s3 in syms if s3 != target]
+                if syms:
+                    action = ('rotate_to', target, syms)
+                else:
+                    log("  ROTATE_TO named no valid held symbols -- treating as HOLD")
+                    action = 'hold'
+            elif syms:
+                action = ('sell_some', None, syms)
             else:
-                log("  SELL_SOME/ROTATE_TO_SPY named no held symbols -- treating as HOLD")
+                log("  SELL_SOME named no held symbols -- treating as HOLD")
                 action = 'hold'
         else:
             action = 'hold'
@@ -894,13 +924,16 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
     return action, detail
 
 
-def sell_selected(api, state, syms, rotate_to_spy, reason):
+def sell_selected(api, state, syms, rotate_to, reason):
     # 2026-08-05: per-position exits ("继续优化") -- the judge used to be
     # all-or-nothing (HOLD / SELL_ALL / HOLD_OVERNIGHT), so it couldn't cut a
-    # -3% laggard while a +13% winner kept running, or rotate weak names into
-    # a strong index. Sells the named positions on both ledgers; with
-    # rotate_to_spy=True the freed capital immediately buys SPY instead of
-    # sitting idle.
+    # -3% laggard while a +13% winner kept running. Sells the named positions
+    # on both ledgers; with rotate_to set, the freed capital immediately buys
+    # that target instead of sitting idle. Same-day generalization (user:
+    # "一只FTK的收益比全部的收益还高" -- FTK alone out-earned the whole book
+    # while carrying one of the SMALLEST weights): rotate_to may be SPY *or
+    # any currently-held name*, so the judge can consolidate capital into a
+    # proven winner (动态调仓, the 2026-07-14 lesson), not just into the index.
     import market_data as md
     freed_w = 0.0
     equity_paper, _ = get_account_view(api, state)
@@ -925,39 +958,39 @@ def sell_selected(api, state, syms, rotate_to_spy, reason):
                 log(f"  [LIVE-MIRROR] ✓ SOLD {sym} qty={p.qty} order={o.id[:8]}")
             except Exception as e:
                 log(f"  [LIVE-MIRROR] sell {sym} failed/none held: {e}")
-    if not rotate_to_spy or freed_w <= 0:
+    if not rotate_to or freed_w <= 0:
         # freed capital may be redeployed -- let the idle-capital rescan look again
         state['second_scan_done'] = False
         save_state(state)
         return
-    q = md.get_stock_quote('SPY')
-    spy_px = q['current'] if q and q.get('current') else None
-    if not spy_px:
-        log("  rotate_to_spy: no SPY quote, leaving freed capital in cash")
+    q = md.get_stock_quote(rotate_to)
+    tgt_px = q['current'] if q and q.get('current') else None
+    if not tgt_px:
+        log(f"  rotate: no {rotate_to} quote, leaving freed capital in cash")
         return
     notional = equity_paper * freed_w
-    add_qty = round(notional / spy_px, 4)
+    add_qty = round(notional / tgt_px, 4)
     sp = state.setdefault('sim_positions', {})
-    if 'SPY' in sp:
-        old = sp['SPY']
+    if rotate_to in sp:
+        old = sp[rotate_to]
         new_qty = old['qty'] + add_qty
-        sp['SPY'] = {'qty': new_qty,
-                     'entry_price': round((old['qty']*old['entry_price'] + add_qty*spy_px) / new_qty, 4)}
+        sp[rotate_to] = {'qty': new_qty,
+                         'entry_price': round((old['qty']*old['entry_price'] + add_qty*tgt_px) / new_qty, 4)}
     else:
-        sp['SPY'] = {'qty': add_qty, 'entry_price': spy_px}
+        sp[rotate_to] = {'qty': add_qty, 'entry_price': tgt_px}
     state['sim_cash'] = state.get('sim_cash', 0) - notional
-    state.setdefault('weights', {})['SPY'] = state.get('weights', {}).get('SPY', 0) + freed_w
-    state.setdefault('reasons', {})['SPY'] = '弱势个股轮换为大盘敞口(ROTATE_TO_SPY)'
+    state.setdefault('weights', {})[rotate_to] = state.get('weights', {}).get(rotate_to, 0) + freed_w
+    state.setdefault('reasons', {}).setdefault(rotate_to, '弱势仓位轮换目标(ROTATE_TO)')
     save_state(state)
-    log(f"  [DRY-RUN] ✓ ROTATED into SPY qty={add_qty} @~${spy_px:.2f} (freed {freed_w*100:.1f}%)")
-    record_action(state, f"轮换买入 SPY {add_qty}股 @~${spy_px:.2f} (弱势个股换大盘)")
+    log(f"  [DRY-RUN] ✓ ROTATED into {rotate_to} qty={add_qty} @~${tgt_px:.2f} (freed {freed_w*100:.1f}%)")
+    record_action(state, f"轮换买入 {rotate_to} {add_qty}股 @~${tgt_px:.2f} (弱势仓位换强势目标)")
     if MIRROR_TO_LIVE:
         try:
-            live_qty = mirror_live_buy(api, 'SPY', freed_w, spy_px)
+            live_qty = mirror_live_buy(api, rotate_to, freed_w, tgt_px)
             if live_qty:
-                record_action(state, f"[实盘同步] 轮换买入 SPY {live_qty}股")
+                record_action(state, f"[实盘同步] 轮换买入 {rotate_to} {live_qty}股")
         except Exception as e:
-            log(f"  [LIVE-MIRROR] rotate buy SPY FAILED -- reconciler will retry: {e}")
+            log(f"  [LIVE-MIRROR] rotate buy {rotate_to} FAILED -- reconciler will retry: {e}")
 
 
 RECONCILE_RETRY_SECONDS = 240   # per-symbol cooldown between live re-buy attempts
@@ -1087,10 +1120,10 @@ def manage(api, state):
             _end_holdover_day()
         return
     if isinstance(action, tuple):
-        kind, syms = action
-        reason = f"AI判断({kind}): {detail or '部分调仓'}"
-        log(f"  AI decided {kind}: {syms} -- {detail}")
-        sell_selected(api, state, syms, rotate_to_spy=(kind == 'rotate_to_spy'), reason=reason)
+        kind, target, syms = action
+        reason = f"AI判断({kind}{' -> ' + target if target else ''}): {detail or '部分调仓'}"
+        log(f"  AI decided {kind} -> {target}: {syms} -- {detail}")
+        sell_selected(api, state, syms, rotate_to=target, reason=reason)
         if not state.get('sim_positions'):
             # partial sell emptied the whole book -- close the day's books properly
             finalize_day(api, state, day_pl_pct, reason, do_liquidate=False)
