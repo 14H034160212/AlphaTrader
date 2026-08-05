@@ -108,3 +108,21 @@ OVERALL: NEUTRAL
 - **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
 
 
+### 2026-08-05 20:38 UTC 自动交叉验证
+- P&L: +1.9%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **付费深度判断** ($0.1745): **判断：这次升级是假信号，不是真实恶化——建议 HOLD。**
+
+1. **Ollama"离线"是误报**：本地 11435 端口的 Ollama daemon 实测在线（gemma4:31b、qwen3.5:35b 等模型均已加载响应），与此前记录的 `crossvalidate_satellite.py` 超时误触发模式完全一致——不是模型真的宕机，是脚本超时窗口太短导致冷启动被误判为"两路返回空"。
+
+2. **"无已存论文"也是误报**：`reports/BABA/` 下确实没有 `thesis.md`，但 `ai-berkshire/reports/Alibaba/Alibaba-investment-research-20260623.md` 是一份完整的四大师研究（6/23，$104.97建仓价附近），只是路径/命名没被 crossvalidate 脚本识别到，不代表论文缺失或论文被推翻。
+
+3. **论文本身仍成立**：核心矛盾是"卖方一致看多（93% buy，目标价+82%）vs 股价滞留52周低位"，FY2026利润暴跌62%/FCF转负是主动的AI+即时零售投入期，非经营恶化；这是已知的、被论文本身预判的风险，不构成新的破位证据。
+
+4. **建议**：HOLD，不需要人工干预仓位。真正要做的是把 `crossvalidate_satellite.py` 的 Ollama 超时阈值调大（复用此前的修复方案），并把 BABA 的研究报告按标准路径补一份 `reports/BABA/thesis.md`，避免同类假警报重复触发。
+
+
