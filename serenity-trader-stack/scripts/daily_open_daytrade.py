@@ -250,17 +250,41 @@ def append_history(entry):
         log(f"  history write error: {e}")
 
 
+LESSONS_FILE = '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_lessons.jsonl'
+
+
 def history_context_str():
     # Builds the "past operating info" summary the user asked to chain into
     # every day's decision, not just fresh news in isolation.
     hist = load_recent_history(10)
-    if not hist:
-        return ""
-    lines = ["过去交易记录(供参考,避免重复踩坑/可以延续有效的方向):"]
-    for h in hist:
-        picks_str = ", ".join(f"{s}({w*100:.0f}%)" for s, w in h.get('weights', {}).items()) or "空仓"
-        lines.append(f"- {h.get('date')}: {picks_str} -> 当日盈亏 {h.get('final_pl_pct', 0):+.2f}% ({h.get('reason', '')})")
-    return "\n".join(lines) + "\n\n"
+    parts = []
+    if hist:
+        lines = ["过去交易记录(供参考,避免重复踩坑/可以延续有效的方向):"]
+        for h in hist:
+            picks_str = ", ".join(f"{s}({w*100:.0f}%)" for s, w in h.get('weights', {}).items()) or "空仓"
+            spy = h.get('spy_pct')
+            spy_str = f" vs SPY {spy:+.2f}%" if isinstance(spy, (int, float)) else ""
+            lines.append(f"- {h.get('date')}: {picks_str} -> 当日盈亏 {h.get('final_pl_pct', 0):+.2f}%{spy_str} ({h.get('reason', '')})")
+        parts.append("\n".join(lines))
+    # 2026-08-05: the automated post-close retro (daily_retro.py) writes
+    # concrete lessons; feed the recent ones into every morning's pick so
+    # yesterday's mistake is part of tomorrow's decision context (user: "你
+    # 需要有这样的反思能力...不要等我给你授权").
+    try:
+        if os.path.exists(LESSONS_FILE):
+            lesson_lines = []
+            for line in open(LESSONS_FILE).read().splitlines()[-7:]:
+                try:
+                    e = json.loads(line)
+                    for les in e.get('lessons', []):
+                        lesson_lines.append(f"- ({e.get('date')}) {les}")
+                except Exception:
+                    continue
+            if lesson_lines:
+                parts.append("历史复盘教训(必须在今天的选择中体现,不要重复犯):\n" + "\n".join(lesson_lines[-8:]))
+    except Exception:
+        pass
+    return ("\n\n".join(parts) + "\n\n") if parts else ""
 
 
 def already_held_elsewhere(api):
