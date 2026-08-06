@@ -156,3 +156,23 @@ CRI（Carter's）是 2026-08-03 当天新建的卫星仓，入场逻辑是 Q2 �
 - **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
 
 
+### 2026-08-06 01:19 UTC 自动交叉验证
+- P&L: -1.1%
+- 4大师速览: BEARISH
+BUFFETT: WATCH; political volatility negates any narrow cost-moat.
+MUNGER: Mistake if federal policy permanently shifts away from private incarceration.
+DUAN(段永平): No; business model depends on government whims, not intrinsic value.
+LI_LU(李录): High risk of permanent loss; compounding is fragile and regulatory-dependent.
+OVERALL: BEARISH
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.1136): **CRI (CoreCivic) 综合判断：**
+
+论文本身并不存在——本地没有保存过 thesis，说明这仓位从一开始就缺乏书面论文支撑，这本身就是一个信号。四大师本地速览是一致的（4/4 BEARISH），而且理由不是短期噪音，是结构性的：私营监狱的商业模式收入高度依赖联邦/州政府的政策续约与合同倾向，这是一种**政策依赖型护城河**，不是巴菲特/李录框架里认可的"内在价值"或可持续壁垒——一旦联邦政策转向（例如减少私营监禁合同），复利逻辑直接断裂，这类风险在段永平"生意的本质"判断里属于典型的"不做"类型。Serenity 速览为空是正常的，CRI 本来就不在半导体/AI供应链版图内，不需要她的卡点分析背书。
+
+结合你"生存优先、聚焦主题（AI/半导体/机器人）、低换手"的整体授权：CRI 属于卫星仓中一个**无论文、非核心主题、且四大师一致判定为结构性脆弱**的持仓，没有理由为它承担监管尾部风险。
+
+**建议：EXIT**（清仓卫星仓 CRI）。这不是"追跌"，而是关闭一个从未有过书面论文、且现在被四个独立框架一致判定为政策脆弱的仓位——符合"抄底不是杀跌"的原则本身不适用于此（没有底可抄，是模式风险不是价格错杀）。
+
+

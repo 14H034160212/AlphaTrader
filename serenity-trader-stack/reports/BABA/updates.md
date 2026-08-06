@@ -126,3 +126,13 @@ OVERALL: NEUTRAL
 4. **建议**：HOLD，不需要人工干预仓位。真正要做的是把 `crossvalidate_satellite.py` 的 Ollama 超时阈值调大（复用此前的修复方案），并把 BABA 的研究报告按标准路径补一份 `reports/BABA/thesis.md`，避免同类假警报重复触发。
 
 
+### 2026-08-06 00:39 UTC 自动交叉验证
+- P&L: +1.8%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
+
+
