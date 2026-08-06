@@ -252,6 +252,28 @@ def append_history(entry):
 
 LESSONS_FILE = '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_lessons.jsonl'
 
+# 2026-08-06: user -- "时刻要和大盘收益比较". Benchmark anchors for cumulative
+# comparison: the system's live inception (2026-07-16, account $61,016.51) and
+# SPY's prior close ($754.81 on 2026-07-15), so every daily email can state
+# cumulative account return vs cumulative SPY over the same period.
+INCEPTION_EQUITY = 61016.51
+INCEPTION_SPY_CLOSE = 754.81
+
+
+def spy_day_change():
+    try:
+        k, s, _ = _alpaca_creds()
+        r = requests.get('https://data.alpaca.markets/v2/stocks/SPY/snapshot',
+                          headers={'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}, timeout=10)
+        snap = r.json()
+        prev = snap['prevDailyBar']['c']
+        last = snap.get('latestTrade', {}).get('p')
+        if prev and last:
+            return round((last - prev) / prev * 100, 2), last
+    except Exception:
+        pass
+    return None, None
+
 
 def history_context_str():
     # Builds the "past operating info" summary the user asked to chain into
@@ -323,8 +345,23 @@ def record_action(state, text):
 
 def send_daily_summary(state, day_pl_pct, reason):
     actions = state.get('action_log', [])
+    # benchmark comparison, daily AND cumulative ("时刻要和大盘收益比较")
+    bench = ""
+    spy_chg, spy_last = spy_day_change()
+    if spy_chg is not None:
+        rel = day_pl_pct - spy_chg
+        bench = f"当日大盘SPY: {spy_chg:+.2f}% | 相对大盘: {rel:+.2f}pp ({'跑赢' if rel >= 0 else '跑输'})\n"
+        try:
+            api = get_alpaca()
+            eq = float(api.get_account().equity)
+            cum_us = (eq - INCEPTION_EQUITY) / INCEPTION_EQUITY * 100
+            cum_spy = (spy_last - INCEPTION_SPY_CLOSE) / INCEPTION_SPY_CLOSE * 100
+            bench += (f"累计(自2026-07-16): 账户 {cum_us:+.2f}% vs SPY {cum_spy:+.2f}% "
+                      f"({'跑赢' if cum_us >= cum_spy else '跑输'} {abs(cum_us-cum_spy):.2f}pp)\n")
+        except Exception:
+            pass
     body = (f"今天(常态化自动日内交易)战况汇总 -- 收盘原因: {reason}\n"
-            f"当日账户盈亏: {day_pl_pct:+.2f}%\n\n")
+            f"当日账户盈亏: {day_pl_pct:+.2f}%\n{bench}\n")
     if not actions:
         body += "今天没有交易(未找到合适标的,或大盘/盘前走弱选择空仓)。"
     else:
@@ -360,7 +397,7 @@ def finalize_day(api, state, day_pl_pct, reason, do_liquidate=True):
         record_action(state, f"⚠️ 收盘后停美债失败({e}),现金暂未停放,需要人工处理")
     append_history({'date': state['date'], 'weights': state.get('weights', {}),
                      'reasons': state.get('reasons', {}), 'final_pl_pct': day_pl_pct,
-                     'reason': reason})
+                     'spy_pct': spy_day_change()[0], 'reason': reason})
     send_daily_summary(state, day_pl_pct, reason)
 
 
@@ -1081,6 +1118,12 @@ def manage(api, state):
     clock = api.get_clock()
     mins_to_close = (clock.next_close - datetime.datetime.now(clock.next_close.tzinfo)).total_seconds() / 60
 
+    # "时刻要和大盘收益比较" -- every managed tick logs the portfolio vs SPY
+    spy_chg, _ = spy_day_change()
+    if spy_chg is not None:
+        rel = day_pl_pct - spy_chg
+        log(f"  组合当日 {day_pl_pct:+.2f}% vs SPY {spy_chg:+.2f}% ({'跑赢' if rel >= 0 else '跑输'} {abs(rel):.2f}pp)")
+
     reconcile_live_with_paper(api, state, mins_to_close)
 
     if DRY_RUN:
@@ -1111,6 +1154,7 @@ def manage(api, state):
             save_state(state)
             append_history({'date': state['date'], 'weights': state.get('weights', {}),
                              'reasons': state.get('reasons', {}), 'final_pl_pct': round(day_pl_pct, 2),
+                             'spy_pct': spy_day_change()[0],
                              'reason': 'AI判断隔夜持有,仓位带入下一交易日'})
             send_daily_summary(state, day_pl_pct, "AI判断隔夜持有,仓位带入下一交易日(未平仓,盈亏为浮动值)")
 
