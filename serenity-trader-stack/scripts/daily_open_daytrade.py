@@ -801,7 +801,7 @@ def park_to_sgov(mirror_live=False):
     raise RuntimeError("SGOV park failed after 4 attempts")
 
 
-def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
+def ai_judge_positions(api, state, day_pl_pct, mins_to_close, audit_mode=False):
     # Replaces the fixed FLOOR_PCT/CEILING_PCT/mandatory-close-out numbers with
     # the AI's own judgment call, per "全部去掉" + "让ai自己判断". Works for
     # both the virtual (DRY_RUN) and real (live, currently paused) ledger.
@@ -871,7 +871,12 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close):
         "(评级上调的弹升已走完、一次性收益已被消化),即使没亏也应该腾出来让位给"
         "还有兑现空间的标的;催化剂仍在持续兑现的仓位(长期合同、新市场放量)值得"
         "耐心甚至加仓。目标只有一个:让每一块钱都待在最能赚钱的地方。\n\n"
-        "请从下面选项中选一个,第一行只写选项名称(带符号列表时严格按示例格式),第二行写一句话理由:\n"
+        + ("**今天开盘首次判断,必须先做逐仓审计再给结论**:对每只持仓明确回答——"
+           "(a)浮盈相对其催化剂的合理空间,兑现度有多高?兑现度高的(比如短短几天"
+           "已+20%以上)必须明确选择'落袋/减仓/继续持有'并给出理由,不允许含糊带过;"
+           "(b)入场理由是否与教训清单冲突?冲突的优先处理;(c)有没有隔夜出现的新消息"
+           "改变某只持仓的论文?审计结论写在理由里。\n\n" if audit_mode else "")
+        + "请从下面选项中选一个,第一行只写选项名称(带符号列表时严格按示例格式),第二行写一句话理由:\n"
         "HOLD(继续持有,不操作)\n"
         "SELL_ALL(现在全部平仓)\n"
         "HOLD_OVERNIGHT(收盘后继续持有到下一个交易日)\n"
@@ -1116,7 +1121,17 @@ def manage(api, state):
         if mins_to_close <= 2:
             _end_holdover_day()
         return
-    action, detail = ai_judge_positions(api, state, day_pl_pct, mins_to_close)
+    # 2026-08-06: mandatory morning audit -- the first judge call of each day
+    # must audit every carried position's catalyst-realization degree, lesson
+    # conflicts, and overnight news BEFORE concluding (user: "这些你应该自己
+    # 检查，不要我来提醒你" -- e.g. FTK sat at +31% with its catalyst largely
+    # priced in, and nothing forced the question until the user asked).
+    audit_mode = not state.get('_morning_audit_done', False)
+    action, detail = ai_judge_positions(api, state, day_pl_pct, mins_to_close, audit_mode=audit_mode)
+    if audit_mode and state.get('_last_judge_time'):
+        state['_morning_audit_done'] = True
+        save_state(state)
+        record_action(state, f"开盘逐仓审计完成: {detail[:200] if detail else '(见AI判断日志)'}")
     if action == 'sell_all':
         reason = f"AI判断: {detail or '主动平仓'} (当日盈亏 {day_pl_pct:+.2f}%)"
         finalize_day(api, state, day_pl_pct, reason)
@@ -1225,7 +1240,8 @@ def main():
             state['hold_overnight'] = False
             state['action_log'] = []
             for k in ('day_start_equity', 'day_start_time', 'floor_armed',
-                      'second_scan_done', '_last_judge_time', 'skipped_regime'):
+                      'second_scan_done', '_last_judge_time', 'skipped_regime',
+                      '_morning_audit_done', '_reconcile_attempts', '_eod_reported'):
                 state.pop(k, None)
         else:
             state = {'date': today, 'symbols': {}, 'weights': {}, 'reasons': {},
