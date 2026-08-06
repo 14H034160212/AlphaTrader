@@ -141,3 +141,25 @@ DBD 论文本身：2026-08-04 新建的动量型卫星仓（Wedbush 上调+高�
 - **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
 
 
+### 2026-08-06 09:48 UTC 自动交叉验证
+- P&L: -1.9%
+- 4大师速览: BEARISH
+BUFFETT: SELL — zero moat, pure mathematical decay.
+MUNGER: Mistake if mistaking a leveraged bet for a business.
+DUAN(段永平): No — this is a derivative, not a business.
+LI_LU(李录): High risk of permanent loss via volatility drag.
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: BROKEN
+REASON: no original thesis found for verification
+OVERALL: NEUTRAL
+- **升级触发**: Serenity 判定卡点逻辑已破; 出现看空信号
+- **付费深度判断** ($0.1341): **综合判断：**
+
+这次升级信号本身不太可靠，有两个已知的误报模式在起作用：一是 Serenity 卡点判定"BROKEN"只是因为找不到已保存的论文文件，不代表论文真的被证伪（和 2026-07-25 TEL 的 missing-thesis 误报是同一个 bug）；二是四大师把 DBD 描述成"衍生品、非商业实体、存在波动率损耗（volatility drag）"，这个描述听起来更像是把 DBD 误判成了杠杆/反向 ETF/ETN，而不是真正的 Diebold Nixdorf（做 ATM/银行设备的实业公司）——这和 2026-08-05 发现的 RDY 裸 ticker 幻觉 bug 是同一类问题（本地+付费四大师把裸 ticker 认错公司）。
+
+所以现在这份"BEARISH"结论大概率是建立在错误的公司识别之上，不能直接采信。
+
+**建议：HOLD**，先不要因这次升级做减仓/清仓操作；下一步应该核实 DBD 的 ticker 识别是否正确（是否真的被误认成了衍生品类资产），并补齐这个仓位的原始论文文件，避免同样的误报再次触发升级。
+
+
