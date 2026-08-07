@@ -119,6 +119,18 @@ MAX_PICKS = 20                 # generous practical bound, not a judgment limit 
 MAX_PICK_WEIGHT = 1.0          # no per-name cap -- the AI's own requested conviction % is
                                # trusted directly
 MAX_TOTAL_DEPLOY_PCT = 1.0     # no total-exposure cap
+MAX_SINGLE_NAME_CONCENTRATION_PCT = 0.35   # 2026-08-06: hard ceiling for ROTATE_TO --
+                                            # found via self-review that repeated sound-
+                                            # looking rotations (5x in ~2h) consolidated a
+                                            # 9-name book into 2 names at 91.6% of the
+                                            # account with no ceiling at all. "Concentrate
+                                            # into a proven winner" was never meant to mean
+                                            # "up to effectively 100%" -- this caps any
+                                            # single ROTATE_TO target's resulting weight.
+MAX_ROTATIONS_PER_DAY = 2      # independent guard on the CASCADE itself -- each
+                                # individual rotation can look sound while the
+                                # cumulative effect (this many in one session) wasn't
+                                # authorized at all
 MAX_CHASE_GAP_PCT = 1000.0     # effectively disabled -- the picker's own prompt-level
                                # "don't chase an extended move" instruction is what's left
 SECOND_SCAN_AFTER_MIN = 90     # if the day's P&L hasn't cleared FLOOR_PCT after this long
@@ -912,7 +924,11 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close, audit_mode=False):
            "(a)浮盈相对其催化剂的合理空间,兑现度有多高?兑现度高的(比如短短几天"
            "已+20%以上)必须明确选择'落袋/减仓/继续持有'并给出理由,不允许含糊带过;"
            "(b)入场理由是否与教训清单冲突?冲突的优先处理;(c)有没有隔夜出现的新消息"
-           "改变某只持仓的论文?审计结论写在理由里。\n\n" if audit_mode else "")
+           "改变某只持仓的论文?(d)**检查单票集中度**:任何一只持仓占比是否超过35%?"
+           "超过的话即使论文没破位,也应该SELL_SOME减仓一部分腾给其他标的——"
+           "2026-08-06曾发生连续5次'合理的'ROTATE_TO把9只持仓吃成2只、单票集中"
+           "到91.6%的真实事故,系统现在有硬性上限但不会自动拆分已经存在的超额集中,"
+           "需要你主动发现并处理。审计结论写在理由里。\n\n" if audit_mode else "")
         + "请从下面选项中选一个,第一行只写选项名称(带符号列表时严格按示例格式),第二行写一句话理由:\n"
         "HOLD(继续持有,不操作)\n"
         "SELL_ALL(现在全部平仓)\n"
@@ -1015,12 +1031,36 @@ def sell_selected(api, state, syms, rotate_to, reason):
         state['second_scan_done'] = False
         save_state(state)
         return
+    # 2026-08-06: REAL INCIDENT -- ROTATE_TO fired 5 times in ~2 hours (each
+    # judged sound in isolation) and consolidated a 9-name book down to just
+    # FTK+RKLB at 91.6% of the account, with no ceiling and no per-day limit
+    # on how many times it could re-fire. Caught by self-review, not the
+    # user. Two independent caps now enforce a ceiling that was never
+    # authorized at this concentration: a hard per-name weight cap, and a
+    # per-day count limit on rotations regardless of how sound each looks.
+    rotate_count = state.get('_rotate_count_today', 0)
+    if rotate_count >= MAX_ROTATIONS_PER_DAY:
+        log(f"  rotate: already rotated {rotate_count}x today (cap {MAX_ROTATIONS_PER_DAY}) -- "
+            f"leaving freed capital in cash instead of concentrating further into {rotate_to}")
+        state['second_scan_done'] = False
+        save_state(state)
+        return
+    state['_rotate_count_today'] = rotate_count + 1
+    save_state(state)
     q = md.get_stock_quote(rotate_to)
     tgt_px = q['current'] if q and q.get('current') else None
     if not tgt_px:
         log(f"  rotate: no {rotate_to} quote, leaving freed capital in cash")
         return
     notional = equity_paper * freed_w
+    current_tgt_w = state.get('weights', {}).get(rotate_to, 0)
+    if current_tgt_w + freed_w > MAX_SINGLE_NAME_CONCENTRATION_PCT:
+        capped_w = max(0.0, MAX_SINGLE_NAME_CONCENTRATION_PCT - current_tgt_w)
+        log(f"  rotate: capping {rotate_to} at {MAX_SINGLE_NAME_CONCENTRATION_PCT*100:.0f}% "
+            f"concentration -- using {capped_w*100:.1f}% of the freed {freed_w*100:.1f}%, "
+            f"rest stays in cash for the next rescan")
+        notional = equity_paper * capped_w
+        freed_w = capped_w
     add_qty = round(notional / tgt_px, 4)
     sp = state.setdefault('sim_positions', {})
     if rotate_to in sp:
@@ -1285,7 +1325,8 @@ def main():
             state['action_log'] = []
             for k in ('day_start_equity', 'day_start_time', 'floor_armed',
                       'second_scan_done', '_last_judge_time', 'skipped_regime',
-                      '_morning_audit_done', '_reconcile_attempts', '_eod_reported'):
+                      '_morning_audit_done', '_reconcile_attempts', '_eod_reported',
+                      '_rotate_count_today'):
                 state.pop(k, None)
         else:
             state = {'date': today, 'symbols': {}, 'weights': {}, 'reasons': {},
