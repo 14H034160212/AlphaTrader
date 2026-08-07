@@ -936,7 +936,11 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close, audit_mode=False):
         "SELL_SOME: SYM1,SYM2(只卖掉指定的弱势持仓,其余继续持有——腾出的资金可能被重新配置)\n"
         "ROTATE_TO_SPY: SYM1,SYM2(卖掉指定持仓,腾出的资金立即换成SPY大盘——适合个股论文走坏但大盘强势时)\n"
         "ROTATE_TO 目标代码: SYM1,SYM2(卖掉指定弱势持仓,腾出的资金加仓到某只已持有的强势标的——"
-        "当组合中出现催化剂持续兑现、明显领跑的赢家时,把弱势仓位的资金向它集中,不要让最强的仓位一直是最小的)"
+        "当组合中出现催化剂持续兑现、明显领跑的赢家时,把弱势仓位的资金向它集中,不要让最强的仓位一直是最小的)\n\n"
+        "**大盘(SPY)永远是主动的降风险选项,不是走投无路才想到的备选**:如果某只持仓已经"
+        "占比过高、盘中波动剧烈到让你不安,或者找不到比大盘更好的个股去承接资金,主动选择"
+        "ROTATE_TO_SPY 把部分仓位换成大盘、降低组合的整体波动,是完全正确、值得鼓励的操作,"
+        "不代表判断失败。"
     )
     try:
         result = subprocess.run([CLAUDE_BIN, '-p', prompt, '--output-format', 'json'],
@@ -1031,58 +1035,70 @@ def sell_selected(api, state, syms, rotate_to, reason):
         state['second_scan_done'] = False
         save_state(state)
         return
-    # 2026-08-06: REAL INCIDENT -- ROTATE_TO fired 5 times in ~2 hours (each
-    # judged sound in isolation) and consolidated a 9-name book down to just
-    # FTK+RKLB at 91.6% of the account, with no ceiling and no per-day limit
-    # on how many times it could re-fire. Caught by self-review, not the
-    # user. Two independent caps now enforce a ceiling that was never
-    # authorized at this concentration: a hard per-name weight cap, and a
-    # per-day count limit on rotations regardless of how sound each looks.
+
+    def _buy_into(sym, w, tag):
+        # Shared buy path for both the intended rotation target and any
+        # overflow that gets redirected into SPY (below) -- keeps ledger
+        # update + live mirror consistent for both cases.
+        qq = md.get_stock_quote(sym)
+        pxx = qq['current'] if qq and qq.get('current') else None
+        if not pxx:
+            log(f"  rotate: no {sym} quote, leaving that portion in cash")
+            return
+        notional_ = equity_paper * w
+        add_qty_ = round(notional_ / pxx, 4)
+        sp_ = state.setdefault('sim_positions', {})
+        if sym in sp_:
+            old_ = sp_[sym]
+            new_qty_ = old_['qty'] + add_qty_
+            sp_[sym] = {'qty': new_qty_,
+                        'entry_price': round((old_['qty']*old_['entry_price'] + add_qty_*pxx) / new_qty_, 4)}
+        else:
+            sp_[sym] = {'qty': add_qty_, 'entry_price': pxx}
+        state['sim_cash'] = state.get('sim_cash', 0) - notional_
+        state.setdefault('weights', {})[sym] = state.get('weights', {}).get(sym, 0) + w
+        state.setdefault('reasons', {}).setdefault(sym, '弱势仓位轮换目标(ROTATE_TO)' if sym != 'SPY' else '风险敞口超限,超额部分自动降级为大盘')
+        save_state(state)
+        log(f"  [DRY-RUN] ✓ ROTATED into {sym} qty={add_qty_} @~${pxx:.2f} ({tag})")
+        record_action(state, f"轮换买入 {sym} {add_qty_}股 @~${pxx:.2f} ({tag})")
+        if MIRROR_TO_LIVE:
+            try:
+                live_qty_ = mirror_live_buy(api, sym, w, pxx)
+                if live_qty_:
+                    record_action(state, f"[实盘同步] 轮换买入 {sym} {live_qty_}股")
+            except Exception as e:
+                log(f"  [LIVE-MIRROR] rotate buy {sym} FAILED -- reconciler will retry: {e}")
+
+    # 2026-08-06/07: REAL INCIDENT -- ROTATE_TO fired 5 times in ~2 hours
+    # (each judged sound in isolation) and consolidated a 9-name book down to
+    # just FTK+RKLB at 91.6% of the account; the next day the account swung
+    # -$1,700 intraday purely off FTK's own volatility (user: "过山车太惊
+    # 险了" + "应该要保留选择大盘的可能"). Two caps bound the cascade AND
+    # its concentration -- and critically, whenever either cap diverts
+    # capital, that capital now lands in SPY instead of idle cash, so
+    # de-risking into the index is the automatic, structural fallback, not
+    # just an option the judge might remember to pick.
     rotate_count = state.get('_rotate_count_today', 0)
     if rotate_count >= MAX_ROTATIONS_PER_DAY:
         log(f"  rotate: already rotated {rotate_count}x today (cap {MAX_ROTATIONS_PER_DAY}) -- "
-            f"leaving freed capital in cash instead of concentrating further into {rotate_to}")
-        state['second_scan_done'] = False
-        save_state(state)
+            f"routing this rotation into SPY instead of concentrating further into {rotate_to}")
+        _buy_into('SPY', freed_w, f"当日调仓次数已达上限,超额部分自动转为大盘(原目标 {rotate_to})")
         return
     state['_rotate_count_today'] = rotate_count + 1
     save_state(state)
-    q = md.get_stock_quote(rotate_to)
-    tgt_px = q['current'] if q and q.get('current') else None
-    if not tgt_px:
-        log(f"  rotate: no {rotate_to} quote, leaving freed capital in cash")
-        return
-    notional = equity_paper * freed_w
+
     current_tgt_w = state.get('weights', {}).get(rotate_to, 0)
-    if current_tgt_w + freed_w > MAX_SINGLE_NAME_CONCENTRATION_PCT:
+    capped_w, spy_w = freed_w, 0.0
+    if rotate_to != 'SPY' and current_tgt_w + freed_w > MAX_SINGLE_NAME_CONCENTRATION_PCT:
         capped_w = max(0.0, MAX_SINGLE_NAME_CONCENTRATION_PCT - current_tgt_w)
+        spy_w = freed_w - capped_w
         log(f"  rotate: capping {rotate_to} at {MAX_SINGLE_NAME_CONCENTRATION_PCT*100:.0f}% "
             f"concentration -- using {capped_w*100:.1f}% of the freed {freed_w*100:.1f}%, "
-            f"rest stays in cash for the next rescan")
-        notional = equity_paper * capped_w
-        freed_w = capped_w
-    add_qty = round(notional / tgt_px, 4)
-    sp = state.setdefault('sim_positions', {})
-    if rotate_to in sp:
-        old = sp[rotate_to]
-        new_qty = old['qty'] + add_qty
-        sp[rotate_to] = {'qty': new_qty,
-                         'entry_price': round((old['qty']*old['entry_price'] + add_qty*tgt_px) / new_qty, 4)}
-    else:
-        sp[rotate_to] = {'qty': add_qty, 'entry_price': tgt_px}
-    state['sim_cash'] = state.get('sim_cash', 0) - notional
-    state.setdefault('weights', {})[rotate_to] = state.get('weights', {}).get(rotate_to, 0) + freed_w
-    state.setdefault('reasons', {}).setdefault(rotate_to, '弱势仓位轮换目标(ROTATE_TO)')
-    save_state(state)
-    log(f"  [DRY-RUN] ✓ ROTATED into {rotate_to} qty={add_qty} @~${tgt_px:.2f} (freed {freed_w*100:.1f}%)")
-    record_action(state, f"轮换买入 {rotate_to} {add_qty}股 @~${tgt_px:.2f} (弱势仓位换强势目标)")
-    if MIRROR_TO_LIVE:
-        try:
-            live_qty = mirror_live_buy(api, rotate_to, freed_w, tgt_px)
-            if live_qty:
-                record_action(state, f"[实盘同步] 轮换买入 {rotate_to} {live_qty}股")
-        except Exception as e:
-            log(f"  [LIVE-MIRROR] rotate buy {rotate_to} FAILED -- reconciler will retry: {e}")
+            f"routing the remaining {spy_w*100:.1f}% into SPY instead of idle cash")
+    if capped_w > 0:
+        _buy_into(rotate_to, capped_w, "弱势仓位换强势目标")
+    if spy_w > 0:
+        _buy_into('SPY', spy_w, f"{rotate_to}集中度已达上限,超额部分自动转为大盘")
 
 
 RECONCILE_RETRY_SECONDS = 240   # per-symbol cooldown between live re-buy attempts
