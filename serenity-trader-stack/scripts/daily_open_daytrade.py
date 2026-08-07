@@ -604,6 +604,19 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
     if total_w > MAX_TOTAL_DEPLOY_PCT and total_w > 0:
         scale = MAX_TOTAL_DEPLOY_PCT / total_w
         picks = [(sym, w * scale, reason) for sym, w, reason in picks]
+        total_w = MAX_TOTAL_DEPLOY_PCT
+
+    # 2026-08-07: "把标普500作为一个baseline" -- SPY owns whatever capital
+    # individual picks didn't explicitly carve out, as a guaranteed backstop
+    # (not dependent on the LLM remembering to compute the remainder itself).
+    remainder = MAX_TOTAL_DEPLOY_PCT - total_w
+    if remainder > 0.01:
+        existing_spy = next((i for i, p in enumerate(picks) if p[0] == 'SPY'), None)
+        if existing_spy is not None:
+            sym, w, reason = picks[existing_spy]
+            picks[existing_spy] = (sym, w + remainder, reason)
+        else:
+            picks.append(('SPY', remainder, '基准仓位(个股未占满的资金默认留在大盘)'))
 
     return picks, cost
 
@@ -1387,13 +1400,21 @@ def main():
         # must BEAT, not just match.
         if chg_pct is not None:
             direction = "走强" if chg_pct >= 0 else "走弱"
+            # 2026-08-07: user, after the -$1,700 concentration scare -- "把标普500
+            # 作为一个baseline，除非你看到有收益率更好的选择，否则就还是买标普500"
+            # (treat SPY as the baseline; unless you see a clearly better return,
+            # just hold SPY). This inverts the prior framing from "cash is the
+            # default, individual stocks are the goal" to "SPY is the default,
+            # individual stocks must clear a real bar to replace part of it."
             regime_note = (
                 f"大盘实时状态: SPY 今日{direction} {chg_pct:+.2f}%。\n"
-                "重要: SPY 和 QQQ 本身永远是备选标的——个股候选必须让你相信能明显"
-                "跑赢直接持有大盘,才值得替代大盘仓位。如果今天是宏观驱动的普涨日"
-                "而个股催化并不特别突出,直接配置 SPY/QQQ(可以占大部分仓位)是完全"
-                "正确的答案;也可以大盘做底仓+少数最有把握的个股做增强。反之大盘"
-                "走弱时,请自行判断是否仍要建仓或空仓持有美债。\n\n"
+                "**核心原则:把持有SPY(大盘)当作今天的默认基准仓位**,不是"
+                "退而求其次的备选。只有当某只个股的预期回报明显优于直接持有SPY"
+                "时,才把对应比例的资金分配给它;个股权重合计之外的部分,默认"
+                "留在SPY里,不是现金。如果今天完全找不到明显优于SPY的机会,"
+                "只输出 SPY: 100% [持续性:数周+] 大盘基准仓位 这一行,这是"
+                "完全正常、值得肯定的结果,不是'没做好功课'。反之如果大盘本身"
+                "走弱,请自行判断今天是否仍要建仓,或空仓持有美债更稳妥。\n\n"
             )
         else:
             regime_note = ""
@@ -1402,10 +1423,18 @@ def main():
         exclude = already_held_elsewhere(api)
         picks, cost = pick_todays_stocks(api, exclude=exclude, extra_note=regime_note)
         if not picks:
-            log("  no qualifying picks today -- staying in cash/SGOV")
-            record_action(state, "今天没有找到有说服力的利好标的,继续持有美债")
-            finalize_day(api, state, 0.0, "没有找到合适标的,今天选择空仓", do_liquidate=False)
-            return
+            if ok:
+                # 2026-08-07: SPY-as-baseline default -- a NONE verdict on a
+                # non-weak day means "nothing beats the baseline", so the
+                # baseline itself (SPY) is what we hold, not idle cash.
+                log("  no individual picks beat the SPY baseline -- defaulting to SPY itself")
+                picks = [('SPY', MAX_TOTAL_DEPLOY_PCT, '无个股明显优于大盘,默认持有SPY基准仓位')]
+                cost = cost or 0.0
+            else:
+                log("  no qualifying picks today -- staying in cash/SGOV")
+                record_action(state, "今天没有找到有说服力的利好标的,继续持有美债")
+                finalize_day(api, state, 0.0, "没有找到合适标的,今天选择空仓", do_liquidate=False)
+                return
         state['weights'] = {sym: w for sym, w, _ in picks}
         state['reasons'] = {sym: reason for sym, w, reason in picks}
         save_state(state)
