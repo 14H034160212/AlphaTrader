@@ -514,6 +514,35 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         if mover_lines:
             search_snippets.append("实时全市场涨幅榜(仅供参考,自己判断消息是否真实,"
                                     "不要单纯因为涨幅大就选):\n" + "\n".join(mover_lines))
+
+        # 2026-08-07: the generic Exa text search repeatedly failed to confirm
+        # a specific catalyst for names that WERE on this gainers list (INSM,
+        # WPP, PAYC... rejected daily as "涨幅榜但无具体消息"), so real picks
+        # were being missed for lack of a precise per-symbol source. Alpaca's
+        # own news API is structured and symbol-tagged -- a much sharper tool
+        # for "does THIS ticker have an actual headline" than freeform search.
+        movers_syms = [row.get('symbol') for row in rows[:25] if row.get('symbol')]
+        if movers_syms:
+            try:
+                from database import SessionLocal, get_setting
+                _db = SessionLocal()
+                k = get_setting(_db, 'alpaca_api_key', 1)
+                s = get_setting(_db, 'alpaca_secret_key', 1)
+                _db.close()
+                h = {'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}
+                r = requests.get('https://data.alpaca.markets/v1beta1/news',
+                                  params={'symbols': ','.join(movers_syms), 'limit': 40},
+                                  headers=h, timeout=15)
+                articles = r.json().get('news', []) if r.status_code == 200 else []
+                if articles:
+                    news_lines = [f"{a['created_at'][:16]} | {','.join(a['symbols'])} | {a['headline']}"
+                                  for a in articles]
+                    search_snippets.append(
+                        "涨幅榜标的的结构化新闻标题(Alpaca News,按symbol精确匹配,"
+                        "比通用搜索更能确认具体某只股票是否真的有消息):\n"
+                        + "\n".join(news_lines))
+            except Exception as e:
+                log(f"  alpaca news lookup error: {e}")
     except Exception as e:
         log(f"  market screener error: {e}")
 
