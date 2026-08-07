@@ -458,6 +458,14 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         "retail consumer company earnings guidance news today",
         "small cap stock breakout news today",
         "insider buying stock news today",
+        # 2026-08-07: added after missing the AAOI/COHR/LITE optical-interconnect
+        # rally -- the underlying signal (TrendForce InP shortage report, 8/6,
+        # hours before market open) was a real sourced supply-chain bottleneck,
+        # not "sector sentiment", but none of the queries above would ever
+        # surface a TrendForce/DigiTimes-style industry data-point. This is
+        # exactly the class of signal Serenity's chokepoint lens looks for.
+        "TrendForce DigiTimes semiconductor component shortage supply chain report",
+        "AI data center hyperscaler capex optical networking supply constraint bottleneck",
     ]
     # 2026-07-31: found post-reboot that firing all queries back-to-back trips the
     # Exa endpoint's rate limit (HTTP 429) and ALL searches fail -- space them out
