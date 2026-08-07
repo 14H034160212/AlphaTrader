@@ -220,3 +220,31 @@ Ollama 后台目前有多个 `ollama serve` 进程存活，其中一个正在满
 - **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
 
 
+### 2026-08-07 08:20 UTC 自动交叉验证
+- P&L: +3.8%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **付费深度判断** ($0.8763): ## FTK 综合判断
+
+**先纠正三件前八次复核搞错的事：**
+
+1. **论文本身是真的，但被内部叙事放大了。** PREPA 合同 8/3 已官宣属实——但 Flotek 的角色是向牵头方 Power Expectations LLC **供应**最多 6 对 PWRtek 智能调压/分配撬块 + 最多 40MW 自发电，满产年收入约 **$40M**、十年 backlog 约 $400M，**Q4 2026 才开始交付支持设备、主设备要到 2027 Q1**。内部复盘写的"10年400MW**独占**电站服务合同"是错的：不是独占，也不是 400MW 归 Flotek，是 400MW 项目里的一个配套环节。真实但弹性远小于叙事。
+
+2. **+31% 已经不存在了。** 8/6 15:00–16:00 卫星仓从 12 只砍到 2 只（FTK+RKLB），FTK 的 P&L 从 +30.8% 归零重算成 +0.8%。当天是 13:31/13:51/14:33/15:15 **四次连续轮换追高**买进来的（$36.07→$37.08 是在已涨 +11% 之后加的），隔夜均价 $34.98。所以现在手上这批是**追高套牢的新仓**，不是那个 +31% 的老仓——过去 6 次"TRIM 锁定 +31% 浮盈"的建议已经作废，没有那笔盈可锁。
+
+3. **Ollama 没有离线，本次升级理由是错的。** 超时已经是 300s 不是 120s，而且**同一轮 RKLB 在 attempt 2 稳定成功**（20:34 / 00:34 / 04:33 三次都返回了 BULLISH/NEUTRAL）。FTK 只是排在循环第一位，把冷启动全吃了。这不是"模型是否在线"的问题，是**缺一个 loop 前的 warm-up ping**。
+
+**本地两个框架的判断有没有道理：没有，零参考价值。** 唯二两次真跑出结果的（08-04），4大师描述的是两家**完全不同的公司**——17:48 那次说"pipeline 失败/二元结局/永久亏损"（生物科技），21:54 那次说"区域定价权/人口结构顺风/监管价格上限"（受监管公用事业）。Flotek 是油田化学品+PWRtek 燃气发电调控，两次都不是它。这是 [[project_rdy_ticker_hallucination_bug]] 同一个裸 ticker 幻觉 bug 在 FTK 上复现。基于这些做的 BEARISH/BULLISH 判断（以及据此写的 EXIT 建议）都应作废。
+
+**建议：论文层面 HOLD，仓位层面 TRIM——但理由跟前八次完全不同。**
+
+论文没破（合同真实、收入 Q4 才开始兑现、+3.8% 三天走平不构成任何恶化信号），所以不 EXIT。真正该减的理由是**集中度**：整个卫星仓现在只剩 FTK + RKLB **两只票**，这个才是跟"生存优先"宪章直接冲突的东西，比 FTK 自己的任何问题都严重。而且 8/6 那四笔是教科书式的"追涨"，正好踩反了你的核心原则。
+
+要我执行的话（美股现已收盘，下个交易日开盘处理）：FTK 减到不超过卫星仓 15%，同时把 crossvalidate 的 loop 前 warm-up 补上、并给 4大师/Serenity 的 prompt 加上公司全名+业务描述（治本，能一次性掐掉 FTK/RDY 两条幻觉链）。论文档案我可以直接补录，这个无风险先做。要我动仓位请给一句确认——前八次都是在错误前提（+31%浮盈）上建议 TRIM，这次前提变了，值得你自己拍一下板。
+
+Sources: [Flotek IR 公告](https://ir.flotekind.com/2026-08-03-Flotek-Awarded-10-Year-Contract-to-Support-a-400-MW-Power-Project-for-Puerto-Rico-Electric-Power-Authority) · [PRNewswire](https://www.prnewswire.com/news-releases/flotek-awarded-10-year-contract-to-support-a-400-mw-power-project-for-puerto-rico-electric-power-authority-302840776.html) · [Seeking Alpha](https://seekingalpha.com/news/4623274-flotek-rises-after-winning-10-year-prepa-contract-worth-400m) · [StockTitan](https://www.stocktitan.net/news/FTK/flotek-awarded-10-year-contract-to-support-a-400-mw-power-project-3btyhea94gan.html)
+
+
