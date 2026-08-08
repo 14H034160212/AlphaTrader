@@ -466,6 +466,13 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         # exactly the class of signal Serenity's chokepoint lens looks for.
         "TrendForce DigiTimes semiconductor component shortage supply chain report",
         "AI data center hyperscaler capex optical networking supply constraint bottleneck",
+        # 2026-08-08: user asked to broaden scope further after a semiconductor +
+        # optical + SpaceX(SPCX) + gold/silver rally the picker's query set had
+        # no dedicated coverage for -- "我觉得你选股的能力很强，但是搜索的范围
+        # 还不太广". Precious metals wasn't a previously-declared focus theme,
+        # so this is exploratory breadth, not a priority weight like semis/AI.
+        "gold silver precious metals mining stock news today",
+        "space launch satellite company news today",
     ]
     # 2026-07-31: found post-reboot that firing all queries back-to-back trips the
     # Exa endpoint's rate limit (HTTP 429) and ALL searches fail -- space them out
@@ -561,7 +568,11 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         "重大产品/合作公告等),尽量覆盖不同行业(分散,不要挤在同一个板块)。"
         "权重分配要同时考虑两个维度:催化剂的确定性 和 股价的预期弹性——"
         "大盘股/防御性板块(如大型医药)即使消息扎实,单日波动空间也有限,"
-        "不要因为'最稳'就给最大权重;弹性大、催化硬的中小盘才配得上高权重。"
+        "不要因为'最稳'就给最大权重,但这是一个降低权重的理由,不是排除的理由——"
+        "如果多只大盘龙头股同时因为同一个真实、可验证的行业级消息大涨"
+        "(比如整条产业链的供应链数据或政策信息),这种广度本身就是需要"
+        "全面判断的强信号,不要仅仅因为市值大就直接不选,可以给中等偏低"
+        "的权重参与,而不是完全排除;弹性大、催化硬的中小盘才配得上高权重。"
         "不要选纯粹因为'今天涨幅大'但找不到具体原因的票,也不要选已经拉得很高、"
         "追高风险大的票——优先选择消息真实、目前价格还没有过度透支的标的"
         "(抄底思路,不是追涨思路)。\n"
