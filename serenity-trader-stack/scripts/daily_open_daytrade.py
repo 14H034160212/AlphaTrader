@@ -900,6 +900,29 @@ def park_to_sgov(mirror_live=False):
     raise RuntimeError("SGOV park failed after 4 attempts")
 
 
+def _upcoming_earnings_note(sym, lookahead_days=3):
+    # 2026-08-08: added after noticing RKLB (~30% of the account) reports Q2
+    # earnings 2026-08-10 -- a real near-term binary risk for a position this
+    # large -- while the judge's held-position context had no way to know an
+    # earnings date was coming at all. Cheap, per-symbol, degrades silently.
+    try:
+        import yfinance as yf
+        ed = yf.Ticker(sym).get_earnings_dates(limit=2)
+        if ed is None or ed.empty:
+            return ""
+        today = datetime.date.today()
+        for dt, row in ed.iterrows():
+            d = dt.date()
+            delta = (d - today).days
+            if 0 <= delta <= lookahead_days:
+                est = row.get('EPS Estimate')
+                est_str = f",EPS预期${est:.2f}" if est is not None else ""
+                return f" [财报风险: {d.isoformat()}即将公布财报{est_str},注意仓位不要在报告前后过度集中]"
+        return ""
+    except Exception:
+        return ""
+
+
 def ai_judge_positions(api, state, day_pl_pct, mins_to_close, audit_mode=False):
     # Replaces the fixed FLOOR_PCT/CEILING_PCT/mandatory-close-out numbers with
     # the AI's own judgment call, per "全部去掉" + "让ai自己判断". Works for
@@ -931,8 +954,9 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close, audit_mode=False):
         q = md.get_stock_quote(sym)
         px = q['current'] if q and q.get('current') else pos['entry_price']
         plpc = (px - pos['entry_price']) / pos['entry_price'] * 100
+        earnings_note = _upcoming_earnings_note(sym)
         lines.append(f"{sym}: 入价${pos['entry_price']:.2f} 现价${px:.2f} 盈亏{plpc:+.2f}% "
-                     f"理由:{state.get('reasons', {}).get(sym, '')}")
+                     f"理由:{state.get('reasons', {}).get(sym, '')}{earnings_note}")
 
     # 2026-08-04: give the judge the MARKET benchmark alongside portfolio P&L.
     # On 08-03 it reasoned "-0.78% is normal fluctuation, hold" without knowing
