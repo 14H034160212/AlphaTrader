@@ -90,3 +90,26 @@
   - State of AI Usage Report 2026 - LayerX
   - Xensam Insights: Enterprise AI Adoption Report, H1 2026 - Xensam
   - Microsoft 365 Copilot adoption jumps 50% over prior quarter
+
+## 2026-08-08
+- 本周提及热度排序 (受益标的): Meta/META(3), OpenAI (via MSFT infra/investment)(3), Google/GOOGL(1), Anthropic (via GOOGL/AMZN investment)(1)
+- 消费端App排名:
+  - iPhone Top Games & Apps - App Store
+  - Meta AI app climbs to No. 5 on the App Store after Muse Spark launch | TechCrunch
+  - AI Took Three of the Top Ten App Download Spots in April - Appfigures
+  - GenAI Chatbots: July 2026 Apptopia Data Brief, 86% of People Use Just One Chatbot - Apptopia
+- 开发者/API调用份额:
+  - LLM Rankings | OpenRouter
+  - AI Market Share 2026 - Provider Share of OpenRouter Usage | whatstrending.ai
+  - AI Model Leaderboard 2026 - Ranked by Usage | whatstrending.ai
+  - OpenRouter Model Usage Rankings 2026: Real Token Share | Presenc AI
+- 网站流量对比:
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - AI Search Stats in 2026 | Similarweb
+  - 2026 AI Traffic Report: ChatGPT Wins 92% Share | Previsible
+  - Winners and Losers in the Gen AI Market | Similarweb
+- 企业级采用率:
+  - Xensam Insights: Enterprise AI Adoption Report, H1 2026 - Xensam
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - State of AI Usage Report 2026 - LayerX
+  - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
