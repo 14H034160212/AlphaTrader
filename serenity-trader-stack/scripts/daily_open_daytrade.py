@@ -911,6 +911,41 @@ def park_to_sgov(mirror_live=False):
     raise RuntimeError("SGOV park failed after 4 attempts")
 
 
+def _kronos_note(sym):
+    # 2026-08-08: user pointed out the Kronos K-line foundation model
+    # (backend/kronos_analysis.py, already built for the old main.py engine
+    # which isn't even running anymore) was never wired into the system that
+    # actually trades now. Added here as an AUXILIARY technical signal for
+    # the position judge -- explicitly NOT a gate. Live-tested: on RKLB
+    # (after its 41% 2-week run) it returned BEARISH/-17% with 100%
+    # consistency; on AAOI/COHR (also sharply extended, but on real
+    # fundamental catalysts) it returned BEARISH/-40%+ -- implausibly large
+    # for a 5-session forecast. Treat the MAGNITUDE as unreliable on names
+    # that just moved a lot (likely out-of-distribution for the model), but
+    # the DIRECTION + consistency as a legitimate independent mean-reversion
+    # signal worth surfacing. Not wired into the picker's large-universe
+    # screen yet for the same reason -- would need real backtesting first
+    # before trusting it to filter/rank many candidates at once.
+    try:
+        os.environ.setdefault('CUDA_VISIBLE_DEVICES', '1')
+        sys.path.insert(0, '/data/qbao775/AlphaTrader/backend')
+        import kronos_analysis as ka
+        import yfinance as yf
+        hist = yf.Ticker(sym).history(period='2y')
+        pred = ka.predict_next_candles(sym, hist)
+        if not pred:
+            return ""
+        sig = pred['kronos_signal']
+        cons = pred['trend_consistency']
+        if sig == 'NEUTRAL' or cons < 0.6:
+            return ""
+        return (f" [Kronos K线模型辅助信号: {sig},未来5个交易日趋势一致性{cons:.0%}"
+                f"——仅供参考方向,不要采信具体的{pred['expected_return_pct']:+.1f}%这类"
+                f"幅度数字(该模型对近期已大幅波动的标的容易给出过度极端的预测值)]")
+    except Exception:
+        return ""
+
+
 def _upcoming_earnings_note(sym, lookahead_days=3):
     # 2026-08-08: added after noticing RKLB (~30% of the account) reports Q2
     # earnings 2026-08-10 -- a real near-term binary risk for a position this
@@ -966,8 +1001,9 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close, audit_mode=False):
         px = q['current'] if q and q.get('current') else pos['entry_price']
         plpc = (px - pos['entry_price']) / pos['entry_price'] * 100
         earnings_note = _upcoming_earnings_note(sym)
+        kronos_note = _kronos_note(sym)
         lines.append(f"{sym}: 入价${pos['entry_price']:.2f} 现价${px:.2f} 盈亏{plpc:+.2f}% "
-                     f"理由:{state.get('reasons', {}).get(sym, '')}{earnings_note}")
+                     f"理由:{state.get('reasons', {}).get(sym, '')}{earnings_note}{kronos_note}")
 
     # 2026-08-04: give the judge the MARKET benchmark alongside portfolio P&L.
     # On 08-03 it reasoned "-0.78% is normal fluctuation, hold" without knowing
