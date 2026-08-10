@@ -740,7 +740,26 @@ def enter(api, state):
             continue
 
         if DRY_RUN:
-            state.setdefault('sim_positions', {})[sym] = {'qty': qty, 'entry_price': px}
+            # 2026-08-10: REAL INCIDENT -- this used to unconditionally
+            # overwrite sim_positions[sym], silently erasing a carried-over
+            # hold_overnight position's tracked share count. SPY specifically
+            # hits this every day it's both (a) carried over from yesterday
+            # AND (b) re-appears in today's fresh `weights` via the
+            # remainder-fill baseline logic -- day-rollover resets
+            # state['symbols'] (the entered-flag tracker) but correctly
+            # preserves sim_positions, so `enter()` treats SPY as brand new
+            # and wiped a 58.5535-share position down to just today's
+            # incremental buy, making the paper ledger's tracked equity
+            # collapse from ~$64k to ~$18.5k and the displayed day P&L show
+            # a nonsensical -71%. Merge into any existing position instead.
+            sp = state.setdefault('sim_positions', {})
+            if sym in sp:
+                old = sp[sym]
+                new_qty = old['qty'] + qty
+                sp[sym] = {'qty': new_qty,
+                           'entry_price': round((old['qty'] * old['entry_price'] + qty * px) / new_qty, 4)}
+            else:
+                sp[sym] = {'qty': qty, 'entry_price': px}
             state['sim_cash'] = bp - notional
             log(f"  [DRY-RUN] ✓ BOUGHT {sym} qty={qty} @~${px:.2f} (confirmed uptrend, {rise_streak} consecutive rises)")
             if MIRROR_TO_LIVE:
