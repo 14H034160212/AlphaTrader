@@ -912,20 +912,24 @@ def park_to_sgov(mirror_live=False):
 
 
 def _kronos_note(sym):
-    # 2026-08-08: user pointed out the Kronos K-line foundation model
-    # (backend/kronos_analysis.py, already built for the old main.py engine
-    # which isn't even running anymore) was never wired into the system that
-    # actually trades now. Added here as an AUXILIARY technical signal for
-    # the position judge -- explicitly NOT a gate. Live-tested: on RKLB
-    # (after its 41% 2-week run) it returned BEARISH/-17% with 100%
-    # consistency; on AAOI/COHR (also sharply extended, but on real
-    # fundamental catalysts) it returned BEARISH/-40%+ -- implausibly large
-    # for a 5-session forecast. Treat the MAGNITUDE as unreliable on names
-    # that just moved a lot (likely out-of-distribution for the model), but
-    # the DIRECTION + consistency as a legitimate independent mean-reversion
-    # signal worth surfacing. Not wired into the picker's large-universe
-    # screen yet for the same reason -- would need real backtesting first
-    # before trusting it to filter/rank many candidates at once.
+    # 2026-08-08: wired in as an AUXILIARY technical signal, explicitly NOT a
+    # gate. On RKLB/AAOI/COHR it returned BEARISH with implausibly large
+    # magnitude (-17% to -46% over 5 sessions) -- flagged then as "direction
+    # trustworthy, magnitude not."
+    #
+    # 2026-08-10 backtest (9 historical cases across SPY/AAPL/MU/MSFT,
+    # truncating real history to a past date and checking the actual 5-day
+    # forward move): directional hit rate was only 4/9 (44%) -- worse than a
+    # coin flip. SPY was called BEARISH at every single test point (0/3
+    # correct) and AAPL 0/2, both with "100% consistency" reported regardless
+    # of whether the call was right -- i.e. trend_consistency does not appear
+    # to track actual confidence, and the model looks like it defaults to
+    # BEARISH often rather than genuinely reading each situation. It DID
+    # correctly call MU's continued decline and MSFT's mild uptrend (2/2
+    # each), so it isn't pure noise, but this is not evidence strong enough
+    # to treat as independent confirmation of anything -- downgraded here to
+    # a low-weight curiosity, not a signal. Still not wired into the
+    # picker's large-universe screen (same reason, now with data behind it).
     try:
         os.environ.setdefault('CUDA_VISIBLE_DEVICES', '1')
         sys.path.insert(0, '/data/qbao775/AlphaTrader/backend')
@@ -939,9 +943,9 @@ def _kronos_note(sym):
         cons = pred['trend_consistency']
         if sig == 'NEUTRAL' or cons < 0.6:
             return ""
-        return (f" [Kronos K线模型辅助信号: {sig},未来5个交易日趋势一致性{cons:.0%}"
-                f"——仅供参考方向,不要采信具体的{pred['expected_return_pct']:+.1f}%这类"
-                f"幅度数字(该模型对近期已大幅波动的标的容易给出过度极端的预测值)]")
+        return (f" [Kronos K线模型信号(低权重参考,回测方向命中率仅44%且疑似有"
+                f"看空偏置,不构成独立证据): {sig},一致性{cons:.0%}"
+                f"——不要采信{pred['expected_return_pct']:+.1f}%这类具体幅度数字]")
     except Exception:
         return ""
 
