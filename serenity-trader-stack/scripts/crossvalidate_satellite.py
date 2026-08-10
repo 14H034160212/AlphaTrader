@@ -181,6 +181,9 @@ def ollama_call(prompt, timeout=300):
     return ""
 
 
+_company_context_cache = {}
+
+
 def _company_context(symbol):
     """Full company name + business description, so a bare ticker can't be
     confused with a different company sharing the same/similar symbol.
@@ -190,17 +193,25 @@ def _company_context(symbol):
     model as a biotech ("pipeline failure/binary outcome") one run and a
     regulated utility ("regional pricing power") the next -- both wrong
     companies, on the only two runs that returned real content. Injecting
-    the real name/business up front removes the ambiguity that caused it."""
+    the real name/business up front removes the ambiguity that caused it.
+
+    Memoized (per process run) -- the 4-master and Serenity checks each call
+    this for the same symbol back-to-back, so without caching every position
+    paid for two identical yfinance .info fetches per cycle."""
+    if symbol in _company_context_cache:
+        return _company_context_cache[symbol]
+    result = ""
     try:
         import yfinance as yf
         info = yf.Ticker(symbol).info
         name = info.get('longName') or info.get('shortName')
         summary = (info.get('longBusinessSummary') or '')[:300]
         if name:
-            return f"{symbol} = {name}. Business: {summary}\n\n" if summary else f"{symbol} = {name}.\n\n"
+            result = f"{symbol} = {name}. Business: {summary}\n\n" if summary else f"{symbol} = {name}.\n\n"
     except Exception:
         pass
-    return ""
+    _company_context_cache[symbol] = result
+    return result
 
 
 def quick_4master_take(symbol, thesis_summary, price_context):
@@ -293,6 +304,7 @@ def get_candidate_context(symbol):
 def quick_4master_new_screen(symbol, context_str):
     """Fresh 4-master screen on a NEW candidate (not a recheck — no existing thesis)."""
     prompt = (
+        f"{_company_context(symbol)}"
         f"You are running a condensed 4-master FIRST-LOOK screen on {symbol} as a "
         f"POTENTIAL NEW satellite buy (not an existing position).\n"
         f"Live market data (authoritative — do not use your own recalled price): {context_str}\n\n"
@@ -310,6 +322,7 @@ def quick_serenity_new_screen(symbol, context_str):
     """Fresh Serenity chokepoint screen on a NEW candidate — is there a real
     supply-chain bottleneck here worth a position, not just a general holding."""
     prompt = (
+        f"{_company_context(symbol)}"
         f"You are running a FIRST-LOOK Serenity chokepoint screen on {symbol} as a "
         f"POTENTIAL NEW satellite buy.\n"
         f"Live market data (authoritative — do not use your own recalled price): {context_str}\n\n"
@@ -575,19 +588,21 @@ def main():
     positions = get_satellite_positions()
     escalations = []
 
+    # 2026-08-10: whichever symbol was first to touch the local model (either
+    # in the position loop below OR in screen_new_candidates() further down)
+    # ate gemma4:31b's cold-start delay and timed out (8 recurrences on FTK,
+    # now recurring on RKLB too -- confirmed root cause: later symbols in the
+    # SAME run reliably succeed once the model is warm). This used to only
+    # run when `positions` was non-empty, which meant a cycle with an empty
+    # satellite book skipped the warmup entirely and screen_new_candidates
+    # hit the cold model directly. Run it unconditionally, once, up front.
+    log("  warming up Ollama model...")
+    ollama_call("Reply with just: OK", timeout=300)
+
     if not positions:
         log("no satellite positions held — nothing to cross-validate")
     else:
         log(f"checking {len(positions)} satellite position(s): {[p['symbol'] for p in positions]}")
-        # 2026-08-10: whichever symbol is first in the loop was eating gemma4:31b's
-        # cold-start delay and timing out (8 recurrences on FTK, now recurring on
-        # RKLB too -- confirmed root cause: later symbols in the SAME run reliably
-        # succeed once the model is warm). A trivial throwaway call here forces the
-        # model into memory before any position's real analysis is timed, so no
-        # single symbol unfairly eats the load cost and triggers a false "Ollama
-        # offline" escalation.
-        log("  warming up Ollama model before position loop...")
-        ollama_call("Reply with just: OK", timeout=300)
 
     for pos in positions:
         sym = pos['symbol']

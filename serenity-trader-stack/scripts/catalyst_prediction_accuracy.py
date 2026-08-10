@@ -64,13 +64,26 @@ def daily_bars(sym, start, end, headers):
 
 
 def load_scored():
+    # 2026-08-10: stores {key: verdict} now (was a bare set of keys) so the
+    # rolling accuracy tally can be derived straight from this state instead
+    # of re-opening and pattern-matching the whole markdown ledger every run.
+    # Migrating old keys to verdict=None (excluded from the tally, since the
+    # ledger's date header is the SCORING run's date, not the original pick
+    # date -- there's no reliable way to recover which verdict belongs to
+    # which old key from the text alone, and a wrong guess would silently
+    # misattribute a verdict rather than just lose it) -- the cumulative
+    # count restarts from this point forward, but every new verdict scored
+    # from here on is tracked correctly without re-parsing anything.
     if os.path.exists(SCORED_STATE):
-        return set(json.load(open(SCORED_STATE)))
-    return set()
+        data = json.load(open(SCORED_STATE))
+        if isinstance(data, list):  # migrate from the old set-of-keys format
+            return {key: None for key in data}
+        return data
+    return {}
 
 
 def save_scored(scored):
-    json.dump(sorted(scored), open(SCORED_STATE, 'w'))
+    json.dump(scored, open(SCORED_STATE, 'w'), sort_keys=True)
 
 
 def main():
@@ -112,17 +125,27 @@ def main():
 
     results = []
     for date_str, pick_date, sym, reason in to_score:
-        start = pick_date.isoformat()
-        end = min(pick_date + datetime.timedelta(days=14), today).isoformat()
-        bars = daily_bars(sym, start, end, headers)
-        if len(bars) < 2:
-            log(f"  {sym} ({date_str}): insufficient bar data, skipping (will retry later)")
+        # 2026-08-10: this loop had no per-symbol error isolation -- one bad
+        # bar (e.g. a zero/missing close) would raise uncaught, discarding
+        # every result already computed earlier in this same run.
+        try:
+            start = pick_date.isoformat()
+            end = min(pick_date + datetime.timedelta(days=14), today).isoformat()
+            bars = daily_bars(sym, start, end, headers)
+            if len(bars) < 2:
+                log(f"  {sym} ({date_str}): insufficient bar data, skipping (will retry later)")
+                continue
+            entry_close = bars[0]['c']
+            if not entry_close:
+                log(f"  {sym} ({date_str}): zero/missing entry close, skipping (will retry later)")
+                continue
+            # use the bar MIN_AGE_DAYS-ish out if available, else the latest we have
+            target_idx = min(MIN_AGE_DAYS, len(bars) - 1)
+            exit_close = bars[target_idx]['c']
+            pct = round((exit_close - entry_close) / entry_close * 100, 1)
+        except Exception as e:
+            log(f"  {sym} ({date_str}): scoring error ({e}), skipping (will retry later)")
             continue
-        entry_close = bars[0]['c']
-        # use the bar MIN_AGE_DAYS-ish out if available, else the latest we have
-        target_idx = min(MIN_AGE_DAYS, len(bars) - 1)
-        exit_close = bars[target_idx]['c']
-        pct = round((exit_close - entry_close) / entry_close * 100, 1)
         if pct >= CORRECT_THRESHOLD:
             verdict = 'CORRECT'
             icon = '✅'
@@ -137,13 +160,11 @@ def main():
             'entry_close': entry_close, 'exit_close': exit_close,
             'pct': pct, 'verdict': verdict, 'icon': icon,
         })
-        scored.add(f"{date_str}|{sym}")
+        scored[f"{date_str}|{sym}"] = verdict
 
     if not results:
         log("no scoreable results this run")
         return
-
-    save_scored(scored)
 
     lines = [f"\n## {today.isoformat()} 评分 {len(results)} 条 (催化剂选股, 入场后{MIN_AGE_DAYS}个交易日)"]
     for r in results:
@@ -151,21 +172,22 @@ def main():
             f"  {r['icon']} {r['symbol']} @ ${r['entry_close']} -> ${r['exit_close']} "
             f"({r['pct']:+.1f}%) = {r['verdict']} | {r['reason'][:80]}"
         )
-    # rolling accuracy across the whole ledger's scored history
-    all_scored_verdicts = []
-    if os.path.exists(LEDGER_FILE):
-        for l in open(LEDGER_FILE).read().splitlines():
-            for tag in ('CORRECT', 'WRONG'):
-                if f"= {tag}" in l:
-                    all_scored_verdicts.append(tag)
-    all_scored_verdicts += [r['verdict'] for r in results if r['verdict'] != 'INCONCLUSIVE']
-    n_correct = all_scored_verdicts.count('CORRECT')
-    n_total = len(all_scored_verdicts)
+    # 2026-08-10: rolling accuracy now comes straight from `scored` (this run's
+    # verdicts plus everything already on record) instead of re-opening and
+    # pattern-matching the whole markdown ledger's prose every run -- avoids
+    # both the wasted I/O and the fragile coupling to the ledger's text format.
+    all_verdicts = [v for v in scored.values() if v not in (None, 'INCONCLUSIVE')]
+    n_correct = all_verdicts.count('CORRECT')
+    n_total = len(all_verdicts)
     if n_total:
         lines.append(f"- 累计催化剂选股准确率(排除INCONCLUSIVE): {n_correct}/{n_total} = {n_correct/n_total*100:.0f}%")
 
+    # 2026-08-10: write the ledger BEFORE marking these keys as scored -- if
+    # the write fails partway (disk full, permission), we want to retry
+    # scoring next run, not silently skip these picks forever.
     with open(LEDGER_FILE, 'a') as f:
         f.write("\n".join(lines) + "\n")
+    save_scored(scored)
     log(f"scored {len(results)} new pick(s), appended to {LEDGER_FILE}")
 
 

@@ -511,6 +511,7 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         gainers = yf.screen('day_gainers', count=25)
         rows = gainers.get('quotes', [])
         mover_lines = []
+        movers_syms = []
         for row in rows[:25]:
             sym = row.get('symbol')
             chg = row.get('regularMarketChangePercent')
@@ -518,6 +519,7 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
             vol = row.get('regularMarketVolume')
             if sym and chg is not None and price and price >= 10 and vol and vol >= 300_000:
                 mover_lines.append(f"{sym}: {chg:+.1f}% (现价${price:.2f})")
+                movers_syms.append(sym)
         if mover_lines:
             search_snippets.append("实时全市场涨幅榜(仅供参考,自己判断消息是否真实,"
                                     "不要单纯因为涨幅大就选):\n" + "\n".join(mover_lines))
@@ -528,14 +530,12 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         # were being missed for lack of a precise per-symbol source. Alpaca's
         # own news API is structured and symbol-tagged -- a much sharper tool
         # for "does THIS ticker have an actual headline" than freeform search.
-        movers_syms = [row.get('symbol') for row in rows[:25] if row.get('symbol')]
+        # 2026-08-10: reuse the SAME price/volume-filtered symbol list as
+        # mover_lines above -- pulling news for the raw unfiltered rows was
+        # reintroducing the thin/penny-stock noise that filter exists to cut.
         if movers_syms:
             try:
-                from database import SessionLocal, get_setting
-                _db = SessionLocal()
-                k = get_setting(_db, 'alpaca_api_key', 1)
-                s = get_setting(_db, 'alpaca_secret_key', 1)
-                _db.close()
+                k, s, _ = _alpaca_creds()
                 h = {'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}
                 r = requests.get('https://data.alpaca.markets/v1beta1/news',
                                   params={'symbols': ','.join(movers_syms), 'limit': 40},
@@ -931,7 +931,25 @@ def _kronos_note(sym):
     # a low-weight curiosity, not a signal. Still not wired into the
     # picker's large-universe screen (same reason, now with data behind it).
     try:
-        os.environ.setdefault('CUDA_VISIBLE_DEVICES', '1')
+        # 2026-08-10: was hardcoded to GPU 1, which this box's other jobs
+        # (rl_pipeline.py/rl_lora_trainer.py) also use for RL training and
+        # can already be heavily loaded -- silently contending for it risked
+        # OOM/slowdown for either workload with no visibility either way.
+        # Pick whichever GPU currently has the most free memory instead.
+        if 'CUDA_VISIBLE_DEVICES' not in os.environ:
+            try:
+                out = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=index,memory.free',
+                     '--format=csv,noheader,nounits'],
+                    capture_output=True, text=True, timeout=10).stdout
+                free_by_gpu = [(int(mem), idx) for idx, mem in
+                               (line.split(',') for line in out.strip().splitlines() if line.strip())]
+                best_gpu = str(max(free_by_gpu)[1])
+                os.environ['CUDA_VISIBLE_DEVICES'] = best_gpu
+                log(f"  kronos: picked GPU {best_gpu} ({max(free_by_gpu)[0]}MB free)")
+            except Exception as e:
+                os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+                log(f"  kronos: GPU auto-select failed ({e}), falling back to GPU 1")
         sys.path.insert(0, '/data/qbao775/AlphaTrader/backend')
         import kronos_analysis as ka
         import yfinance as yf
@@ -966,7 +984,8 @@ def _upcoming_earnings_note(sym, lookahead_days=3):
             delta = (d - today).days
             if 0 <= delta <= lookahead_days:
                 est = row.get('EPS Estimate')
-                est_str = f",EPS预期${est:.2f}" if est is not None else ""
+                has_est = est is not None and est == est  # NaN != NaN
+                est_str = f",EPS预期${est:.2f}" if has_est else ""
                 return f" [财报风险: {d.isoformat()}即将公布财报{est_str},注意仓位不要在报告前后过度集中]"
         return ""
     except Exception:
@@ -1000,12 +1019,26 @@ def ai_judge_positions(api, state, day_pl_pct, mins_to_close, audit_mode=False):
 
     import market_data as md
     lines = []
+    today_str = datetime.datetime.utcnow().strftime('%Y-%m-%d')
+    aux_cache = state.setdefault('_aux_notes_cache', {})
     for sym, pos in held.items():
         q = md.get_stock_quote(sym)
         px = q['current'] if q and q.get('current') else pos['entry_price']
         plpc = (px - pos['entry_price']) / pos['entry_price'] * 100
-        earnings_note = _upcoming_earnings_note(sym)
-        kronos_note = _kronos_note(sym)
+        # 2026-08-10: _upcoming_earnings_note/_kronos_note were being recomputed
+        # on EVERY call, including every single minute during the near_close
+        # window (mins_to_close<=20 bypasses the cooldown above) -- a fresh
+        # yfinance fetch + full Kronos GPU model reload per held position per
+        # minute, right when the mandatory close-out decision needs to run
+        # promptly. Neither signal changes meaningfully within a day, so
+        # cache both once per (symbol, date) instead of on every call.
+        cached = aux_cache.get(sym)
+        if cached and cached.get('date') == today_str:
+            earnings_note, kronos_note = cached['earnings_note'], cached['kronos_note']
+        else:
+            earnings_note = _upcoming_earnings_note(sym)
+            kronos_note = _kronos_note(sym)
+            aux_cache[sym] = {'date': today_str, 'earnings_note': earnings_note, 'kronos_note': kronos_note}
         lines.append(f"{sym}: 入价${pos['entry_price']:.2f} 现价${px:.2f} 盈亏{plpc:+.2f}% "
                      f"理由:{state.get('reasons', {}).get(sym, '')}{earnings_note}{kronos_note}")
 
