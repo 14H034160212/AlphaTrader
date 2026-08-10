@@ -181,11 +181,34 @@ def ollama_call(prompt, timeout=300):
     return ""
 
 
+def _company_context(symbol):
+    """Full company name + business description, so a bare ticker can't be
+    confused with a different company sharing the same/similar symbol.
+    2026-08-10: this exact bug recurred twice -- RDY (Dr. Reddy's) got
+    hallucinated as Ready Capital/Ryder, and FTK (Flotek Industries, oilfield
+    chemicals + PWRtek gas-generation control) got described by the local
+    model as a biotech ("pipeline failure/binary outcome") one run and a
+    regulated utility ("regional pricing power") the next -- both wrong
+    companies, on the only two runs that returned real content. Injecting
+    the real name/business up front removes the ambiguity that caused it."""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(symbol).info
+        name = info.get('longName') or info.get('shortName')
+        summary = (info.get('longBusinessSummary') or '')[:300]
+        if name:
+            return f"{symbol} = {name}. Business: {summary}\n\n" if summary else f"{symbol} = {name}.\n\n"
+    except Exception:
+        pass
+    return ""
+
+
 def quick_4master_take(symbol, thesis_summary, price_context):
     """Condensed Buffett/Munger/段永平/李录 verdict. This approximates
     ai-berkshire's /investment-team, which cannot itself be cron-triggered
     (it requires live Claude Code Team/Task orchestration)."""
     prompt = (
+        f"{_company_context(symbol)}"
         f"You are running a condensed 4-master investment check on {symbol}.\n"
         f"Existing thesis: {thesis_summary}\n\n"
         f"Live position data (authoritative — do NOT rely on your own recalled/trained price for {symbol}, "
@@ -204,6 +227,7 @@ def quick_serenity_recheck(symbol, thesis_summary, price_context):
     """Re-verify the ORIGINAL chokepoint thesis is still intact — not a
     fresh screen. Uses the same skeptical-by-default framing as news_watch.py."""
     prompt = (
+        f"{_company_context(symbol)}"
         f"You are re-checking a Serenity chokepoint thesis for {symbol} — "
         f"NOT screening it fresh, verifying if it's STILL TRUE.\n"
         f"Original thesis: {thesis_summary}\n\n"
@@ -555,6 +579,15 @@ def main():
         log("no satellite positions held — nothing to cross-validate")
     else:
         log(f"checking {len(positions)} satellite position(s): {[p['symbol'] for p in positions]}")
+        # 2026-08-10: whichever symbol is first in the loop was eating gemma4:31b's
+        # cold-start delay and timing out (8 recurrences on FTK, now recurring on
+        # RKLB too -- confirmed root cause: later symbols in the SAME run reliably
+        # succeed once the model is warm). A trivial throwaway call here forces the
+        # model into memory before any position's real analysis is timed, so no
+        # single symbol unfairly eats the load cost and triggers a false "Ollama
+        # offline" escalation.
+        log("  warming up Ollama model before position loop...")
+        ollama_call("Reply with just: OK", timeout=300)
 
     for pos in positions:
         sym = pos['symbol']
