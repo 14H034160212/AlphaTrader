@@ -1490,7 +1490,34 @@ def manage(api, state):
     # hasn't been touched after SECOND_SCAN_AFTER_MIN and there's still real
     # uncommitted buying power, take one more look for fresh catalysts.
     elapsed_min = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(state['day_start_time'])).total_seconds() / 60
-    current_total_w = sum(state['weights'].values())
+    # 2026-08-11: REAL INCIDENT -- this used to be sum(state['weights'].values()),
+    # a target-weight ledger that goes stale the moment capital moves through
+    # any path OTHER than a fresh pick entry (a sell_some with no rotate_to
+    # pops the symbol's weight with nowhere for that fraction to go; capital
+    # that flows into an EXISTING position, like SPY absorbing a sale's
+    # proceeds, never gets added back to that symbol's recorded weight
+    # either). Concretely: after this morning's RKLB sale (popped ~29% from
+    # weights) fed straight into topping up the already-held SPY position,
+    # this computed a stale ~74.6% ("room=25.4%") when the account was
+    # actually already ~100%+ deployed -- triggering a $0.52 second-chance
+    # scan whose 7 real picks then got scaled down to fit that phantom room
+    # instead of their intended weights. Since SPY is now reclaimable
+    # on-demand for a confirmed pick (see enter()'s SPY-trim logic), what
+    # actually matters is how much equity is committed to NON-reclaimable
+    # individual positions -- compute that directly from real position
+    # values instead of the drifting weights ledger.
+    _positions_for_room = (state.get('sim_positions', {}) if DRY_RUN else
+                            {p.symbol: {'qty': float(p.qty)} for p in api.list_positions()})
+    _non_reclaimable_value = 0.0
+    import market_data as _md
+    for _sym, _pos in _positions_for_room.items():
+        if _sym == 'SPY':
+            continue
+        _q = _md.get_stock_quote(_sym)
+        _px = _q['current'] if _q and _q.get('current') else _pos.get('entry_price')
+        if _px:
+            _non_reclaimable_value += _pos['qty'] * _px
+    current_total_w = (_non_reclaimable_value / equity) if equity else 0.0
     underperforming = day_pl_pct < FLOOR_PCT
     idle_capital = current_total_w < MIN_DEPLOYED_PCT_BEFORE_RESCAN
     if (not os.path.exists(NEW_ENTRIES_PAUSED_FILE)
