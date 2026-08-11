@@ -203,6 +203,92 @@ def sym_label(sym):
     return f"{esc(sym)} <span class='zh'>{esc(zh)}</span>" if zh else esc(sym)
 
 
+# Chart colors validated via the dataviz skill's validate_palette.js against
+# the dashboard's dark surface (#1a1a19): both PASS lightness/chroma/CVD/
+# contrast checks. Fixed categorical assignment -- account is always slot 1,
+# SPY is always slot 2, never reassigned/cycled.
+CHART_COLOR_ACCOUNT = "#3987e5"
+CHART_COLOR_SPY = "#d95926"
+
+
+def render_trend_chart(history):
+    """Cumulative % return line chart (account vs SPY) compounding each day's
+    final_pl_pct/spy_pct chronologically -- the same figure as the 'since
+    inception' stat card, but shown as a curve over time instead of one
+    endpoint number. Self-contained inline SVG (no JS chart library) so it
+    survives as a static Cloudflare Pages asset."""
+    rows = [h for h in history if h.get('final_pl_pct') is not None and h.get('spy_pct') is not None]
+    if len(rows) < 2:
+        return ""
+
+    acc_cum, spy_cum = [], []
+    a, s = 1.0, 1.0
+    for h in rows:
+        a *= (1 + h['final_pl_pct'] / 100)
+        s *= (1 + h['spy_pct'] / 100)
+        acc_cum.append((a - 1) * 100)
+        spy_cum.append((s - 1) * 100)
+
+    W, H, PAD_L, PAD_R, PAD_T, PAD_B = 900, 280, 46, 90, 16, 28
+    plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
+    all_vals = acc_cum + spy_cum + [0.0]
+    v_min, v_max = min(all_vals), max(all_vals)
+    v_span = (v_max - v_min) or 1.0
+    v_min -= v_span * 0.08
+    v_max += v_span * 0.08
+    v_span = v_max - v_min
+
+    n = len(rows)
+    def x_at(i):
+        return PAD_L + (i / (n - 1)) * plot_w if n > 1 else PAD_L
+    def y_at(v):
+        return PAD_T + (1 - (v - v_min) / v_span) * plot_h
+
+    def line_path(vals):
+        return "M " + " L ".join(f"{x_at(i):.1f},{y_at(v):.1f}" for i, v in enumerate(vals))
+
+    def points(vals, dates, label_fn):
+        pts = []
+        for i, v in enumerate(vals):
+            pts.append(
+                f"<circle cx='{x_at(i):.1f}' cy='{y_at(v):.1f}' r='3.5' fill='{label_fn}'>"
+                f"<title>{esc(dates[i])}: {v:+.2f}%</title></circle>"
+            )
+        return "".join(pts)
+
+    dates = [h.get('date', '') for h in rows]
+    zero_y = y_at(0.0)
+
+    # x-axis date ticks: first, middle, last (avoid label crowding for long histories)
+    tick_idxs = sorted(set([0, n // 2, n - 1]))
+    x_ticks = "".join(
+        f"<text x='{x_at(i):.1f}' y='{H-8}' class='axis-lab' text-anchor='middle'>{esc(dates[i])}</text>"
+        for i in tick_idxs
+    )
+    y_ticks = "".join(
+        f"<text x='{PAD_L-8}' y='{y_at(v)+4:.1f}' class='axis-lab' text-anchor='end'>{v:+.0f}%</text>"
+        for v in [v_min + v_span * f for f in (0.1, 0.5, 0.9)]
+    )
+
+    return f"""
+    <svg viewBox="0 0 {W} {H}" role="img" aria-label="累计收益走势: 账户 vs SPY" class="trend-chart">
+      <line x1="{PAD_L}" y1="{zero_y:.1f}" x2="{W-PAD_R}" y2="{zero_y:.1f}" class="zero-line"/>
+      {y_ticks}
+      {x_ticks}
+      <path d="{line_path(spy_cum)}" fill="none" stroke="{CHART_COLOR_SPY}" stroke-width="2"/>
+      <path d="{line_path(acc_cum)}" fill="none" stroke="{CHART_COLOR_ACCOUNT}" stroke-width="2"/>
+      {points(spy_cum, dates, CHART_COLOR_SPY)}
+      {points(acc_cum, dates, CHART_COLOR_ACCOUNT)}
+      <text x="{x_at(n-1)+8:.1f}" y="{y_at(acc_cum[-1])+4:.1f}" class="end-label" fill="{CHART_COLOR_ACCOUNT}">{acc_cum[-1]:+.1f}%</text>
+      <text x="{x_at(n-1)+8:.1f}" y="{y_at(spy_cum[-1])+4:.1f}" class="end-label" fill="{CHART_COLOR_SPY}">{spy_cum[-1]:+.1f}%</text>
+    </svg>
+    <div class="legend">
+      <span><i style="background:{CHART_COLOR_ACCOUNT}"></i>本系统累计收益</span>
+      <span><i style="background:{CHART_COLOR_SPY}"></i>SPY同期累计</span>
+    </div>
+    """
+
+
 def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons):
     now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
     lead_word = "领先" if sub_pct >= spy_pct else "落后"
@@ -283,6 +369,12 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
   td {{ padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }}
   td.sym {{ font-weight: 600; }}
   .zh {{ color: var(--muted); font-weight: 400; font-size: 12px; }}
+  .trend-chart {{ width: 100%; height: auto; display: block; }}
+  .axis-lab {{ font-size: 11px; fill: var(--muted); }}
+  .zero-line {{ stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 3; }}
+  .end-label {{ font-size: 12px; font-weight: 600; }}
+  .legend {{ display: flex; gap: 20px; margin-top: 8px; font-size: 12px; color: var(--muted); }}
+  .legend i {{ display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }}
   td.reason {{ color: var(--muted); max-width: 480px; }}
   td.pos {{ color: var(--pos); font-weight: 600; }}
   td.neg {{ color: var(--neg); font-weight: 600; }}
@@ -333,7 +425,8 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
   </section>
 
   <section>
-    <h2>每日战绩(最近 {len(history)} 个交易日)</h2>
+    <h2>累计收益走势(最近 {len(history)} 个交易日)</h2>
+    {render_trend_chart(history) or "<p class='muted'>数据积累中,还不足以画出走势图</p>"}
     <table>
       <tr><th>日期</th><th>当日盈亏</th><th>同期SPY</th><th>当日选股</th></tr>
       {history_rows or "<tr><td colspan='4' class='muted'>暂无历史记录</td></tr>"}
