@@ -158,6 +158,51 @@ def esc(s):
     return html.escape(str(s), quote=True)
 
 
+# 2026-08-11: user asked for a Chinese company name next to every ticker.
+# Manual names for the ones actually seen in this account's history so far
+# (accurate, not machine-translated); anything new falls back to the
+# English longName from yfinance rather than guessing a Chinese name.
+TICKER_NAMES_ZH = {
+    'SPY': '标普500ETF', 'SGOV': '短期美债ETF',
+    'RKLB': '火箭实验室', 'FTK': '弗洛泰克工业', 'INSM': '因斯梅德',
+    'MLTX': '月湖免疫治疗', 'DDOG': 'Datadog(云监控软件)',
+    'GRAL': 'GRAIL(癌症早筛)', 'TEM': 'Tempus AI(医疗数据)',
+    'CXW': 'CoreCivic(监狱运营商)', 'HII': '亨廷顿英格尔斯工业(造船)',
+    'NOC': '诺斯罗普·格鲁曼(军工)', 'CROX': '卡骆驰(鞋类)',
+    'COLM': '哥伦比亚服饰', 'ABT': '雅培', 'NVS': '诺华制药',
+    'BABA': '阿里巴巴', 'RDY': '太阳药业(Dr. Reddy\'s)',
+    'DBD': 'Diebold Nixdorf(自助设备)', 'SUPN': 'Supernus制药',
+    'CRI': '卡特斯(童装)', 'AAOI': '应用光电', 'COHR': 'Coherent(光电元件)',
+    'LITE': 'Lumentum(光通信)', 'CRDO': 'Credo(光互连芯片)',
+    'GLW': '康宁', 'MCHP': '微芯科技', 'GFS': '格芯',
+    'SPCX': 'SpaceX(太空探索技术)', 'NTRA': 'Natera(基因检测)',
+    'HALO': 'Halozyme制药', 'ABNB': 'Airbnb爱彼迎',
+    'TWLO': 'Twilio', 'TEAM': 'Atlassian',
+}
+_name_cache = {}
+
+
+def ticker_name_zh(sym):
+    if sym in TICKER_NAMES_ZH:
+        return TICKER_NAMES_ZH[sym]
+    if sym in _name_cache:
+        return _name_cache[sym]
+    name = ""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(sym).info
+        name = info.get('longName') or info.get('shortName') or ""
+    except Exception:
+        pass
+    _name_cache[sym] = name
+    return name
+
+
+def sym_label(sym):
+    zh = ticker_name_zh(sym)
+    return f"{esc(sym)} <span class='zh'>{esc(zh)}</span>" if zh else esc(sym)
+
+
 def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons):
     now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
     lead_word = "领先" if sub_pct >= spy_pct else "落后"
@@ -171,7 +216,7 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
         status = "已建仓" if entered else "待确认(未建仓)"
         reason = reasons.get(sym, "")
         today_picks_rows += (
-            f"<tr><td class='sym'>{esc(sym)}</td><td>{w*100:.1f}%</td>"
+            f"<tr><td class='sym'>{sym_label(sym)}</td><td>{w*100:.1f}%</td>"
             f"<td class='status {'ok' if entered else 'pending'}'>{status}</td>"
             f"<td class='reason'>{esc(reason)}</td></tr>\n"
         )
@@ -180,7 +225,7 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
     for r in pos_rows:
         cls = 'pos' if r['plpc'] >= 0 else 'neg'
         pos_table_rows += (
-            f"<tr><td class='sym'>{esc(r['symbol'])}</td><td>{r['weight_pct']:.1f}%</td>"
+            f"<tr><td class='sym'>{sym_label(r['symbol'])}</td><td>{r['weight_pct']:.1f}%</td>"
             f"<td class='{cls}'>{r['plpc']:+.2f}%</td><td class='{cls}'>{r['day_plpc']:+.2f}%</td></tr>\n"
         )
     if not pos_table_rows:
@@ -188,7 +233,7 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
 
     history_rows = ""
     for h in reversed(history):
-        picks_str = ", ".join(f"{s}({w*100:.0f}%)" for s, w in h.get('weights', {}).items()) or "空仓"
+        picks_str = ", ".join(f"{sym_label(s)}({w*100:.0f}%)" for s, w in h.get('weights', {}).items()) or "空仓"
         d_pl = h.get('final_pl_pct')
         spy_p = h.get('spy_pct')
         cls = 'pos' if (d_pl or 0) >= 0 else 'neg'
@@ -196,7 +241,7 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
         spy_p_str = f"{spy_p:+.2f}%" if spy_p is not None else "n/a"
         history_rows += (
             f"<tr><td>{esc(h.get('date'))}</td><td class='{cls}'>{d_pl_str}</td>"
-            f"<td>{spy_p_str}</td><td class='reason'>{esc(picks_str)}</td></tr>\n"
+            f"<td>{spy_p_str}</td><td class='reason'>{picks_str}</td></tr>\n"
         )
 
     action_log = state.get('action_log', [])[-25:]
@@ -204,7 +249,7 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
 
     wb_rows = ""
     for e in watchback:
-        wb_rows += f"<li><span class='sym'>{esc(e.get('symbol'))}</span> {esc(e.get('date'))}卖出 @ ${e.get('exit_price')} — {esc(e.get('reason', ''))[:200]}</li>\n"
+        wb_rows += f"<li><span class='sym'>{sym_label(e.get('symbol'))}</span> {esc(e.get('date'))}卖出 @ ${e.get('exit_price')} — {esc(e.get('reason', ''))[:200]}</li>\n"
     if not wb_rows:
         wb_rows = "<li class='muted'>暂无</li>"
 
@@ -237,6 +282,7 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
   th {{ text-align: left; color: var(--muted); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--border); }}
   td {{ padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }}
   td.sym {{ font-weight: 600; }}
+  .zh {{ color: var(--muted); font-weight: 400; font-size: 12px; }}
   td.reason {{ color: var(--muted); max-width: 480px; }}
   td.pos {{ color: var(--pos); font-weight: 600; }}
   td.neg {{ color: var(--neg); font-weight: 600; }}
