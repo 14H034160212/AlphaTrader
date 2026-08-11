@@ -312,12 +312,24 @@ CHART_COLOR_ACCOUNT = "#3987e5"
 CHART_COLOR_SPY = "#d95926"
 
 
-def render_trend_chart(history):
+def render_trend_chart(history, marker_date=None, marker_label=None):
     """Cumulative % return line chart (account vs SPY) compounding each day's
     final_pl_pct/spy_pct chronologically -- the same figure as the 'since
     inception' stat card, but shown as a curve over time instead of one
     endpoint number. Self-contained inline SVG (no JS chart library) so it
-    survives as a static Cloudflare Pages asset."""
+    survives as a static Cloudflare Pages asset.
+
+    2026-08-11, user (looking at the full-history chart): '我不理解为什么从
+    走势上看我们的走势明显更弱，但是你说我们的收益率超过标普500' -- the full
+    history includes an earlier, since-discontinued trading approach (pre
+    daily_open_daytrade.py, before 2026-07-16) that lost money and drags the
+    whole-history line well below SPY, while the CURRENT system (since
+    07-16, what the 'since inception' stat card measures) has actually been
+    beating SPY. Both numbers are true for their own window -- the two
+    looked contradictory only because the chart gave no visual cue that a
+    strategy change happened partway through. marker_date/marker_label draw
+    that regime-change line so the discontinuity is self-explanatory instead
+    of something the user has to ask about."""
     rows = [h for h in history if h.get('final_pl_pct') is not None and h.get('spy_pct') is not None]
     if len(rows) < 2:
         return ""
@@ -371,11 +383,21 @@ def render_trend_chart(history):
         for v in [v_min + v_span * f for f in (0.1, 0.5, 0.9)]
     )
 
+    marker_svg = ""
+    if marker_date and marker_date in dates:
+        mi = dates.index(marker_date)
+        mx = x_at(mi)
+        marker_svg = (
+            f"<line x1='{mx:.1f}' y1='{PAD_T}' x2='{mx:.1f}' y2='{PAD_T+plot_h}' class='regime-line'/>"
+            f"<text x='{mx:.1f}' y='{PAD_T-4}' class='regime-lab' text-anchor='middle'>{esc(marker_label or marker_date)}</text>"
+        )
+
     return f"""
     <svg viewBox="0 0 {W} {H}" role="img" aria-label="累计收益走势: 账户 vs SPY" class="trend-chart">
       <line x1="{PAD_L}" y1="{zero_y:.1f}" x2="{W-PAD_R}" y2="{zero_y:.1f}" class="zero-line"/>
       {y_ticks}
       {x_ticks}
+      {marker_svg}
       <path d="{line_path(spy_cum)}" fill="none" stroke="{CHART_COLOR_SPY}" stroke-width="2"/>
       <path d="{line_path(acc_cum)}" fill="none" stroke="{CHART_COLOR_ACCOUNT}" stroke-width="2"/>
       {points(spy_cum, dates, CHART_COLOR_SPY)}
@@ -386,6 +408,7 @@ def render_trend_chart(history):
     <div class="legend">
       <span><i style="background:{CHART_COLOR_ACCOUNT}"></i>本系统累计收益</span>
       <span><i style="background:{CHART_COLOR_SPY}"></i>SPY同期累计</span>
+      {f"<span><i style='background:var(--muted)'></i>{esc(marker_label or marker_date)}(分割线)前为旧策略,已停用</span>" if marker_svg else ""}
     </div>
     """
 
@@ -473,6 +496,8 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
   .trend-chart {{ width: 100%; height: auto; display: block; }}
   .axis-lab {{ font-size: 11px; fill: var(--muted); }}
   .zero-line {{ stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 3; }}
+  .regime-line {{ stroke: var(--pending); stroke-width: 1; stroke-dasharray: 4 3; }}
+  .regime-lab {{ font-size: 11px; fill: var(--pending); }}
   .end-label {{ font-size: 12px; font-weight: 600; }}
   .legend {{ display: flex; gap: 20px; margin-top: 8px; font-size: 12px; color: var(--muted); }}
   .legend i {{ display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }}
@@ -527,7 +552,11 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
 
   <section>
     <h2>累计收益走势(完整历史,共 {len(full_track) or len(history)} 个交易日,已扣除出入金影响)</h2>
-    {render_trend_chart(full_track or history) or "<p class='muted'>数据积累中,还不足以画出走势图</p>"}
+    <div class="muted" style="font-size:12px;margin-bottom:6px;">
+      黄色虚线 = 当前每日自动交易系统上线日({INCEPTION_DATE});此前为已停用的旧策略/实验阶段,
+      两段不能按同一条策略评价——"自inception以来"卡片只统计虚线之后。
+    </div>
+    {render_trend_chart(full_track or history, marker_date=INCEPTION_DATE, marker_label="当前策略上线") or "<p class='muted'>数据积累中,还不足以画出走势图</p>"}
     <table>
       <tr><th>日期</th><th>当日盈亏</th><th>同期SPY</th><th>当日选股</th></tr>
       {history_rows or "<tr><td colspan='4' class='muted'>暂无历史记录</td></tr>"}
