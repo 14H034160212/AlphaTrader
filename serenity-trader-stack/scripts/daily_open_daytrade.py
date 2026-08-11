@@ -581,11 +581,18 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
     # chasing a bare mover, per feedback_buy_dips_sell_strength.md.
     try:
         import yfinance as yf
-        gainers = yf.screen('day_gainers', count=25)
+        # 2026-08-11: user asked to broaden the picker's scope after FTK
+        # (a real, still-compounding +6.2% mover that day on genuine
+        # fundamentals) never made this list at count=25 -- other names
+        # simply moved more that particular day, so a real, checkable
+        # mover got excluded purely by ranking cutoff, not by any quality
+        # filter. Raised to 50 so moderate-but-real movers aren't lost to
+        # a day when a few extreme movers crowd out the top of the list.
+        gainers = yf.screen('day_gainers', count=50)
         rows = gainers.get('quotes', [])
         mover_lines = []
         movers_syms = []
-        for row in rows[:25]:
+        for row in rows[:50]:
             sym = row.get('symbol')
             chg = row.get('regularMarketChangePercent')
             price = row.get('regularMarketPrice')
@@ -611,7 +618,7 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
                 k, s, _ = _alpaca_creds()
                 h = {'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}
                 r = requests.get('https://data.alpaca.markets/v1beta1/news',
-                                  params={'symbols': ','.join(movers_syms), 'limit': 40},
+                                  params={'symbols': ','.join(movers_syms), 'limit': 80},
                                   headers=h, timeout=15)
                 articles = r.json().get('news', []) if r.status_code == 200 else []
                 if articles:
@@ -990,6 +997,8 @@ def liquidate_all(api, reason, state):
             state['sim_cash'] = state.get('sim_cash', 0) + pos['qty'] * px
             log(f"  [DRY-RUN] ✓ SOLD {sym} qty={pos['qty']} @~${px:.2f} — {reason}")
             record_action(state, f"卖出 {sym} qty={pos['qty']} 盈亏{plpc:+.2f}% — {reason}")
+            if sym != 'SPY':
+                record_watch_back(sym, px, reason)
             sold_syms.append(sym)
         state['sim_positions'] = {}
         save_state(state)
