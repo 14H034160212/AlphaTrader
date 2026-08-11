@@ -96,11 +96,11 @@ def compute_performance():
 
 def render_section(sub_pct, spy_pct, all_time_pct):
     now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
-    lead = "领先" if sub_pct >= spy_pct else "落后"
+    lead = "outperforming" if sub_pct >= spy_pct else "underperforming"
     lines = [
         "<!-- PERFORMANCE:START -->",
         f"**Since {INCEPTION_DATE} (current live system):** Account **{sub_pct:+.2f}%** vs SPY **{spy_pct:+.2f}%** "
-        f"({lead}大盘 {abs(sub_pct - spy_pct):.2f}pp)",
+        f"({lead} SPY by {abs(sub_pct - spy_pct):.2f}pp)",
     ]
     if all_time_pct is not None:
         lines.append(f"**All-time, net of all deposits/withdrawals:** **{all_time_pct:+.2f}%**")
