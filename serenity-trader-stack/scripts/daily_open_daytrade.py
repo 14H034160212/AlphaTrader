@@ -263,6 +263,8 @@ def append_history(entry):
 
 
 LESSONS_FILE = '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_lessons.jsonl'
+WATCHBACK_FILE = '/home/qbao775/serenity-trader-stack/.daily_open_daytrade_watchback.jsonl'
+WATCHBACK_LOOKBACK_DAYS = 14
 
 # 2026-08-06: user -- "时刻要和大盘收益比较". Benchmark anchors for cumulative
 # comparison: the system's live inception (2026-07-16, account $61,016.51) and
@@ -307,6 +309,14 @@ def history_context_str():
     lc = lessons_context_str()
     if lc:
         parts.append(lc)
+    # 2026-08-11: user noticed FTK kept rallying on real fundamentals after
+    # we sold it (for concentration, not thesis reasons) and never came back
+    # into consideration -- generic queries only catch FRESH same-day news,
+    # so a multi-day-old still-valid catalyst falls off the radar the moment
+    # a name is sold. Explicitly re-surface recent exits' price action.
+    wb = watch_back_context_str()
+    if wb:
+        parts.append(wb)
     return ("\n\n".join(parts) + "\n\n") if parts else ""
 
 
@@ -331,6 +341,69 @@ def lessons_context_str(max_lines=10):
             return ""
         return ("历史复盘教训(好的经验要复制,坏的错误不要重复;逐条对照当前决定):\n"
                 + "\n".join(lesson_lines[-max_lines:]))
+    except Exception:
+        return ""
+
+
+def record_watch_back(symbol, exit_price, reason):
+    # 2026-08-11: user noticed FTK (sold 2026-08-07 for CONCENTRATION reasons,
+    # thesis explicitly stated as intact) kept rallying on real fundamentals
+    # (Q2 beat + guidance raise) and never resurfaced in any later day's
+    # picks -- the generic search queries are tuned for FRESH same-day news,
+    # so a name whose catalyst is a few days old with no NEW headline that
+    # day simply falls off the radar entirely once sold, regardless of
+    # whether the reason for selling had anything to do with the thesis.
+    # Log every sell here (thesis-broken exits included -- cheap to check,
+    # and being wrong about "still worth watching" costs nothing but one
+    # price lookup) so the picker can explicitly re-examine it later instead
+    # of relying on luck to re-trigger a generic query.
+    try:
+        entry = {'date': datetime.date.today().isoformat(), 'symbol': symbol,
+                  'exit_price': exit_price, 'reason': reason}
+        with open(WATCHBACK_FILE, 'a') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def watch_back_context_str():
+    # Companion to record_watch_back(): re-checks recently-exited names'
+    # price action so the picker can explicitly decide whether a still-valid
+    # thesis deserves re-entry, rather than needing the name to independently
+    # re-trigger a generic search query.
+    if not os.path.exists(WATCHBACK_FILE):
+        return ""
+    try:
+        import market_data as md
+        cutoff = datetime.date.today() - datetime.timedelta(days=WATCHBACK_LOOKBACK_DAYS)
+        seen = set()
+        lines = []
+        for line in reversed(open(WATCHBACK_FILE).read().splitlines()):
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            sym = e.get('symbol')
+            if not sym or sym in seen:
+                continue
+            try:
+                d = datetime.date.fromisoformat(e.get('date', ''))
+            except Exception:
+                continue
+            if d < cutoff:
+                continue
+            seen.add(sym)
+            q = md.get_stock_quote(sym)
+            now_px = q['current'] if q and q.get('current') else None
+            exit_px = e.get('exit_price')
+            if now_px and exit_px:
+                chg = (now_px - exit_px) / exit_px * 100
+                lines.append(f"- {sym}: {e['date']}卖出@${exit_px:.2f} -> 现价${now_px:.2f} ({chg:+.1f}%), "
+                             f"当时卖出理由: {e.get('reason', '')[:120]}")
+        if not lines:
+            return ""
+        return ("最近卖出过的标的近况(不代表建议买回,只是提醒你自己判断是否值得重新考虑,"
+                "尤其如果卖出理由是仓位/集中度而非论文本身破裂):\n" + "\n".join(lines[:8]))
     except Exception:
         return ""
 
@@ -1250,6 +1323,8 @@ def sell_selected(api, state, syms, rotate_to, reason):
         del state['sim_positions'][sym]
         log(f"  [DRY-RUN] ✓ SOLD {sym} qty={pos['qty']} @~${px:.2f} — {reason}")
         record_action(state, f"卖出 {sym} 盈亏{plpc:+.2f}% — {reason}")
+        if sym != 'SPY':
+            record_watch_back(sym, px, reason)
         state.setdefault('weights', {}).pop(sym, None)
         save_state(state)
         if MIRROR_TO_LIVE:
