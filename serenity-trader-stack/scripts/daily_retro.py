@@ -46,6 +46,41 @@ def _creds():
     return k, s
 
 
+def _never_entered_picks(state):
+    """2026-08-11, user: '及时没有交易成功，但是当时你想做的交易也应该要
+    复盘一下' (even a trade that never executed should still be reviewed).
+    action_log only records EXECUTED trades -- a pick that was selected
+    (in state['weights']) but never actually bought (blocked by
+    insufficient buying power, or never confirmed an uptick before close)
+    was previously invisible to this retro entirely. Real case: 2026-08-10's
+    second-chance scan picked 7 real catalyst names (MLTX/DDOG/RKLB/EMBJ/
+    GRAL/TEM/CXW) that all failed to enter all afternoon, and none of that
+    ever reached a reflection prompt."""
+    try:
+        import market_data as md
+    except Exception:
+        return []
+    results = []
+    for sym, w in state.get('weights', {}).items():
+        sym_state = state.get('symbols', {}).get(sym, {})
+        if sym_state.get('entered'):
+            continue
+        ref_px = sym_state.get('last_px')
+        reason = state.get('reasons', {}).get(sym, '')
+        try:
+            q = md.get_stock_quote(sym)
+            now_px = q['current'] if q and q.get('current') else None
+        except Exception:
+            now_px = None
+        if ref_px and now_px:
+            chg = (now_px - ref_px) / ref_px * 100
+            results.append(f"{sym}(计划权重{w*100:.0f}%): 未能建仓,观察到的参考价${ref_px:.2f} -> "
+                            f"现价${now_px:.2f} ({chg:+.1f}%),原定理由: {reason}")
+        else:
+            results.append(f"{sym}(计划权重{w*100:.0f}%): 未能建仓(无法获取参考价对比),原定理由: {reason}")
+    return results
+
+
 def spy_day_change():
     try:
         k, s = _creds()
@@ -85,6 +120,12 @@ def main():
         lines = [f"{s2}: 入价${p['entry_price']}" for s2, p in state['sim_positions'].items()]
         positions_note = "收盘时仍持有(隔夜): " + ", ".join(lines)
 
+    never_entered = _never_entered_picks(state)
+    never_entered_note = ""
+    if never_entered:
+        never_entered_note = ("\n今天选中但从未实际建仓的标的(不在操作记录里,容易被忽略,"
+                               "必须一并复盘为什么没买成、如果买了会怎样):\n" + "\n".join(never_entered) + "\n")
+
     prompt = (
         f"你是一个自动交易系统的复盘教练。下面是{today}(美股交易日)的完整操作记录。"
         "请做诚实的复盘,好的和坏的都必须吸取经验:\n"
@@ -96,12 +137,17 @@ def main():
         "该砍没砍?)。\n"
         "3. 检查当前仍持有的每只standing仓位:它的入场理由是否与教训清单里的任何一条"
         "冲突?如果冲突,明天的持仓判断应该优先处理它。\n"
-        "4. 检查资金分布:最强的仓位是不是反而权重最小?是否应该向已验证的赢家集中?\n\n"
+        "4. 检查资金分布:最强的仓位是不是反而权重最小?是否应该向已验证的赢家集中?\n"
+        "5. 如果今天有选中但没买成的标的(见下方列表),点名分析:没买成是执行层的问题"
+        "(资金不够/没等到确认信号)还是判断层的问题?如果当时买了现在是赚是亏?"
+        "这个执行缺口本身要不要写成教训(比如'资金调度速度跟不上二次扫描的发现速度')?\n\n"
         f"当日账户盈亏: {final_pl if final_pl is not None else '未平仓(浮动)'}%\n"
         f"当日大盘SPY: {spy if spy is not None else '未知'}%\n"
         f"{positions_note}\n"
+        f"{never_entered_note}"
         f"操作记录:\n" + "\n".join(actions[-40:]) + "\n\n"
-        "输出要求: 先写复盘分析(覆盖上面4点);然后输出1-4条教训,每条独立一行、以 LESSON: 开头,"
+        "输出要求: 先写复盘分析(覆盖上面5点,如果没有未建仓标的可以跳过第5点);"
+        "然后输出1-4条教训,每条独立一行、以 LESSON: 开头,"
         "必须具体可执行、直接影响明天的选股或持仓判断——赢家规律和输家教训都算"
         "(例如 'LESSON: 一次性退税驱动的利润超预期不构成买入理由' 或 "
         "'LESSON: FTK式独占长期合同催化是最高弹性类型,应给最高档权重')。"
