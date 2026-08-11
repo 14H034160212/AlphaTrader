@@ -54,3 +54,5 @@ kronos_lib/
 
 # Cloudflare/deployment credentials -- never commit
 serenity-trader-stack/.secrets/
+serenity-trader-stack/dashboard/build/
+serenity-trader-stack/.wrangler/
