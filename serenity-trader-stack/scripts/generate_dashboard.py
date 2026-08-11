@@ -160,7 +160,7 @@ def esc(s):
 
 def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons):
     now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
-    lead_word = "outperforming" if sub_pct >= spy_pct else "underperforming"
+    lead_word = "领先" if sub_pct >= spy_pct else "落后"
 
     weights = state.get('weights', {})
     reasons = state.get('reasons', {})
@@ -168,7 +168,7 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
     today_picks_rows = ""
     for sym, w in sorted(weights.items(), key=lambda kv: -kv[1]):
         entered = symbols_state.get(sym, {}).get('entered')
-        status = "Entered" if entered else "Pending / not yet confirmed"
+        status = "已建仓" if entered else "待确认(未建仓)"
         reason = reasons.get(sym, "")
         today_picks_rows += (
             f"<tr><td class='sym'>{esc(sym)}</td><td>{w*100:.1f}%</td>"
@@ -184,11 +184,11 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
             f"<td class='{cls}'>{r['plpc']:+.2f}%</td><td class='{cls}'>{r['day_plpc']:+.2f}%</td></tr>\n"
         )
     if not pos_table_rows:
-        pos_table_rows = "<tr><td colspan='4' class='muted'>No open positions (fully in cash/treasuries)</td></tr>"
+        pos_table_rows = "<tr><td colspan='4' class='muted'>当前空仓(资金在现金/美债)</td></tr>"
 
     history_rows = ""
     for h in reversed(history):
-        picks_str = ", ".join(f"{s}({w*100:.0f}%)" for s, w in h.get('weights', {}).items()) or "flat"
+        picks_str = ", ".join(f"{s}({w*100:.0f}%)" for s, w in h.get('weights', {}).items()) or "空仓"
         d_pl = h.get('final_pl_pct')
         spy_p = h.get('spy_pct')
         cls = 'pos' if (d_pl or 0) >= 0 else 'neg'
@@ -200,22 +200,22 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
         )
 
     action_log = state.get('action_log', [])[-25:]
-    log_items = "".join(f"<li>{esc(a)}</li>\n" for a in reversed(action_log)) or "<li class='muted'>No activity logged yet today</li>"
+    log_items = "".join(f"<li>{esc(a)}</li>\n" for a in reversed(action_log)) or "<li class='muted'>今天暂无操作记录</li>"
 
     wb_rows = ""
     for e in watchback:
-        wb_rows += f"<li><span class='sym'>{esc(e.get('symbol'))}</span> exited {esc(e.get('date'))} @ ${e.get('exit_price')} — {esc(e.get('reason', ''))[:200]}</li>\n"
+        wb_rows += f"<li><span class='sym'>{esc(e.get('symbol'))}</span> {esc(e.get('date'))}卖出 @ ${e.get('exit_price')} — {esc(e.get('reason', ''))[:200]}</li>\n"
     if not wb_rows:
-        wb_rows = "<li class='muted'>None yet</li>"
+        wb_rows = "<li class='muted'>暂无</li>"
 
-    lesson_items = "".join(f"<li><span class='muted'>({esc(d)})</span> {esc(l)}</li>\n" for d, l in lessons) or "<li class='muted'>None yet</li>"
+    lesson_items = "".join(f"<li><span class='muted'>({esc(d)})</span> {esc(l)}</li>\n" for d, l in lessons) or "<li class='muted'>暂无</li>"
 
     return f"""<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SerenityAlphaTrader — Live Dashboard</title>
+<title>SerenityAlphaTrader — 实时交易仪表盘</title>
 <style>
   :root {{
     --bg: #0b0d12; --panel: #121620; --border: #232a38; --text: #e8ecf3;
@@ -223,16 +223,16 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
     --pending: #f5b942;
   }}
   * {{ box-sizing: border-box; }}
-  body {{ margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }}
+  body {{ margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 -apple-system, "PingFang SC", "Segoe UI", Roboto, "Microsoft YaHei", sans-serif; }}
   .wrap {{ max-width: 980px; margin: 0 auto; padding: 32px 20px 80px; }}
   h1 {{ font-size: 22px; margin: 0 0 4px; }}
   .sub {{ color: var(--muted); font-size: 13px; margin-bottom: 28px; }}
   .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 32px; }}
   .card {{ background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }}
-  .card .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }}
+  .card .label {{ color: var(--muted); font-size: 12px; letter-spacing: .02em; }}
   .card .value {{ font-size: 24px; font-weight: 600; margin-top: 6px; }}
   section {{ margin-bottom: 36px; }}
-  section h2 {{ font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; }}
+  section h2 {{ font-size: 15px; letter-spacing: .02em; color: var(--muted); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
   th {{ text-align: left; color: var(--muted); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--border); }}
   td {{ padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }}
@@ -253,59 +253,59 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
 </head>
 <body>
 <div class="wrap">
-  <h1>SerenityAlphaTrader — Live Dashboard</h1>
-  <div class="sub">Autonomous AI day-trading system · read-only, auto-refreshed · last updated {now}</div>
+  <h1>SerenityAlphaTrader — 实时交易仪表盘</h1>
+  <div class="sub">自主AI日内交易系统 · 只读展示,不可操作 · 自动刷新 · 最后更新 {now}</div>
 
   <div class="cards">
-    <div class="card"><div class="label">Since {INCEPTION_DATE}</div><div class="value">{sub_pct:+.2f}%</div></div>
-    <div class="card"><div class="label">SPY same period</div><div class="value">{spy_pct:+.2f}%</div></div>
-    <div class="card"><div class="label">vs SPY</div><div class="value">{lead_word.split()[0].capitalize()} by {abs(sub_pct-spy_pct):.2f}pp</div></div>
-    <div class="card"><div class="label">All-time (net of deposits)</div><div class="value">{('%+.2f%%' % all_time_pct) if all_time_pct is not None else 'n/a'}</div></div>
+    <div class="card"><div class="label">自 {INCEPTION_DATE} 以来</div><div class="value">{sub_pct:+.2f}%</div></div>
+    <div class="card"><div class="label">同期SPY</div><div class="value">{spy_pct:+.2f}%</div></div>
+    <div class="card"><div class="label">相对SPY</div><div class="value">{lead_word} {abs(sub_pct-spy_pct):.2f}pp</div></div>
+    <div class="card"><div class="label">全历史(扣除出入金后)</div><div class="value">{('%+.2f%%' % all_time_pct) if all_time_pct is not None else 'n/a'}</div></div>
   </div>
 
   <section>
-    <h2>Current Positions (weights &amp; P&amp;L% only — position size not disclosed)</h2>
+    <h2>当前持仓(仅显示权重和盈亏百分比,不显示具体仓位金额)</h2>
     <table>
-      <tr><th>Symbol</th><th>Weight</th><th>Unrealized P&amp;L</th><th>Today's P&amp;L</th></tr>
+      <tr><th>代码</th><th>权重</th><th>浮动盈亏</th><th>今日盈亏</th></tr>
       {pos_table_rows}
     </table>
   </section>
 
   <section>
-    <h2>Today's Picks ({esc(state.get('date', ''))})</h2>
+    <h2>今日选股({esc(state.get('date', ''))})</h2>
     <table>
-      <tr><th>Symbol</th><th>Target Weight</th><th>Status</th><th>Catalyst reason</th></tr>
-      {today_picks_rows or "<tr><td colspan='4' class='muted'>No picks yet today</td></tr>"}
+      <tr><th>代码</th><th>目标权重</th><th>状态</th><th>催化剂理由</th></tr>
+      {today_picks_rows or "<tr><td colspan='4' class='muted'>今天暂无选股</td></tr>"}
     </table>
   </section>
 
   <section>
-    <h2>Recent Activity Log</h2>
+    <h2>近期操作记录</h2>
     <ul class="log">
       {log_items}
     </ul>
   </section>
 
   <section>
-    <h2>Daily Track Record (last {len(history)} trading days)</h2>
+    <h2>每日战绩(最近 {len(history)} 个交易日)</h2>
     <table>
-      <tr><th>Date</th><th>Day P&amp;L</th><th>SPY</th><th>Picks that day</th></tr>
-      {history_rows or "<tr><td colspan='4' class='muted'>No history yet</td></tr>"}
+      <tr><th>日期</th><th>当日盈亏</th><th>同期SPY</th><th>当日选股</th></tr>
+      {history_rows or "<tr><td colspan='4' class='muted'>暂无历史记录</td></tr>"}
     </table>
   </section>
 
   <section>
-    <h2>Watching for Re-entry (sold for sizing reasons, thesis not necessarily broken)</h2>
+    <h2>卖出观察名单(因仓位/风险原因卖出,论文未必破裂,可能值得重新考虑)</h2>
     <ul class="log">{wb_rows}</ul>
   </section>
 
   <section>
-    <h2>Recent Self-Review Lessons</h2>
+    <h2>近期自我复盘教训</h2>
     <ul class="log">{lesson_items}</ul>
   </section>
 
   <footer>
-    Decision-support / research system. Not financial advice. Source: <a href="https://github.com/14H034160212/AlphaTrader">github.com/14H034160212/AlphaTrader</a>
+    决策支持/研究性质系统,不构成投资建议。源代码: <a href="https://github.com/14H034160212/AlphaTrader">github.com/14H034160212/AlphaTrader</a>
   </footer>
 </div>
 </body>
