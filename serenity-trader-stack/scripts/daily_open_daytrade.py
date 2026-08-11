@@ -1419,6 +1419,34 @@ LONG_TERM_NAMES_NEVER_TOUCH = {'SGOV', 'SKHY', 'MU', 'META'}
 
 
 def reconcile_live_with_paper(api, state, mins_to_close):
+    sim = state.get('sim_positions', {})
+    try:
+        live_syms = {p.symbol for p in api.list_positions()}
+    except Exception:
+        live_syms = None
+
+    # 2026-08-11: real incident -- RKLB was manually sold (directly via the
+    # API, outside this script entirely, ahead of 8/10 earnings) but its
+    # weight/reason/entered:True carried over unchanged through the
+    # hold_overnight day-rollover for a full extra day: the dashboard kept
+    # showing it as a live 2.5% pick, and daily_retro's never-entered-picks
+    # check skipped it (entered:True looked like "already accounted for")
+    # even though the true story -- exited early, was that the right call
+    # given the post-earnings reaction -- never got reviewed. Prune any
+    # weight for a symbol held NEITHER live nor in the paper ledger; this is
+    # pure bookkeeping (no orders), so it runs unconditionally, unlike the
+    # order-placing reconciliation below which is gated and skipped near close.
+    if live_syms is not None:
+        for sym in list(state.get('weights', {}).keys()):
+            if sym == 'SPY' or sym in LONG_TERM_NAMES_NEVER_TOUCH:
+                continue
+            if sym not in sim and sym not in live_syms:
+                log(f"  [RECONCILE] {sym} has a weight but no position anywhere (live or paper) -- "
+                    f"likely closed out-of-band, pruning stale weight")
+                state['weights'].pop(sym, None)
+                state.get('reasons', {}).pop(sym, None)
+                save_state(state)
+
     # 2026-08-04: self-healing sync -- a failed mirror buy used to stay failed
     # forever (5 in one session on 08-03: live ended up missing BABA/ABT/DBD/
     # FTK/SUPN while paper was fully deployed). Every managed tick now compares
@@ -1426,12 +1454,7 @@ def reconcile_live_with_paper(api, state, mins_to_close):
     # current price (per-symbol cooldown so a genuinely-broken symbol doesn't
     # get hammered). Never touches SGOV or the long-term thesis names; never
     # opens new positions in the final minutes before close.
-    if not (DRY_RUN and MIRROR_TO_LIVE) or mins_to_close <= 25:
-        return
-    sim = state.get('sim_positions', {})
-    try:
-        live_syms = {p.symbol for p in api.list_positions()}
-    except Exception:
+    if not (DRY_RUN and MIRROR_TO_LIVE) or mins_to_close <= 25 or live_syms is None:
         return
     now = datetime.datetime.utcnow()
     attempts = state.setdefault('_reconcile_attempts', {})
