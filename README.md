@@ -11,6 +11,16 @@
 
 # SerenityAlphaTrader Pro
 
+## 📈 Live Performance
+
+<!-- PERFORMANCE:START -->
+**Since 2026-07-16 (current live system):** Account **+5.47%** vs SPY **+2.39%** (领先大盘 3.08pp)
+**All-time, net of all deposits/withdrawals:** **+3.79%**
+
+_Last updated: 2026-08-11 01:08 UTC — percentage returns only, position size/equity not disclosed._
+<!-- PERFORMANCE:END -->
+
+
 > **SerenityAlphaTrader Pro** (short name: **AlphaTrader**) — an autonomous AI trading platform whose stock-selection brain reasons through the **Serenity supply-chain chokepoint lens**.
 
 **SerenityAlphaTrader Pro** is a fully automated AI quantitative trading system powered by a Python/FastAPI backend and a pure HTML/JS frontend. It runs a hybrid LLM stack (local Qwen3.5 35B MoE + optional DeepSeek-Cloud API) with the Kronos K-line prediction model, and executes real trades across US (Alpaca) and Hong Kong (Moomoo OpenD) markets.
