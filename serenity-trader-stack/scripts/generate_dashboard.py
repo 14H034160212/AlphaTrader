@@ -106,6 +106,107 @@ def fetch_live_data():
     return round(sub_pct, 2), round(spy_pct, 2), (round(all_time_pct, 2) if all_time_pct is not None else None), pos_rows
 
 
+def fetch_full_track_record():
+    """2026-08-11, user: '可以把完整的走势图加上吗？只有近9个工作日肯定不够'
+    (the chart only had ~9 points from the thin JSONL history file -- add the
+    FULL trend). Alpaca's portfolio/history endpoint has real daily equity
+    back to the account's actual trading start (~2026-05-12; before that
+    equity is 0.0, i.e. no real activity, so period=3M already covers the
+    whole real history). Its 'profit_loss' field is a raw day-over-day equity
+    delta -- NOT deposit-adjusted, so it spikes hugely on funding days
+    (confirmed: +910% on 2026-07-02, the day after the $55,669 deposit
+    landed). Subtract each bar's net deposits/withdrawals (via the CSD/CSW/
+    JNLC activity feed) before computing that day's return, so the compounded
+    curve reflects trading performance only, matching the 'all-time net of
+    deposits' stat card's honesty policy. Returns rows in the same shape
+    render_trend_chart() already consumes ({'date','final_pl_pct','spy_pct'})
+    so the chart's compounding logic needs no changes."""
+    import requests
+    k, s = _creds()
+    h = {'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s}
+    r = requests.get('https://api.alpaca.markets/v2/account/portfolio/history',
+                      headers=h, params={'period': '3M', 'timeframe': '1D'}, timeout=20).json()
+    ts = r.get('timestamp') or []
+    equity = r.get('equity') or []
+    pl = r.get('profit_loss') or []
+    if len(ts) < 2:
+        return []
+    dates = [datetime.datetime.utcfromtimestamp(t).strftime('%Y-%m-%d') for t in ts]
+
+    deposits_by_date = {}
+    page_token = None
+    while True:
+        params = {'activity_types': 'CSD,CSW,JNLC', 'page_size': 100}
+        if page_token:
+            params['page_token'] = page_token
+        page = requests.get('https://api.alpaca.markets/v2/account/activities', headers=h, params=params, timeout=20).json()
+        if not page:
+            break
+        for a in page:
+            amt = float(a.get('net_amount', a.get('amount', 0)))
+            signed = -abs(amt) if a['activity_type'] == 'CSW' else abs(amt)
+            deposits_by_date[a['date']] = deposits_by_date.get(a['date'], 0.0) + signed
+        if len(page) < 100:
+            break
+        page_token = page[-1]['id']
+
+    # SPY daily closes over the same window, feed=iex (free-tier). Deposits
+    # don't apply here -- SPY closes are absolute prices, no cash-flow noise.
+    start = f"{dates[0]}T00:00:00Z"
+    end = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).strftime('%Y-%m-%dT00:00:00Z')
+    bars = requests.get('https://data.alpaca.markets/v2/stocks/SPY/bars', headers=h,
+                         params={'start': start, 'end': end, 'timeframe': '1Day', 'feed': 'iex', 'limit': 1000},
+                         timeout=20).json().get('bars', [])
+    spy_seq = [(b['t'][:10], b['c']) for b in bars]
+    if not spy_seq or spy_seq[-1][0] != dates[-1]:
+        try:
+            snap = requests.get('https://data.alpaca.markets/v2/stocks/SPY/snapshot', headers=h, timeout=15).json()
+            today_px = snap.get('latestTrade', {}).get('p') or snap['prevDailyBar']['c']
+            spy_seq.append((dates[-1], today_px))
+        except Exception:
+            pass
+
+    # 2026-08-11: portfolio_history's own date labels are unreliable -- some
+    # bars land on a Saturday when converted (an Alpaca timestamp-anchor
+    # quirk, confirmed empirically), which breaks date-string matching
+    # against SPY's bars (which use the correct NYSE calendar date) for
+    # ~1-in-5 rows. Both sequences cover the SAME set of trading sessions in
+    # the SAME chronological order though (verified: 62 SPY bars + today's
+    # snapshot == 63 portfolio bars) -- so align positionally and use SPY's
+    # reliably-labeled dates for display instead of portfolio_history's.
+    use_positional = len(spy_seq) == len(dates)
+    if not use_positional:
+        log(f"full_track_record: spy_seq len {len(spy_seq)} != portfolio dates len {len(dates)}, "
+            f"falling back to by-date matching (may miss some SPY moves)")
+        spy_close_by_date = dict(spy_seq)
+
+    rows = []
+    last_spy_close = spy_seq[0][1] if use_positional else spy_close_by_date.get(dates[0])
+    for i in range(1, len(dates)):
+        prev_d, cur_d = dates[i - 1], dates[i]
+        # A deposit dated D lands in the equity snapshot of the NEXT trading
+        # bar (confirmed empirically: the 07-01 deposit shows as the 07-02
+        # bar's jump) -- so the window is [prev bar's date, this bar's date).
+        window = sum(v for d, v in deposits_by_date.items() if prev_d <= d < cur_d)
+        prev_eq = equity[i - 1]
+        acc_ret = ((pl[i] - window) / prev_eq * 100) if prev_eq else 0.0
+
+        if use_positional:
+            display_date, spy_close = spy_seq[i]
+        else:
+            display_date = cur_d
+            spy_close = spy_close_by_date.get(cur_d)
+        if spy_close is not None and last_spy_close:
+            spy_ret = (spy_close - last_spy_close) / last_spy_close * 100
+        else:
+            spy_ret = 0.0
+        if spy_close is not None:
+            last_spy_close = spy_close
+
+        rows.append({'date': display_date, 'final_pl_pct': round(acc_ret, 4), 'spy_pct': round(spy_ret, 4)})
+    return rows
+
+
 def load_state():
     if not os.path.exists(STATE_FILE):
         return {}
@@ -289,7 +390,7 @@ def render_trend_chart(history):
     """
 
 
-def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons):
+def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track):
     now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
     lead_word = "领先" if sub_pct >= spy_pct else "落后"
 
@@ -425,8 +526,8 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
   </section>
 
   <section>
-    <h2>累计收益走势(最近 {len(history)} 个交易日)</h2>
-    {render_trend_chart(history) or "<p class='muted'>数据积累中,还不足以画出走势图</p>"}
+    <h2>累计收益走势(完整历史,共 {len(full_track) or len(history)} 个交易日,已扣除出入金影响)</h2>
+    {render_trend_chart(full_track or history) or "<p class='muted'>数据积累中,还不足以画出走势图</p>"}
     <table>
       <tr><th>日期</th><th>当日盈亏</th><th>同期SPY</th><th>当日选股</th></tr>
       {history_rows or "<tr><td colspan='4' class='muted'>暂无历史记录</td></tr>"}
@@ -481,10 +582,15 @@ def main():
     history = load_history()
     watchback = load_watchback()
     lessons = load_lessons()
+    try:
+        full_track = fetch_full_track_record()
+    except Exception as e:
+        log(f"failed to fetch full track record, falling back to short history: {e}")
+        full_track = []
 
     os.makedirs(BUILD_DIR, exist_ok=True)
     out_path = os.path.join(BUILD_DIR, 'index.html')
-    open(out_path, 'w').write(render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons))
+    open(out_path, 'w').write(render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track))
     log(f"rendered dashboard (sub={sub_pct:+.2f}% spy={spy_pct:+.2f}% positions={len(pos_rows)})")
     deploy()
 
