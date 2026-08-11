@@ -733,7 +733,59 @@ def enter(api, state):
             save_state(state)
             continue
 
-        notional = min(equity * w, bp - 20)
+        desired_notional = equity * w
+        # 2026-08-10: user pointed out "SPY里的钱可以动的" -- SPY is the
+        # flexible default/baseline (individual picks carve capital OUT of
+        # it), not a locked core holding, but this function had no mechanism
+        # to actually reclaim SPY capital for a fresh, LLM-approved,
+        # confirmed-uptick pick. Real incident: a second-chance scan found 7
+        # real catalyst picks (MLTX/DDOG/RKLB/EMBJ/GRAL/TEM/CXW, 69% intended
+        # weight) but EVERY one failed all afternoon on "insufficient buying
+        # power" -- SPY had already absorbed all available cash from an
+        # earlier trade that same morning, and nothing here would trim it
+        # back even though SPY existing for exactly this purpose. Trim SPY
+        # (only SPY -- never a name from LONG_TERM_NAMES_NEVER_TOUCH) to
+        # cover the shortfall when this pick needs more than raw cash covers.
+        if sym != 'SPY' and bp - 20 < desired_notional:
+            shortfall = desired_notional - (bp - 20)
+            spy_pos = state.get('sim_positions', {}).get('SPY') if DRY_RUN else None
+            spy_live_qty = None
+            if not DRY_RUN:
+                try:
+                    spy_live_qty = float(api.get_position('SPY').qty)
+                except Exception:
+                    spy_live_qty = None
+            have_spy = spy_pos is not None if DRY_RUN else (spy_live_qty is not None and spy_live_qty > 0)
+            if have_spy:
+                spy_q = md.get_stock_quote('SPY')
+                spy_px = spy_q['current'] if spy_q and spy_q.get('current') else None
+                if spy_px:
+                    spy_value = (spy_pos['qty'] * spy_px) if DRY_RUN else (spy_live_qty * spy_px)
+                    trim_value = min(shortfall, spy_value)
+                    trim_qty = round(trim_value / spy_px, 4)
+                    if trim_qty > 0:
+                        log(f"  {sym}: raising ${trim_value:.2f} by trimming SPY (baseline capital reclaimed for a confirmed pick)")
+                        if DRY_RUN:
+                            spy_pos['qty'] = round(spy_pos['qty'] - trim_qty, 4)
+                            if spy_pos['qty'] <= 0:
+                                state['sim_positions'].pop('SPY', None)
+                            bp += trim_value
+                            state['sim_cash'] = bp
+                            record_action(state, f"卖出SPY {trim_qty}股 @~${spy_px:.2f} 腾出资金给 {sym}")
+                            if MIRROR_TO_LIVE:
+                                try:
+                                    o = api.submit_order(symbol='SPY', qty=trim_qty, side='sell', type='market', time_in_force='day')
+                                    log(f"  [LIVE-MIRROR] ✓ trimmed SPY qty={trim_qty} order={o.id[:8]}")
+                                except Exception as e:
+                                    log(f"  [LIVE-MIRROR] SPY trim for {sym} FAILED -- live has DIVERGED from paper: {e}")
+                        else:
+                            try:
+                                api.submit_order(symbol='SPY', qty=trim_qty, side='sell', type='market', time_in_force='day')
+                                bp += trim_value
+                            except Exception as e:
+                                log(f"  {sym}: SPY trim failed ({e}) — proceeding with whatever cash is available")
+
+        notional = min(desired_notional, bp - 20)
         qty = round(notional / px, 4)
         if qty <= 0:
             log(f"  {sym}: insufficient buying power — skipping")
