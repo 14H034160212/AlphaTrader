@@ -26,3 +26,31 @@ OVERALL: NEUTRAL
 另外我会补一份 CXW 的 thesis 文件，把上面的时限和退出触发条件写进去——否则下一轮交叉验证还会因为"从未深度复核"重复升级。
 
 
+### 2026-08-11 20:01 UTC 自动交叉验证
+- P&L: +2.3%
+- 4大师速览: BEARISH
+BUFFETT: SELL; lack of durable moat due to extreme political and regulatory volatility.
+MUNGER: Mistake if a permanent federal ban on private prisons is codified into law.
+DUAN(段永平): No; business model depends on political whims rather than intrinsic value.
+LI_LU(李录): High risk of permanent loss; regulatory ceilings cap long-term compounding.
+OVERALL: BEARISH
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Continued demand for ICE detention capacity and political tailwinds favoring stricter immigration enforcement.
+OVERALL: BULLISH
+- **升级触发**: 两框架分歧 (4大师:BEARISH vs Serenity:BULLISH); 出现看空信号
+- **付费深度判断** ($0.4227): 写文件被权限拦住了（和之前 RDY 那个 bug 一样卡在同一处），所以先给判断。
+
+**综合判断（CXW，仓位 1.27% ≈ $816，今日 13:31 @$33.17 建仓，+1.8%）**
+
+1. **论文仍成立，而且这次升级里没有任何新信息。** 今天 16:00 UTC 已经做过一次付费深度复核，当时结论是 HOLD（封顶的时限交易）；这一轮唯一的变化是 Serenity 从 NEUTRAL 升到 BULLISH，4大师维持 BEARISH —— 也就是说触发升级的是**同一个已知分歧变得更明显了**，不是论文出现裂缝。所谓"no saved thesis found"也不是论文破损，是 `reports/CXW/thesis.md` 这个文件我今天说要补但没补上（被写权限挡了），属于记账缺口。
+
+2. **两个框架都对，它们在回答不同的问题。** 4大师的 BEARISH 完全站得住：单一客户是联邦政府、护城河由政治意志构成、2016 年 DOJ 备忘录当日近腰斩和 2021 年拜登行政令是**已发生的历史而非假想风险** —— 但这是对"持有十年"的否决。Serenity 的 BULLISH 回答的是"未来数季度收入可见度"，而 ICE 扩容资金已经立法落地、床位供给是实质双寡头，这一层同样是事实。**关键在于：这是政治卡点不是技术卡点**，一道行政令就能溶解，所以它配得上一个交易窗口，配不上长期估值溢价。
+
+3. **两个方向的错法**：错在下行 = 一条 DHS/ICE 政策反转头条隔夜跳空 −30%，且 11 月中期选举是 3 个月内的真实二元事件；错在上行 = 现在 +1.8% 走掉，放弃 $42–45 目标位（+27~35%）。当前 1.27% 仓位让下行尾部只值约 0.4% 净值，这个不对称仍然可接受。
+
+**建议：HOLD，维持早上定下的三条纪律不变** —— ① 仓位硬顶 1.5%，任何"催化剂强化"都不加仓；② $38–42 分批卖强势，不等目标价打满；③ 11 月中期选举前强制复核，或任何实质性联邦拘留政策/资金头条出现时无条件离场。
+
+一件需要你放行的事：`serenity-trader-stack/reports/CXW/thesis.md` 我已经写好内容（含上面的纪律和退出触发条件，并把"4大师 BEARISH 是已定价前提"写进档案），但写入被权限拦下。**不补这个文件，下一轮交叉验证还会因为"无 thesis / 从未复核"重复升级、重复花钱做付费复核。** 要我重试写入吗？
+
+
