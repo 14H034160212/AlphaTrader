@@ -158,3 +158,35 @@ OVERALL: NEUTRAL
 **两个待办**（顺带说明，不是问你）：一是 GRAL 今天已第 4 次因同一理由触发付费深度复核，重复烧钱，我下一步给 `crossvalidate_satellite.py` 加 24h 同因冷却；二是事件仓的建仓论文没写进 thesis 存档，导致每轮都误报"无论文"——这就是我前三轮判断错误的根因，一并补上落盘。
 
 
+### 2026-08-12 20:03 UTC 自动交叉验证
+- P&L: -7.9%
+- 4大师速览: BEARISH
+BUFFETT: SELL - lacks predictable earnings and a proven durable moat.
+MUNGER: Mistake if insurance reimbursement fails to materialize.
+DUAN(段永平): No, cannot confirm the "business model" quality for a 10-year horizon.
+LI_LU(李录): BEARISH - high risk of permanent loss due to aggressive cash burn.
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: YES
+REASON: widespread adoption still depends on achieving FDA approval and securing broad insurance reimbursement for Galleri
+OVERALL: NEUTRAL
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.6852): **判断：论文形式上还成立，但今天已经第二次变坏 —— 从 +0.9% → -3.4% → 现在 -7.9%，而 16:04 那次定的 TRIM 到今天为止没有执行。**
+
+1. **论文本身没破**：赌的是 9/23 FDA 专委会这个已定档事件（六周跑道），今天没有档期变动的证据，-7.9% 是价格漂移不是论文破裂。这是"看空错了"的那一面 —— 若 AdCom 正面，Galleri 从 LDT 走向 PMA 是台阶式重估。
+
+2. **4 大师有道理但答错了题**：无可预测现金流、二元监管风险、永久损失风险全部正确，但那是"要不要持有十年"的答案，而这从建仓第一天就是六周事件仓 —— 所以这个 BEARISH 每 4 小时必然复现，本身不构成新信号。
+
+3. **Serenity 这次应视为无信号**：它给 `CHOKEPOINT_INTACT: YES`，理由却是"等 FDA 批准和保险报销"—— 那是**别人掐着 GRAIL 的脖子**，方向反了，不该读成中性偏多（00:04 那次甚至据此读成 BULLISH）。
+
+4. **但我核实到一条真实削弱上行的新事实**：多家律所已就 **NHS-Galleri 试验主要终点的表述**提起证券集体诉讼 —— 被质疑的正是 9/23 专委会要审的那份数据包；叠加 8/5 Q2（营收 $44.7M、净亏 $110.2M、当日 -14%）暴露的烧钱速度，会前增发风险也是现实的。这把"负面简报文件"这条我预设的清零条件从尾部风险抬成了实质概率。
+
+**建议：TRIM，立即执行，砍到 ≤1% NAV 残仓（取 16:04 区间的下沿，不再是 1–1.5%）。** 理由两面都保：论文没坏、催化剂还在跑道上，全清等于在没有坏消息时扔掉活期权；但用生活费押一个由 FDA 日历单点决定、数据包本身正被起诉、还要熬六周漂移的二元赌注，2.28% NAV 太大了。失效条件写死：**档期推迟 / 会前简报文件出现对主要终点的质疑 / 任何增发公告 → 清零，不等 9/23。**
+
+两个已提第三次、被权限挡住的修复（`reports/GRAL/thesis.md` 写入刚才被拒）：**① 补落 GRAL 事件仓论文存档**（今天 5 次触发、3 次错误结论的根因就是它读不到论文）；**② `crossvalidate_satellite.py` 加 24h 同因冷却**（GRAL 今天已重复烧掉 5 次触发、4 次付费深度调用）。给我文件写入权限我现在就动手。
+
+Sources:
+- [GRAIL (GRAL) Stock Sinks As Cash Burn Drowns Galleri Growth — Simply Wall St](https://simplywall.st/stocks/us/pharmaceuticals-biotech/nasdaq-gral/grail/news/grail-gral-stock-sinks-as-cash-burn-drowns-galleri-growth)
+- [GRAIL, Inc. (GRAL) Latest Stock News & Headlines — Yahoo Finance](https://finance.yahoo.com/quote/GRAL/news/)
+
+
