@@ -403,6 +403,24 @@ def render_trend_chart(history, marker_date=None, marker_label=None):
             f"<line x1='{mx:.1f}' y1='{PAD_T}' x2='{mx:.1f}' y2='{PAD_T+plot_h}' class='regime-line'/>"
             f"<text x='{mx:.1f}' y='{PAD_T-4}' class='regime-lab' text-anchor='middle'>{esc(marker_label or marker_date)}</text>"
         )
+        # 2026-08-12, user: "为什么红线在蓝线上面，不是比标普500更好吗" --
+        # the full curve shares one origin (the chart's very first day), so
+        # the pre-marker drawdown from the discontinued old strategy keeps
+        # the account line visually below SPY's for the WHOLE chart even
+        # though the SLOPE since the marker is steeper -- a reader has to
+        # mentally re-derive "since marker" from two absolute curves to see
+        # that. Compute and label it directly instead of making that a
+        # recurring verbal explanation.
+        since_acc = ((1 + acc_cum[-1] / 100) / (1 + acc_cum[mi] / 100) - 1) * 100
+        since_spy = ((1 + spy_cum[-1] / 100) / (1 + spy_cum[mi] / 100) - 1) * 100
+        anno_x = min(mx + 10, W - PAD_R - 168)
+        marker_svg += (
+            f"<g class='since-marker-anno'>"
+            f"<text x='{anno_x:.1f}' y='{PAD_T+14}' class='anno-lab'>此后(至今):</text>"
+            f"<text x='{anno_x:.1f}' y='{PAD_T+30}' class='anno-val' fill='{CHART_COLOR_ACCOUNT}'>本系统 {since_acc:+.2f}%</text>"
+            f"<text x='{anno_x:.1f}' y='{PAD_T+46}' class='anno-val' fill='{CHART_COLOR_SPY}'>SPY {since_spy:+.2f}%</text>"
+            f"</g>"
+        )
 
     # 2026-08-12, user: "可以支持鼠标选择可以查看具体某个时段的情况" + "总
     # 金额的浮动变化" -- add a crosshair+tooltip hover layer (per the dataviz
@@ -597,6 +615,8 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
   .zero-line {{ stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 3; }}
   .regime-line {{ stroke: var(--pending); stroke-width: 1; stroke-dasharray: 4 3; }}
   .regime-lab {{ font-size: 11px; fill: var(--pending); }}
+  .anno-lab {{ font-size: 10px; fill: var(--muted); }}
+  .anno-val {{ font-size: 12px; font-weight: 600; }}
   .end-label {{ font-size: 12px; font-weight: 600; }}
   .crosshair-line {{ stroke: var(--muted); stroke-width: 1; pointer-events: none; }}
   .hover-dot {{ stroke: var(--panel); stroke-width: 2; pointer-events: none; }}
