@@ -94,3 +94,17 @@ REASON: Sonelokimab remains on track for Phase 3 trials following strong Phase 2
 OVERALL: BULLISH
 
 
+### 2026-08-12 12:07 UTC 自动交叉验证
+- P&L: -2.5%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — no moat yet, binary clinical-stage risk.
+MUNGER: Mistake if Sonelokimab fails Phase 3 or lacks superiority over incumbents.
+DUAN(段永平): No, lacks predictability for a 10-year ownership horizon.
+LI_LU(李录): High risk of permanent loss until commercialization occurs.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Sonelokimab continues to show promising Phase 2 efficacy in PsA and HS, maintaining its path toward pivotal Phase 3 trials.
+OVERALL: BULLISH
+
+

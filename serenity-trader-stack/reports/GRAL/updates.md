@@ -98,3 +98,35 @@ OVERALL: NEUTRAL
 **顺带一个系统问题**（昨天提过但还没修）：卫星仓建仓路径绕过了 thesis 落盘，导致多个仓位反复触发"无存档论文 + 从未深度复核"，然后每次都重新烧一遍付费复核。要不要我把 thesis 落盘做成建仓的强制前置？
 
 
+### 2026-08-12 12:05 UTC 自动交叉验证
+- P&L: +0.9%
+- 4大师速览: BEARISH
+BUFFETT: WATCH; lacks predictable earnings and a proven durable moat.
+MUNGER: Mistake if Galleri fails to achieve widespread insurance reimbursement.
+DUAN(段永平): No; binary regulatory risk precludes 10-year confidence.
+LI_LU(李录): BEARISH; extreme risk of permanent loss in biotech commercialization.
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: YES
+REASON: lack of widespread insurance reimbursement for Galleri continues to limit mass-market adoption.
+OVERALL: NEUTRAL
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.3694): 这是 GRAL 今天第 **3 次**触发同一个升级（08-11 20:07、08-12 08:05 已各做过一次付费深度复核），结论没有变化——所以我直接给判断，不再重复烧一次深度分析。
+
+**1. 论文不成立，因为从来没有论文。** GRAL 至今无存档 thesis，属于先建仓后补课；触发条件里的"无原始论文"不是论文破裂的信号，是建仓流程漏洞。
+
+**2. 4 大师判断成立，Serenity 这次是框架误用。** 李录的"永久损失风险"是这只票的正确框架：Grail 年烧 3 亿+、收入仅 1 亿多，价值完全押在 FDA PMA → CMS 报销这条二元链上。而 Serenity 给出的 `CHOKEPOINT_INTACT: YES`，理由恰恰是"等 FDA 批准和保险报销"——那是**别人掐着 Grail 的脖子**，不是 Grail 掐着别人的脖子，卡点方向反了，不该读成 NEUTRAL（00:04 那次甚至读成 BULLISH，同一个误读换了个 Illumina 诉讼了结的理由）。
+
+**3. 建议：EXIT。** 不是看空技术——Galleri 若获批确实是台阶式重估，这是"看空错了"的那一面；而是"结论由 FDA 日历决定、公司自己完全不控制"的二元赌注跟这个账户的生存优先宪章直接冲突（这是生活费）。当前 P&L 仅 +0.9%，接近零成本退出窗口，不必等回本。若想保留彩票期权，唯一可接受形态是砍到 ≤1% NAV 残仓，且必须先补一份写明"只赌 FDA PMA 模块完成 + 明确失效条件"的 thesis。
+
+⚠️ 我的知识截止 2026-05，GRAL 最新 FDA 模块进度和 PATHFINDER 2 后续数据我没实时核实——但这不改变结论，因为"结论取决于我不掌握、且随时可能翻转的监管事件"本身就是该退出的理由。
+
+---
+
+**两个已提过两次但还没修的系统问题**，我可以现在动手（各 10 分钟）：
+1. **深度复核冷却期**：同一 ticker 24h 内重复触发同样的升级理由 → 直接引用上次结论，不重复付费调用（今天 GRAL 已重复烧了 2 次）。
+2. **thesis 落盘做成建仓强制前置**：卫星仓建仓路径绕过 thesis 写入，导致 EMBJ/GRAL/MLTX/TEM/CXW 反复触发"无存档论文"。
+
+要我直接改吗？
+
+
