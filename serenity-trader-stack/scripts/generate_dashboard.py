@@ -582,15 +582,30 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
 """
 
 
+WRANGLER_BIN = '/data/qbao775/miniconda3/bin/wrangler'
+
+
 def deploy():
+    # 2026-08-12: 'wrangler' (bare name, PATH lookup) worked fine when tested
+    # interactively but silently failed every single cron tick since the day
+    # after this was built -- cron's PATH doesn't include
+    # /data/qbao775/miniconda3/bin, so subprocess.run raised FileNotFoundError,
+    # main() crashed inside deploy(), and the site sat on the same stale
+    # deployment for a full day while positions/P&L kept changing underneath
+    # it. User noticed via "你昨天做的网站上没有实时更新收益和持仓吗". Use the
+    # absolute path so this doesn't depend on whatever PATH the caller has.
     env = dict(os.environ)
+    # wrangler's shebang execs `node` via PATH lookup -- cron's PATH
+    # (/sbin:/bin:/usr/sbin:/usr/bin) has neither that nor wrangler itself,
+    # so the absolute WRANGLER_BIN path alone isn't enough on its own.
+    env['PATH'] = '/data/qbao775/miniconda3/bin:' + env.get('PATH', '')
     if os.path.exists(CF_ENV_FILE):
         for line in open(CF_ENV_FILE).read().splitlines():
             if '=' in line and not line.strip().startswith('#'):
                 k, _, v = line.partition('=')
                 env[k.strip()] = v.strip()
     r = subprocess.run(
-        ['wrangler', 'pages', 'deploy', BUILD_DIR, '--project-name', PROJECT_NAME,
+        [WRANGLER_BIN, 'pages', 'deploy', BUILD_DIR, '--project-name', PROJECT_NAME,
          '--branch', 'main', '--commit-dirty=true'],
         capture_output=True, text=True, timeout=120, env=env,
     )
