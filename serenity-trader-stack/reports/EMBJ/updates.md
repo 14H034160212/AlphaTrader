@@ -48,3 +48,17 @@ OVERALL: BULLISH
 - **EMBJ 这个代码本身我没能核实。** 代码本内所有层（4大师、Serenity、催化剂摘要）都把它当 Embraer，而 Embraer 常规的 NYSE ADR 代码是 **ERJ**。券商接了单、报价连续，说明 EMBJ 是真实可交易符号，但"EMBJ = Embraer"这个映射我没验证成功（查 asset 接口的命令被权限拦了）。考虑到 RDY 那次的前科，值得放行一次查询确认——如果它其实不是 Embraer，上面整套论证的标的就错了，那更该清掉。
 
 
+### 2026-08-12 00:03 UTC 自动交叉验证
+- P&L: -4.2%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — decent niche moat in regional jets but capital-intensive cyclicality
+MUNGER: MISTAKE if regional aviation demand shifts permanently toward larger narrow-bodies
+DUAN(段永平): NO — lacks the predictable, high-margin scalability for a 10-year hold
+LI_LU(李录): NEUTRAL — compounding capped by heavy CAPEX and risk of industry volatility
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: strong order backlogs across segments and expanding international adoption of the C-390 Millennium transport aircraft.
+OVERALL: BULLISH
+
+

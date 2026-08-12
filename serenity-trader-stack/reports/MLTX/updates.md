@@ -46,3 +46,17 @@ OVERALL: BULLISH
 Sources: [BioSpace — IZAR-1 topline](https://www.biospace.com/press-releases/moonlake-announces-positive-topline-results-from-the-phase-3-izar-1-trial-of-sonelokimab-in-psoriatic-arthritis-demonstrating-significant-improvements-across-all-clinical-endpoints-and-reports-second-quarter-2026-financial-results) · [Pharmacally — VELA Week 52](https://pharmacally.com/moonlake-reports-strong-one-year-phase-3-results-for-sonelokimab-in-hidradenitis-suppurativa/) · [Benzinga — 股价反应](https://www.benzinga.com/news/health-care/26/08/61084682/moonlakes-psoriatic-arthritis-drug-shows-promise-in-late-stage-study) · [StockTitan — BLA 时间表](https://www.stocktitan.net/sec-filings/MLTX/8-k-moon-lake-immunotherapeutics-reports-material-event-fcf0c58e4499.html)
 
 
+### 2026-08-12 00:04 UTC 自动交叉验证
+- P&L: -3.4%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH; no moat until FDA approval and commercialization.
+MUNGER: It is a mistake if Sonelokimab fails Phase 3 efficacy or safety endpoints.
+DUAN(段永平): No; too binary for a 10-year business conviction.
+LI_LU(李录): High risk of permanent loss due to clinical-stage dependency.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: positive Phase 2 data in Psoriatic Arthritis and Hidradenitis Suppurativa continues to support the potential for Sonelokimab to be best-in-class
+OVERALL: BULLISH
+
+
