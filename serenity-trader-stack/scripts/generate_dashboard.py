@@ -208,7 +208,15 @@ def fetch_full_track_record():
         if spy_close is not None:
             last_spy_close = spy_close
 
-        rows.append({'date': display_date, 'final_pl_pct': round(acc_ret, 4), 'spy_pct': round(spy_ret, 4)})
+        rows.append({
+            'date': display_date, 'final_pl_pct': round(acc_ret, 4), 'spy_pct': round(spy_ret, 4),
+            # 2026-08-12, user asked the chart's hover to show "总金额的浮动
+            # 变化" (the fluctuation of the total dollar amount) -- carry the
+            # day's actual equity level and its deposit-adjusted dollar
+            # change (same adjustment as acc_ret, so the $ figure agrees
+            # with the % already shown) alongside the percentages.
+            'equity': round(equity[i], 2), 'day_change_usd': round(pl[i] - window, 2),
+        })
     return rows
 
 
@@ -365,16 +373,15 @@ def render_trend_chart(history, marker_date=None, marker_label=None):
     def line_path(vals):
         return "M " + " L ".join(f"{x_at(i):.1f},{y_at(v):.1f}" for i, v in enumerate(vals))
 
-    def points(vals, dates, label_fn):
-        pts = []
-        for i, v in enumerate(vals):
-            pts.append(
-                f"<circle cx='{x_at(i):.1f}' cy='{y_at(v):.1f}' r='3.5' fill='{label_fn}'>"
-                f"<title>{esc(dates[i])}: {v:+.2f}%</title></circle>"
-            )
-        return "".join(pts)
+    def points(vals, label_fn):
+        return "".join(
+            f"<circle cx='{x_at(i):.1f}' cy='{y_at(v):.1f}' r='3.5' fill='{label_fn}'/>"
+            for i, v in enumerate(vals)
+        )
 
     dates = [h.get('date', '') for h in rows]
+    equities = [h.get('equity') for h in rows]
+    day_changes = [h.get('day_change_usd') for h in rows]
     zero_y = y_at(0.0)
 
     # x-axis date ticks: first, middle, last (avoid label crowding for long histories)
@@ -397,24 +404,110 @@ def render_trend_chart(history, marker_date=None, marker_label=None):
             f"<text x='{mx:.1f}' y='{PAD_T-4}' class='regime-lab' text-anchor='middle'>{esc(marker_label or marker_date)}</text>"
         )
 
+    # 2026-08-12, user: "可以支持鼠标选择可以查看具体某个时段的情况" + "总
+    # 金额的浮动变化" -- add a crosshair+tooltip hover layer (per the dataviz
+    # skill's interaction spec: a vertical hairline snaps to the nearest x,
+    # one tooltip lists every series at that point) showing both series' %
+    # AND the account's actual dollar equity/day-change at the hovered date,
+    # not just the % the static chart already showed. Values are also fully
+    # reachable without hovering, via the daily track-record table below the
+    # chart -- the hover layer is a faster path to the same numbers, not the
+    # only path (dataviz: "tooltips enhance, they never gate").
+    point_data = json.dumps([
+        {'d': dates[i], 'a': round(acc_cum[i], 2), 's': round(spy_cum[i], 2),
+         'eq': equities[i], 'chg': day_changes[i]}
+        for i in range(n)
+    ], ensure_ascii=False)
+
     return f"""
-    <svg viewBox="0 0 {W} {H}" role="img" aria-label="累计收益走势: 账户 vs SPY" class="trend-chart">
-      <line x1="{PAD_L}" y1="{zero_y:.1f}" x2="{W-PAD_R}" y2="{zero_y:.1f}" class="zero-line"/>
-      {y_ticks}
-      {x_ticks}
-      {marker_svg}
-      <path d="{line_path(spy_cum)}" fill="none" stroke="{CHART_COLOR_SPY}" stroke-width="2"/>
-      <path d="{line_path(acc_cum)}" fill="none" stroke="{CHART_COLOR_ACCOUNT}" stroke-width="2"/>
-      {points(spy_cum, dates, CHART_COLOR_SPY)}
-      {points(acc_cum, dates, CHART_COLOR_ACCOUNT)}
-      <text x="{x_at(n-1)+8:.1f}" y="{y_at(acc_cum[-1])+4:.1f}" class="end-label" fill="{CHART_COLOR_ACCOUNT}">{acc_cum[-1]:+.1f}%</text>
-      <text x="{x_at(n-1)+8:.1f}" y="{y_at(spy_cum[-1])+4:.1f}" class="end-label" fill="{CHART_COLOR_SPY}">{spy_cum[-1]:+.1f}%</text>
-    </svg>
+    <div class="trend-chart-wrap" id="trendChartWrap">
+      <svg viewBox="0 0 {W} {H}" role="img" aria-label="累计收益走势: 账户 vs SPY" class="trend-chart" id="trendChartSvg">
+        <line x1="{PAD_L}" y1="{zero_y:.1f}" x2="{W-PAD_R}" y2="{zero_y:.1f}" class="zero-line"/>
+        {y_ticks}
+        {x_ticks}
+        {marker_svg}
+        <path d="{line_path(spy_cum)}" fill="none" stroke="{CHART_COLOR_SPY}" stroke-width="2"/>
+        <path d="{line_path(acc_cum)}" fill="none" stroke="{CHART_COLOR_ACCOUNT}" stroke-width="2"/>
+        {points(spy_cum, CHART_COLOR_SPY)}
+        {points(acc_cum, CHART_COLOR_ACCOUNT)}
+        <text x="{x_at(n-1)+8:.1f}" y="{y_at(acc_cum[-1])+4:.1f}" class="end-label" fill="{CHART_COLOR_ACCOUNT}">{acc_cum[-1]:+.1f}%</text>
+        <text x="{x_at(n-1)+8:.1f}" y="{y_at(spy_cum[-1])+4:.1f}" class="end-label" fill="{CHART_COLOR_SPY}">{spy_cum[-1]:+.1f}%</text>
+        <line id="tcCrosshair" x1="0" y1="{PAD_T}" x2="0" y2="{PAD_T+plot_h}" class="crosshair-line" style="opacity:0"/>
+        <circle id="tcDotAcc" r="5" fill="{CHART_COLOR_ACCOUNT}" class="hover-dot" style="opacity:0"/>
+        <circle id="tcDotSpy" r="5" fill="{CHART_COLOR_SPY}" class="hover-dot" style="opacity:0"/>
+        <rect x="{PAD_L}" y="{PAD_T}" width="{plot_w}" height="{plot_h}" fill="transparent" id="tcHitRect" style="cursor:crosshair"/>
+      </svg>
+      <div class="chart-tooltip" id="tcTooltip" style="opacity:0"></div>
+    </div>
     <div class="legend">
       <span><i style="background:{CHART_COLOR_ACCOUNT}"></i>本系统累计收益</span>
       <span><i style="background:{CHART_COLOR_SPY}"></i>SPY同期累计</span>
       {f"<span><i style='background:var(--muted)'></i>{esc(marker_label or marker_date)}(分割线)前为旧策略,已停用</span>" if marker_svg else ""}
     </div>
+    <script>
+    (function() {{
+      var data = {point_data};
+      var svg = document.getElementById('trendChartSvg');
+      var wrap = document.getElementById('trendChartWrap');
+      var hit = document.getElementById('tcHitRect');
+      var crosshair = document.getElementById('tcCrosshair');
+      var dotAcc = document.getElementById('tcDotAcc');
+      var dotSpy = document.getElementById('tcDotSpy');
+      var tooltip = document.getElementById('tcTooltip');
+      if (!svg || !hit || data.length < 2) return;
+      var PAD_L = {PAD_L}, PLOT_W = {plot_w}, N = data.length;
+      function xAt(i) {{ return PAD_L + (i / (N - 1)) * PLOT_W; }}
+      function yAt(v) {{ return {PAD_T} + (1 - (v - ({v_min})) / ({v_span})) * {plot_h}; }}
+      function fmtUsd(n) {{
+        if (n === null || n === undefined) return 'n/a';
+        return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+      }}
+      function show(evt) {{
+        var pt = svg.createSVGPoint();
+        var clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+        pt.x = clientX; pt.y = 0;
+        var svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
+        var frac = (svgP.x - PAD_L) / PLOT_W;
+        var idx = Math.round(frac * (N - 1));
+        if (idx < 0) idx = 0;
+        if (idx > N - 1) idx = N - 1;
+        var d = data[idx];
+        var x = xAt(idx);
+        crosshair.setAttribute('x1', x); crosshair.setAttribute('x2', x);
+        crosshair.style.opacity = 1;
+        dotAcc.setAttribute('cx', x); dotAcc.setAttribute('cy', yAt(d.a)); dotAcc.style.opacity = 1;
+        dotSpy.setAttribute('cx', x); dotSpy.setAttribute('cy', yAt(d.s)); dotSpy.style.opacity = 1;
+        var chgSign = (d.chg === null || d.chg === undefined) ? '' : (d.chg >= 0 ? '+' : '');
+        tooltip.innerHTML =
+          '<div class="tt-date"></div>' +
+          '<div class="tt-row"><span class="tt-key" style="background:{CHART_COLOR_ACCOUNT}"></span>本系统 <b></b></div>' +
+          '<div class="tt-row tt-usd"><span class="tt-key" style="visibility:hidden"></span>总资产 <b></b> <span class="tt-chg"></span></div>' +
+          '<div class="tt-row"><span class="tt-key" style="background:{CHART_COLOR_SPY}"></span>SPY <b></b></div>';
+        tooltip.querySelector('.tt-date').textContent = d.d;
+        tooltip.querySelectorAll('.tt-row b')[0].textContent = (d.a >= 0 ? '+' : '') + d.a.toFixed(2) + '%';
+        tooltip.querySelectorAll('.tt-row b')[1].textContent = fmtUsd(d.eq);
+        tooltip.querySelector('.tt-chg').textContent = (d.eq === null || d.eq === undefined) ? '' :
+          ('(' + chgSign + fmtUsd(d.chg) + ')');
+        tooltip.querySelectorAll('.tt-row b')[2].textContent = (d.s >= 0 ? '+' : '') + d.s.toFixed(2) + '%';
+        tooltip.style.opacity = 1;
+        var wrapRect = wrap.getBoundingClientRect();
+        var svgRect = svg.getBoundingClientRect();
+        var pxX = svgRect.left - wrapRect.left + (x / {W}) * svgRect.width;
+        var left = pxX + 14;
+        if (left + 170 > wrapRect.width) left = pxX - 184;
+        tooltip.style.left = Math.max(4, left) + 'px';
+        tooltip.style.top = '8px';
+      }}
+      function hide() {{
+        crosshair.style.opacity = 0; dotAcc.style.opacity = 0; dotSpy.style.opacity = 0;
+        tooltip.style.opacity = 0;
+      }}
+      hit.addEventListener('pointermove', show);
+      hit.addEventListener('pointerenter', show);
+      hit.addEventListener('pointerleave', hide);
+      hit.addEventListener('touchmove', function(e) {{ show(e); e.preventDefault(); }}, {{passive: false}});
+    }})();
+    </script>
     """
 
 
@@ -499,11 +592,26 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
   td.sym {{ font-weight: 600; }}
   .zh {{ color: var(--muted); font-weight: 400; font-size: 12px; }}
   .trend-chart {{ width: 100%; height: auto; display: block; }}
+  .trend-chart-wrap {{ position: relative; }}
   .axis-lab {{ font-size: 11px; fill: var(--muted); }}
   .zero-line {{ stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 3; }}
   .regime-line {{ stroke: var(--pending); stroke-width: 1; stroke-dasharray: 4 3; }}
   .regime-lab {{ font-size: 11px; fill: var(--pending); }}
   .end-label {{ font-size: 12px; font-weight: 600; }}
+  .crosshair-line {{ stroke: var(--muted); stroke-width: 1; pointer-events: none; }}
+  .hover-dot {{ stroke: var(--panel); stroke-width: 2; pointer-events: none; }}
+  .chart-tooltip {{
+    position: absolute; pointer-events: none; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+    font-size: 12px; line-height: 1.6; white-space: nowrap; z-index: 5;
+    box-shadow: 0 4px 16px rgba(0,0,0,.35); transition: opacity .05s linear;
+  }}
+  .tt-date {{ color: var(--muted); margin-bottom: 4px; font-size: 11px; }}
+  .tt-row {{ display: flex; align-items: center; gap: 6px; }}
+  .tt-row b {{ margin-left: auto; padding-left: 12px; }}
+  .tt-usd b {{ color: var(--text); }}
+  .tt-chg {{ color: var(--muted); font-size: 11px; }}
+  .tt-key {{ display: inline-block; width: 8px; height: 2px; border-radius: 1px; }}
   .legend {{ display: flex; gap: 20px; margin-top: 8px; font-size: 12px; color: var(--muted); }}
   .legend i {{ display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }}
   td.reason {{ color: var(--muted); max-width: 480px; }}
