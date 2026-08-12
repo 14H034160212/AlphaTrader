@@ -103,7 +103,12 @@ def fetch_live_data():
             'day_plpc': round(float(p['unrealized_intraday_plpc']) * 100, 2),
         })
     pos_rows.sort(key=lambda r: -r['weight_pct'])
-    return round(sub_pct, 2), round(spy_pct, 2), (round(all_time_pct, 2) if all_time_pct is not None else None), pos_rows
+    # 2026-08-12, user: "加上账户金额" -- explicitly asked to add the TOTAL
+    # account equity to the public page. Different decision from the earlier
+    # "仓位多少钱可以不放" (per-position dollar size stays hidden) -- that
+    # policy is unchanged, only the aggregate total is now shown.
+    return (round(sub_pct, 2), round(spy_pct, 2),
+            (round(all_time_pct, 2) if all_time_pct is not None else None), pos_rows, round(equity, 2))
 
 
 def fetch_full_track_record():
@@ -413,7 +418,7 @@ def render_trend_chart(history, marker_date=None, marker_label=None):
     """
 
 
-def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track):
+def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track, equity):
     now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
     lead_word = "领先" if sub_pct >= spy_pct else "落后"
 
@@ -521,6 +526,7 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
   <div class="sub">自主AI日内交易系统 · 只读展示,不可操作 · 自动刷新 · 最后更新 {now}</div>
 
   <div class="cards">
+    <div class="card"><div class="label">账户总资产</div><div class="value">${equity:,.2f}</div></div>
     <div class="card"><div class="label">自 {INCEPTION_DATE} 以来</div><div class="value">{sub_pct:+.2f}%</div></div>
     <div class="card"><div class="label">同期SPY</div><div class="value">{spy_pct:+.2f}%</div></div>
     <div class="card"><div class="label">相对SPY</div><div class="value">{lead_word} {abs(sub_pct-spy_pct):.2f}pp</div></div>
@@ -618,7 +624,7 @@ def deploy():
 
 def main():
     try:
-        sub_pct, spy_pct, all_time_pct, pos_rows = fetch_live_data()
+        sub_pct, spy_pct, all_time_pct, pos_rows, equity = fetch_live_data()
     except Exception as e:
         log(f"failed to fetch live data: {e}")
         return
@@ -634,7 +640,7 @@ def main():
 
     os.makedirs(BUILD_DIR, exist_ok=True)
     out_path = os.path.join(BUILD_DIR, 'index.html')
-    open(out_path, 'w').write(render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track))
+    open(out_path, 'w').write(render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track, equity))
     log(f"rendered dashboard (sub={sub_pct:+.2f}% spy={spy_pct:+.2f}% positions={len(pos_rows)})")
     deploy()
 
