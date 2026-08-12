@@ -155,8 +155,17 @@ def main():
         "如果今天没有值得记的教训(操作都合理),输出 LESSON: 无。"
     )
     try:
+        # 2026-08-12, user asked for a reflection and it turned out the retro
+        # had been silently failing for 2 straight days (8/11, 8/12): a real
+        # thorough analysis now takes 195-280s, past this 180s timeout, so
+        # subprocess.run killed it every single day with zero lessons
+        # recorded and no user-visible error (only buried in daily_retro.log).
+        # The system meant to catch "even unexecuted trades should be
+        # reflected on" (feedback_just_execute_dont_ask.md) was itself the
+        # thing silently not executing. Raised with headroom over the
+        # observed range instead of just bumping to the observed max.
         result = subprocess.run([CLAUDE_BIN, '-p', prompt, '--output-format', 'json'],
-                                 capture_output=True, text=True, timeout=180,
+                                 capture_output=True, text=True, timeout=420,
                                  cwd='/data/qbao775/AlphaTrader')
         if result.returncode != 0:
             log(f"retro claude -p failed: {result.stderr[:200]}")
