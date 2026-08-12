@@ -136,6 +136,22 @@ def fetch_full_track_record():
     pl = r.get('profit_loss') or []
     if len(ts) < 2:
         return []
+
+    # 2026-08-12, user: "最右边还是昨天63000多的" -- portfolio_history's
+    # in-progress "today" bar lags the true live account (confirmed: it
+    # reported $63,981.70 while /v2/account read $64,200.32 at the same
+    # moment, a live gap this endpoint just doesn't close in real time).
+    # Every other number on this page (stat cards, positions table) comes
+    # from a fresh /v2/account call each render, so the chart's last point
+    # was the one stale outlier. Overwrite it with a live equity read and
+    # recompute that day's raw delta from it, before any deposit adjustment.
+    try:
+        acct = requests.get('https://api.alpaca.markets/v2/account', headers=h, timeout=15).json()
+        live_equity = float(acct['equity'])
+        equity[-1] = live_equity
+        pl[-1] = live_equity - equity[-2]
+    except Exception:
+        pass
     dates = [datetime.datetime.utcfromtimestamp(t).strftime('%Y-%m-%d') for t in ts]
 
     deposits_by_date = {}
