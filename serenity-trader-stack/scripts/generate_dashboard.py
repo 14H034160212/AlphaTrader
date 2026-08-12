@@ -632,6 +632,9 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
 <div class="wrap">
   <h1>SerenityAlphaTrader — 实时交易仪表盘</h1>
   <div class="sub">自主AI日内交易系统 · 只读展示,不可操作 · 自动刷新 · 最后更新 {now}</div>
+  <div class="sub" style="margin-top:-20px;">
+    页面日期均为美股交易日(UTC/美东时间),与你本地日历可能相差半天到一天(时区差异,不是数据滞后)
+  </div>
 
   <div class="cards">
     <div class="card"><div class="label">账户总资产</div><div class="value">${equity:,.2f}</div></div>
