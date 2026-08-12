@@ -108,7 +108,8 @@ def fetch_live_data():
     # "仓位多少钱可以不放" (per-position dollar size stays hidden) -- that
     # policy is unchanged, only the aggregate total is now shown.
     return (round(sub_pct, 2), round(spy_pct, 2),
-            (round(all_time_pct, 2) if all_time_pct is not None else None), pos_rows, round(equity, 2))
+            (round(all_time_pct, 2) if all_time_pct is not None else None), pos_rows, round(equity, 2),
+            round(net_deposit, 2))
 
 
 def fetch_full_track_record():
@@ -341,25 +342,33 @@ CHART_COLOR_ACCOUNT = "#3987e5"
 CHART_COLOR_SPY = "#d95926"
 
 
-def render_trend_chart(history, marker_date=None, marker_label=None):
+def render_trend_chart(history, marker_date=None, marker_label=None, rebase_date=None):
     """Cumulative % return line chart (account vs SPY) compounding each day's
     final_pl_pct/spy_pct chronologically -- the same figure as the 'since
     inception' stat card, but shown as a curve over time instead of one
     endpoint number. Self-contained inline SVG (no JS chart library) so it
     survives as a static Cloudflare Pages asset.
 
-    2026-08-11, user (looking at the full-history chart): '我不理解为什么从
-    走势上看我们的走势明显更弱，但是你说我们的收益率超过标普500' -- the full
-    history includes an earlier, since-discontinued trading approach (pre
-    daily_open_daytrade.py, before 2026-07-16) that lost money and drags the
-    whole-history line well below SPY, while the CURRENT system (since
-    07-16, what the 'since inception' stat card measures) has actually been
-    beating SPY. Both numbers are true for their own window -- the two
-    looked contradictory only because the chart gave no visual cue that a
-    strategy change happened partway through. marker_date/marker_label draw
-    that regime-change line so the discontinuity is self-explanatory instead
-    of something the user has to ask about."""
+    2026-08-11/12, user asked variations of the same question three times
+    ('我不理解为什么...我们的收益率超过标普500', '为什么红线在蓝线上面',
+    '为什么蓝色的本系统是-4.8%') looking at the full-history chart -- it
+    includes an earlier, since-discontinued trading approach (pre
+    daily_open_daytrade.py, before 2026-07-16) that lost money, so the
+    whole-history cumulative line sits below SPY's and often negative even
+    though the CURRENT system (since 07-16) has actually been beating SPY.
+    A regime-change marker line and a "since marker" annotation both failed
+    to stop the question from recurring -- the real fix, per the user's own
+    choice when asked directly, is to stop defaulting to the confusing
+    mixed-regime metric: rebase_date slices the series to start AT that
+    date with both lines re-zeroed there, so the PRIMARY chart just shows
+    "since the current strategy launched" directly, no mental subtraction
+    required. marker_date/marker_label (for the full, un-rebased history,
+    now secondary/collapsed) still draw the regime-change line for context."""
     rows = [h for h in history if h.get('final_pl_pct') is not None and h.get('spy_pct') is not None]
+    if rebase_date:
+        rebase_dates = [h.get('date', '') for h in rows]
+        if rebase_date in rebase_dates:
+            rows = rows[rebase_dates.index(rebase_date):]
     if len(rows) < 2:
         return ""
 
@@ -545,7 +554,7 @@ def render_trend_chart(history, marker_date=None, marker_label=None):
     """
 
 
-def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track, equity):
+def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track, equity, net_deposit):
     now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
     lead_word = "领先" if sub_pct >= spy_pct else "落后"
 
@@ -704,16 +713,37 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
   </section>
 
   <section>
-    <h2>累计收益走势(完整历史,共 {len(full_track) or len(history)} 个交易日,已扣除出入金影响)</h2>
+    <h2>累计收益走势(当前策略上线以来,自 {INCEPTION_DATE})</h2>
     <div class="muted" style="font-size:12px;margin-bottom:6px;">
-      黄色虚线 = 当前每日自动交易系统上线日({INCEPTION_DATE});此前为已停用的旧策略/实验阶段,
-      两段不能按同一条策略评价——"自inception以来"卡片只统计虚线之后。
+      只统计现在这套每日自动交易系统的表现,不含之前已停用的旧策略/实验阶段
+      (那段历史拖累了整体数字,和评价"这套策略行不行"无关,见下方可展开的完整历史)。
     </div>
-    {render_trend_chart(full_track or history, marker_date=INCEPTION_DATE, marker_label="当前策略上线") or "<p class='muted'>数据积累中,还不足以画出走势图</p>"}
+    {render_trend_chart(full_track or history, rebase_date=INCEPTION_DATE) or "<p class='muted'>数据积累中,还不足以画出走势图</p>"}
     <table>
       <tr><th>日期</th><th>当日盈亏</th><th>同期SPY</th><th>当日选股</th></tr>
       {history_rows or "<tr><td colspan='4' class='muted'>暂无历史记录</td></tr>"}
     </table>
+    <details style="margin-top:20px;">
+      <summary style="cursor:pointer;color:var(--muted);font-size:13px;">
+        展开完整历史(含2026-07-16之前已停用的旧策略/实验阶段,共 {len(full_track) or len(history)} 个交易日)
+      </summary>
+      <div style="margin-top:14px;">
+        <div class="muted" style="font-size:12px;margin-bottom:6px;">
+          黄色虚线 = 当前每日自动交易系统上线日({INCEPTION_DATE});此前为已停用的旧策略/实验阶段,
+          两段不能按同一条策略评价——上方主图和"自inception以来"卡片只统计虚线之后。
+        </div>
+        <div class="muted" style="font-size:12px;margin-bottom:6px;">
+          注意:这条百分比曲线是逐日复合收益率(时间加权,和SPY同口径公平比较用),
+          不是"我的钱实际变多变少了多少"——账户早期本金只有几百到几千美元时的百分比波动,
+          复合计算里跟现在六万多美元时的百分比波动权重是一样的,所以这条曲线可能和你直觉的
+          "总入金 vs 现在余额"对不上。真实的、按入金加权的盈亏:累计入金 ${net_deposit:,.2f},
+          现在总资产 ${equity:,.2f},即上面"全历史(扣除出入金后)"卡片的
+          {('%+.2f%%' % all_time_pct) if all_time_pct is not None else 'n/a'} —— 这才是
+          "我的钱实际变多了多少"的真实答案。
+        </div>
+        {render_trend_chart(full_track or history, marker_date=INCEPTION_DATE, marker_label="当前策略上线") or ""}
+      </div>
+    </details>
   </section>
 
   <section>
@@ -771,7 +801,7 @@ def deploy():
 
 def main():
     try:
-        sub_pct, spy_pct, all_time_pct, pos_rows, equity = fetch_live_data()
+        sub_pct, spy_pct, all_time_pct, pos_rows, equity, net_deposit = fetch_live_data()
     except Exception as e:
         log(f"failed to fetch live data: {e}")
         return
@@ -787,7 +817,7 @@ def main():
 
     os.makedirs(BUILD_DIR, exist_ok=True)
     out_path = os.path.join(BUILD_DIR, 'index.html')
-    open(out_path, 'w').write(render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track, equity))
+    open(out_path, 'w').write(render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchback, lessons, full_track, equity, net_deposit))
     log(f"rendered dashboard (sub={sub_pct:+.2f}% spy={spy_pct:+.2f}% positions={len(pos_rows)})")
     deploy()
 
