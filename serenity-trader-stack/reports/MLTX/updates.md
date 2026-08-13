@@ -206,3 +206,17 @@ REASON: Clinical data for Sonelokimab in Psoriatic Arthritis and Hidradenitis Su
 OVERALL: BULLISH
 
 
+### 2026-08-13 20:07 UTC 自动交叉验证
+- P&L: -3.7%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — no existing moat, pure binary clinical risk.
+MUNGER: Mistake if Sonelokimab fails to show superiority over existing IL-17 inhibitors.
+DUAN(段永平): No — currently a research project, not a proven business.
+LI_LU(李录): High risk of permanent loss until FDA approval and commercialization.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Sonelokimab continues to show strong Phase 2 efficacy in Psoriatic Arthritis and Hidradenitis Suppurativa, maintaining its path toward pivotal Phase 3 trials.
+OVERALL: BULLISH
+
+

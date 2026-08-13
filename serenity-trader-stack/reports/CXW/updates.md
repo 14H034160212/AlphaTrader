@@ -357,3 +357,17 @@ OVERALL: NEUTRAL
 2. **日内 DRY-RUN 仓的 CXW 权重已到 10.5%（197.6 股 @$33.86）**，远超卫星仓那条 1.5% 硬顶。两个 sleeve 规则不互通我理解，但同一只政治尾部风险股在两处合计敞口值得你知道——日内那笔是 DRY-RUN 不涉真钱，真实敞口仍在 1.3% 左右。
 
 
+### 2026-08-13 20:02 UTC 自动交叉验证
+- P&L: -6.9%
+- 4大师速览: BEARISH
+BUFFETT: SELL — moat is fragile and subject to political whim
+MUNGER: Mistake if federal government mandates an end to private incarceration
+DUAN(段永平): No — unattractive business model for a decade of ownership
+LI_LU(李录): BEARISH — high risk of permanent loss via regulatory shifts
+OVERALL: BEARISH
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.0000): 
+
+
