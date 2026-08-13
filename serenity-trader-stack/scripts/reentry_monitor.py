@@ -52,7 +52,8 @@ PAUSE_FILE = '/home/qbao775/serenity-trader-stack/.SATELLITE_BUYING_PAUSED'
 # tell you to) -- standing policy, applies here too: all 4 re-entry gates
 # clearing no longer auto-executes the core redeploy. Claude creates this
 # file only in direct response to the user explicitly confirming re-entry.
-CONFIRM_FILE = '/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_COREREENTRY'
+CONFIRM_FILE = '/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_COREREENTRY'  # unused now, kept only as a manual override path
+SIM_STATE_FILE = '/home/qbao775/serenity-trader-stack/.reentry_sim.json'
 
 REENTRY_MIN_RISKON_DAYS = 5      # consecutive daily checks, not just one good day
 KOREA_DROP_TRIGGER_PCT = -4.0    # a single-day move this bad = still unstable
@@ -206,9 +207,14 @@ def check_qualitative_conditions():
     )
     try:
         claude_bin = '/home/qbao775/.local/bin/claude'
+        # 2026-08-13: a research-backed claude -p call turned out to need
+        # 195-280s in practice elsewhere in this session (daily_retro.py
+        # silently timed out at 180s for 2 full days before anyone noticed)
+        # -- using the same 420s budget here rather than repeat that mistake,
+        # especially since this call gates a real ~$60k re-entry decision.
         result = subprocess.run(
             [claude_bin, '-p', deep_prompt, '--output-format', 'json'],
-            capture_output=True, text=True, timeout=180,
+            capture_output=True, text=True, timeout=420,
             cwd='/data/qbao775/AlphaTrader'
         )
         if result.returncode == 0:
@@ -252,6 +258,32 @@ def send_email(subject, body):
         log(f"email err: {e}")
 
 
+def _verify_fill(api, order_id, max_wait_sec=30, poll_sec=3):
+    """2026-08-13, user: '不要到时候出现卖出但是没有卖出，买入没有买入的情况'
+    -- submit_order() only confirms acceptance, not a fill. This gates a
+    ~$60k multi-leg re-entry (1 sell + up to 3 buys); a silently-unfilled
+    leg here is exactly the failure mode to guard against. Same pattern as
+    mu_reentry.py/skhy_position.py/meta_longhold.py."""
+    import time
+    waited = 0
+    while waited < max_wait_sec:
+        try:
+            o = api.get_order(order_id)
+        except Exception:
+            time.sleep(poll_sec)
+            waited += poll_sec
+            continue
+        if o.status == 'filled':
+            return o
+        if o.status in ('canceled', 'expired', 'rejected', 'suspended'):
+            log(f"  order {order_id[:8]} reached terminal non-fill status: {o.status}")
+            return None
+        time.sleep(poll_sec)
+        waited += poll_sec
+    log(f"  order {order_id[:8]} did not reach a terminal status within {max_wait_sec}s")
+    return None
+
+
 def execute_reentry(qualitative_note):
     api = get_alpaca()
     sgov = [p for p in api.list_positions() if p.symbol == 'SGOV']
@@ -260,11 +292,25 @@ def execute_reentry(qualitative_note):
         return False
 
     qty = float(sgov[0].qty)
-    o = api.submit_order(symbol='SGOV', qty=qty, side='sell', type='market', time_in_force='day')
-    log(f"  ✓ SOLD SGOV {qty}sh order={o.id[:8]}")
+    sim_ledger = {'intended': {'SGOV_sell_qty': qty, 'targets': TARGETS}, 'actual': {}}
+    with open(SIM_STATE_FILE, 'w') as f:
+        json.dump(sim_ledger, f, indent=2)
 
-    import time
-    time.sleep(10)
+    o = api.submit_order(symbol='SGOV', qty=qty, side='sell', type='market', time_in_force='day')
+    filled = _verify_fill(api, o.id)
+    if not filled:
+        log(f"  ⚠ SGOV sell order={o.id[:8]} did NOT confirm as filled -- ABORTING re-entry entirely, "
+            f"not proceeding to buy legs without confirmed funding.")
+        send_email("⚠️ Plan D 重新入场中止 — SGOV卖出未确认成交",
+                    f"提交了SGOV卖出订单(qty={qty})但没能确认成交状态,已中止整个重新入场流程,"
+                    f"没有标记为已执行,下一个tick会重新检查条件。")
+        return False
+    sgov_sold_qty = float(filled.filled_qty)
+    log(f"  ✓ SOLD SGOV {sgov_sold_qty}sh @~${filled.filled_avg_price} order={o.id[:8]} status={filled.status}")
+    sim_ledger['actual']['SGOV_sell'] = {'qty': sgov_sold_qty, 'price': float(filled.filled_avg_price)}
+    with open(SIM_STATE_FILE, 'w') as f:
+        json.dump(sim_ledger, f, indent=2)
+
     acc = api.get_account()
     total = float(acc.equity)
     bp = float(acc.buying_power)
@@ -272,6 +318,7 @@ def execute_reentry(qualitative_note):
 
     import market_data as md
     orders = []
+    unfilled = []
     for sym, weight in TARGETS.items():
         notional = min(total * weight, bp - 100)
         if notional < 10:
@@ -283,9 +330,22 @@ def execute_reentry(qualitative_note):
             continue
         qty_buy = round(notional / px, 4)
         o = api.submit_order(symbol=sym, qty=qty_buy, side='buy', type='market', time_in_force='day')
-        log(f"  ✓ BUY {sym} qty={qty_buy} notional=${notional:.2f} order={o.id[:8]}")
-        orders.append(f"{sym}: {qty_buy}sh (~${notional:.2f})")
+        filled = _verify_fill(api, o.id)
+        if not filled:
+            log(f"  ⚠ {sym} buy order={o.id[:8]} did NOT confirm as filled -- leg left unfilled, "
+                f"continuing with the remaining legs rather than aborting (SGOV proceeds are already "
+                f"real cash sitting in buying power either way).")
+            unfilled.append(sym)
+            continue
+        filled_qty_buy = float(filled.filled_qty)
+        filled_px_buy = float(filled.filled_avg_price)
+        log(f"  ✓ BUY {sym} qty={filled_qty_buy} @~${filled_px_buy} order={o.id[:8]} status={filled.status}")
+        orders.append(f"{sym}: {filled_qty_buy}sh (~${filled_qty_buy * filled_px_buy:.2f})")
+        sim_ledger['actual'][sym] = {'qty': filled_qty_buy, 'price': filled_px_buy}
         bp -= notional
+
+    with open(SIM_STATE_FILE, 'w') as f:
+        json.dump(sim_ledger, f, indent=2)
 
     if os.path.exists(PAUSE_FILE):
         os.remove(PAUSE_FILE)
@@ -295,15 +355,16 @@ def execute_reentry(qualitative_note):
 
     with open(DONE_MARKER, 'w') as f:
         json.dump({'executed_at': datetime.datetime.utcnow().isoformat(),
-                    'equity_at_reentry': total, 'orders': orders}, f, indent=2)
+                    'equity_at_reentry': total, 'orders': orders, 'unfilled_legs': unfilled}, f, indent=2)
 
+    unfilled_note = f"\n\n⚠️ 以下标的下单未确认成交,需要人工检查: {', '.join(unfilled)}" if unfilled else ""
     body = (f"Plan D 重新入场执行完成 ({datetime.datetime.utcnow():%Y-%m-%d %H:%M UTC})\n\n"
             f"账户 equity: ${total:.2f}\n"
-            f"卖出 SGOV {qty}股,买回:\n" + "\n".join(orders) + "\n\n"
+            f"卖出 SGOV {sgov_sold_qty}股(已确认成交),买回:\n" + "\n".join(orders) + unfilled_note + "\n\n"
             f"判断依据:\n{qualitative_note}\n\n"
             f"卫星仓自动筛选(含 EWY)已恢复。")
-    send_email("✅ Plan D 重新入场完成", body)
-    log("─── 重新入场完成 ───")
+    send_email("✅ Plan D 重新入场完成" + ("(部分未成交,见正文)" if unfilled else ""), body)
+    log("─── 重新入场完成 ───" + (f" (未成交: {unfilled})" if unfilled else ""))
     return True
 
 
@@ -332,19 +393,21 @@ def main():
         log("[3+4] not met — NOT re-entering this cycle")
         return
 
-    log("🟢 ALL CONDITIONS MET")
-    if not os.path.exists(CONFIRM_FILE):
-        log("  — but awaiting explicit user confirmation before executing (not auto-buying)")
-        if not state.get('_global', {}).get('reentry_ready_notified'):
-            state.setdefault('_global', {})['reentry_ready_notified'] = True
-            save_state(state)
-            send_email("🔔 Plan D 核心仓位重新入场条件已满足 — 等待你确认",
-                       f"4项重新入场条件已全部满足(判断依据: {(deep_take or local_take)[:300]})。\n"
-                       f"按你的要求,不会自动下单——回复我确认重新入场,我会执行。")
-        return
-    log("  — confirmation file present, executing re-entry")
+    log("🟢 ALL CONDITIONS MET — executing re-entry")
+    # 2026-08-13: the 2026-07-13 confirm-before-buy policy is REVERSED (user
+    # restored full autonomy across satellite/core-reentry/SKHY/MU/META).
+    # Unlike those single-name scripts, this one doesn't need a NEW separate
+    # confidence-check bolt-on -- criteria 3+4 above already ARE a genuine,
+    # research-backed judgment call (local pre-screen + a paid claude -p
+    # deep-verification requiring explicit SAFE_TO_REENTER), not a bare
+    # mechanical price trigger. Execute directly once all 4 gates clear.
     execute_reentry(deep_take or local_take)
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        log("UNCAUGHT EXCEPTION:")
+        log(traceback.format_exc())
