@@ -100,6 +100,34 @@ DRY_RUN = os.environ.get('DOD_DRY_RUN') == '1'
 MIRROR_TO_LIVE = os.environ.get('DOD_MIRROR_LIVE') == '1'
 
 ENTRY_CONFIRM_TICKS = 1        # Granville's Rules -- buy on the first confirmed bullish tick
+# 2026-08-11/12 retro (backfilled 08-13 after the retro cron itself was found
+# silently timing out both days): the old "N consecutive upticks" gate has
+# two real, mechanism-confirmed failure modes, not just a bad-day guess --
+# (1) on a stock that already gapped hard at open (MLTX 08-11: opened
+#     ~$17.2-17.3, the "confirmed uptrend" fired right at that local peak,
+#     then it gave back to ~$16.85-16.99 for the rest of the session -- the
+#     rule bought the top of the pop, the exact opposite of "抄底不追涨"),
+# (2) on a stock that hasn't moved much yet, comparing every tick only to
+#     the SINGLE immediately-preceding tick is fragile to plain quote noise
+#     at 1-minute cron sampling -- KTB/REPL/ASM (08-12) sat at rise_streak=0
+#     ALL DAY despite ENTRY_CONFIRM_TICKS already being the loosest possible
+#     value (1), because bid-ask bounce reset the streak before two
+#     consecutive ticks ever landed the same direction; 17pp of researched
+#     capital sat unused in SPY as a result.
+# Replaces the single-prior-tick streak with two range-aware rules that
+# target the SAME underlying intent (don't buy pure noise) without either
+# failure mode: a stock that hasn't moved much just needs to be net
+# non-negative vs. where it was first seen (noise-robust, fires fast); a
+# stock that's already run needs to have given back into the lower half of
+# its own intraday range before entry is allowed (buys the dip in the
+# move, not the peak of it).
+EXTENDED_MOVE_THRESHOLD = 0.05  # day's (high-low)/low needed to count as "already extended"
+PULLBACK_RANGE_POS = 0.5        # once extended, only enter in the bottom half of today's range
+SINGLE_TICK_JUMP_LIMIT = 0.03   # a single-tick move this big is itself treated as the extension
+                                # event (not yet "recognized" as extended for one more tick) --
+                                # separate from EXTENDED_MOVE_THRESHOLD since a single ~1min
+                                # sample landing just under that day-range threshold could
+                                # otherwise still slip through at the jump's own peak
 # 2026-07-22: user asked to clear out every numeric rule constant and let the AI decide
 # everything ("请你把系统所有这些规则的限定都清除，以后全部让ai自己决定，我相信ai的判断",
 # then "实盘也删除" / "全部去掉" / "让ai自己判断" for the exit side too). Claude pushed back
@@ -819,25 +847,59 @@ def enter(api, state):
             continue
 
         last_px = sym_state.get('last_px')
-        rise_streak = sym_state.get('rise_streak', 0)
-        if last_px is None:
+        first_px = sym_state.get('first_px')
+        if first_px is None:
+            sym_state['first_px'] = px
             sym_state['last_px'] = px
-            sym_state['rise_streak'] = 0
+            sym_state['day_high'] = px
+            sym_state['day_low'] = px
             save_state(state)
-            log(f"  {sym}: first price observed ${px:.2f} — watching for a confirmed uptrend before buying")
+            log(f"  {sym}: first price observed ${px:.2f} — watching before buying")
             continue
 
-        if px > last_px:
-            rise_streak += 1
-        else:
-            rise_streak = 0
+        # "extended" uses the range INCLUDING this tick (a lagged/causal
+        # version was tried first and tested worse: simulated against real
+        # 08-12 KTB data, a stock that climbs in several sub-3% steps stayed
+        # "not yet extended" for an extra tick each time because the lagged
+        # range read just under threshold, so it kept re-confirming at each
+        # new local high on the way up, worse than buying at either single
+        # spike). The single-tick jump guard below (in the not-extended
+        # branch) is what actually stops a lone big jump from confirming at
+        # its own peak -- verified this combination against MLTX/KTB/REPL/
+        # ASM/EMBJ/CXW's real 1-minute price paths before shipping.
+        day_high = max(sym_state.get('day_high', px), px)
+        day_low = min(sym_state.get('day_low', px), px)
+        day_range = day_high - day_low
+        extended = (day_range / day_low) >= EXTENDED_MOVE_THRESHOLD if day_low else False
+        sym_state['day_high'] = day_high
+        sym_state['day_low'] = day_low
         sym_state['last_px'] = px
-        sym_state['rise_streak'] = rise_streak
 
-        if rise_streak < ENTRY_CONFIRM_TICKS:
-            log(f"  {sym}: px=${px:.2f} rise_streak={rise_streak}/{ENTRY_CONFIRM_TICKS} — not confirmed yet, not buying")
-            save_state(state)
-            continue
+        pos_in_range = ((px - day_low) / day_range) if day_range > 0 else 0.0
+
+        if extended:
+            confirmed = pos_in_range <= PULLBACK_RANGE_POS and px >= last_px
+            confirm_desc = f"回踩至今日区间(${day_low:.2f}-${day_high:.2f})下半区后确认"
+            if not confirmed:
+                log(f"  {sym}: px=${px:.2f} 今日区间${day_low:.2f}-${day_high:.2f}(已算拉升),"
+                    f"当前位于区间{pos_in_range*100:.0f}%处 — 还没回踩到下半区,不追高买入")
+                save_state(state)
+                continue
+        else:
+            # A single tick can itself BE the extension event (a real jump
+            # landing between two ~1-minute samples) -- require this tick's
+            # own move off the prior tick isn't already a big jump, or the
+            # light gate would buy right at that jump's peak before "extended"
+            # has a chance to register on the NEXT tick (this exact case:
+            # 08-12 KTB jumped +4.9% in one sample and would have confirmed
+            # immediately at the top without this check).
+            tick_jump = (px - last_px) / last_px if last_px else 0.0
+            confirmed = px >= first_px and tick_jump < SINGLE_TICK_JUMP_LIMIT
+            confirm_desc = f"首次观察价${first_px:.2f}后未破位"
+            if not confirmed:
+                log(f"  {sym}: px=${px:.2f} 跌破首次观察价${first_px:.2f}或本次跳动过大(+{tick_jump*100:.1f}%) — 还没确认,不买入")
+                save_state(state)
+                continue
 
         desired_notional = equity * w
         # 2026-08-10: user pointed out "SPY里的钱可以动的" -- SPY is the
@@ -919,7 +981,7 @@ def enter(api, state):
             else:
                 sp[sym] = {'qty': qty, 'entry_price': px}
             state['sim_cash'] = bp - notional
-            log(f"  [DRY-RUN] ✓ BOUGHT {sym} qty={qty} @~${px:.2f} (confirmed uptrend, {rise_streak} consecutive rises)")
+            log(f"  [DRY-RUN] ✓ BOUGHT {sym} qty={qty} @~${px:.2f} ({confirm_desc})")
             if MIRROR_TO_LIVE:
                 try:
                     live_qty = mirror_live_buy(api, sym, w, px)
@@ -940,12 +1002,12 @@ def enter(api, state):
             except Exception as e:
                 log(f"  {sym}: buy order failed ({e}) — will retry next tick")
                 continue
-            log(f"  ✓ BOUGHT {sym} qty={qty} @~${px:.2f} order={o.id[:8]} (confirmed uptrend, {rise_streak} consecutive rises)")
+            log(f"  ✓ BOUGHT {sym} qty={qty} @~${px:.2f} order={o.id[:8]} ({confirm_desc})")
 
         state['symbols'][sym] = {'entered': True}
         bp -= notional
         save_state(state)
-        record_action(state, f"买入 {sym} {qty}股 @~${px:.2f} (确认{rise_streak}次连续上涨后进场) -- {state['reasons'].get(sym, '')}")
+        record_action(state, f"买入 {sym} {qty}股 @~${px:.2f} ({confirm_desc}) -- {state['reasons'].get(sym, '')}")
 
 
 def mirror_live_buy(api, sym, w, px):
