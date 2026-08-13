@@ -569,7 +569,7 @@ def market_regime_ok(api):
         return True, None
 
 
-def pick_todays_stocks(api, exclude=None, extra_note=""):
+def pick_todays_stocks(api, state=None, exclude=None, extra_note=""):
     log("  scanning for today's day-trade candidates...")
     exclude = exclude or set()
     extra_context = history_context_str() + extra_note
@@ -816,6 +816,18 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         if picks[i][1] < picks[i + 1][1]:
             log(f"  [PRIORITY-CHECK] ⚠ {picks[i][0]}(排名{i+1}, {picks[i][1]*100:.1f}%) 权重低于"
                 f"{picks[i+1][0]}(排名{i+2}, {picks[i+1][1]*100:.1f}%) -- 没有按声明的优先级顺序分配权重")
+
+    # 2026-08-13: the prompt has asked the model for a REJECTED: line ("方便
+    # 事后复盘对比") since it was written, but nothing ever parsed or saved
+    # it -- it was logged in the raw answer and then discarded. Needed now
+    # for daily_retro's new "did we catch the real market winners" check:
+    # without this, the retro can't tell "we scanned this name and passed"
+    # from "we never even saw it", which is the difference between a
+    # judgment error and a search-coverage gap.
+    rejected_line = next((l for l in answer.splitlines() if l.strip().upper().startswith('REJECTED:')), '')
+    rejected_text = rejected_line.split(':', 1)[1].strip() if ':' in rejected_line else ''
+    if state is not None:
+        state['rejected_today'] = rejected_text
 
     # Mechanical "not already extended" backstop -- feedback_buy_dips_sell_strength.md
     # ("卖高不是追涨"): even with the prompt's own instruction, double-check each
@@ -1808,7 +1820,7 @@ def manage(api, state):
         if room > 0.01:  # only bother if there's meaningful cap room left
             log(f"  {why} after {elapsed_min:.0f}min -- running a second-chance scan (room={room*100:.1f}%)")
             exclude = already_held_elsewhere(api) | set(state['weights'].keys())
-            picks, cost = pick_todays_stocks(api, exclude=exclude)
+            picks, cost = pick_todays_stocks(api, state=state, exclude=exclude)
             if picks:
                 total_new_w = sum(w for _, w, _ in picks)
                 scale = min(1.0, room / total_new_w) if total_new_w else 0
@@ -1964,7 +1976,7 @@ def main():
         if not ok:
             log(f"  SPY pre-market/today {chg_pct:+.2f}% -- weak, letting the AI itself decide")
         exclude = already_held_elsewhere(api)
-        picks, cost = pick_todays_stocks(api, exclude=exclude, extra_note=regime_note)
+        picks, cost = pick_todays_stocks(api, state=state, exclude=exclude, extra_note=regime_note)
         if not picks:
             if ok:
                 # 2026-08-07: SPY-as-baseline default -- a NONE verdict on a

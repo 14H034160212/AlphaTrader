@@ -81,6 +81,31 @@ def _never_entered_picks(state):
     return results
 
 
+def _market_top_gainers_today(n=15):
+    """2026-08-13, user: '每天反思的内容要包括你昨天判断买入的股票和今天
+    实际增长的股票，然后分析原因' -- clarified (asked directly) to mean
+    comparing against the REAL market-wide top-gainers list, not just
+    checking how our own picks performed: did the picker's search/judgment
+    actually catch the day's real winners, or miss them -- and if missed,
+    was that a search-coverage gap (never saw the name at all) or a
+    judgment call (saw it, rejected it, and that call is worth reviewing)?"""
+    try:
+        import yfinance as yf
+        gainers = yf.screen('day_gainers', count=n)
+        rows = gainers.get('quotes', [])
+        lines = []
+        for row in rows[:n]:
+            sym = row.get('symbol')
+            chg = row.get('regularMarketChangePercent')
+            name = row.get('shortName', '')
+            if sym and chg is not None:
+                lines.append(f"{sym}({name}): {chg:+.1f}%")
+        return lines
+    except Exception as e:
+        log(f"market top gainers fetch failed: {e}")
+        return []
+
+
 def spy_day_change():
     try:
         k, s = _creds()
@@ -126,6 +151,19 @@ def main():
         never_entered_note = ("\n今天选中但从未实际建仓的标的(不在操作记录里,容易被忽略,"
                                "必须一并复盘为什么没买成、如果买了会怎样):\n" + "\n".join(never_entered) + "\n")
 
+    # 2026-08-13, user: "每天反思的内容要包括你昨天判断买入的股票和今天实际
+    # 增长的股票，然后分析原因" -- clarified (asked directly which scope) to
+    # mean the REAL market-wide top gainers, not just our own picks'
+    # performance: did the picker actually catch the day's real winners, or
+    # miss them? rejected_today (parsed from the picker's own REJECTED: line,
+    # which existed in the prompt since day one but was never actually
+    # captured until today) lets the analysis tell "saw it, judged it wrong"
+    # apart from "search never surfaced it at all" -- those are different
+    # failure modes needing different fixes.
+    top_gainers = _market_top_gainers_today()
+    top_gainers_note = ("\n今日全市场涨幅榜(真实数据,不是我们选的):\n" + "\n".join(top_gainers) + "\n") if top_gainers else ""
+    rejected_note = f"\n今天筛选时明确看到但主动放弃的标的: {state['rejected_today']}\n" if state.get('rejected_today') else ""
+
     prompt = (
         f"你是一个自动交易系统的复盘教练。下面是{today}(美股交易日)的完整操作记录。"
         "请做诚实的复盘,好的和坏的都必须吸取经验:\n"
@@ -140,13 +178,22 @@ def main():
         "4. 检查资金分布:最强的仓位是不是反而权重最小?是否应该向已验证的赢家集中?\n"
         "5. 如果今天有选中但没买成的标的(见下方列表),点名分析:没买成是执行层的问题"
         "(资金不够/没等到确认信号)还是判断层的问题?如果当时买了现在是赚是亏?"
-        "这个执行缺口本身要不要写成教训(比如'资金调度速度跟不上二次扫描的发现速度')?\n\n"
+        "这个执行缺口本身要不要写成教训(比如'资金调度速度跟不上二次扫描的发现速度')?\n"
+        "6. 对照下方'今日全市场涨幅榜'真实数据:今天真正涨得最多的是哪些标的?"
+        "我们选中/买入的标的里有没有命中这些真正的赢家?如果没命中,点名分析原因——"
+        "是搜索范围/查询关键词根本没覆盖到这个方向(比如某个行业/主题完全没在"
+        "搜索query里),还是搜到了但因为'涨幅榜但无具体消息'之类的理由主动放弃了"
+        "(见下方'明确看到但主动放弃的标的'列表,如果放弃的原因事后看是错的,"
+        "这本身就是一条教训)?两种原因导向的教训完全不同,必须分清楚是哪一种。\n\n"
         f"当日账户盈亏: {final_pl if final_pl is not None else '未平仓(浮动)'}%\n"
         f"当日大盘SPY: {spy if spy is not None else '未知'}%\n"
         f"{positions_note}\n"
         f"{never_entered_note}"
+        f"{top_gainers_note}"
+        f"{rejected_note}"
         f"操作记录:\n" + "\n".join(actions[-40:]) + "\n\n"
-        "输出要求: 先写复盘分析(覆盖上面5点,如果没有未建仓标的可以跳过第5点);"
+        "输出要求: 先写复盘分析(覆盖上面6点,如果没有未建仓标的可以跳过第5点,"
+        "如果拿不到今日涨幅榜数据可以跳过第6点);"
         "然后输出1-4条教训,每条独立一行、以 LESSON: 开头,"
         "必须具体可执行、直接影响明天的选股或持仓判断——赢家规律和输家教训都算"
         "(例如 'LESSON: 一次性退税驱动的利润超预期不构成买入理由' 或 "
