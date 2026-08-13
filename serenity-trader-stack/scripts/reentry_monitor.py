@@ -291,6 +291,11 @@ def execute_reentry(qualitative_note):
         log("  no SGOV position found — nothing to re-enter from, aborting")
         return False
 
+    # True pre-sale baseline, captured before any order is placed -- needed
+    # below to detect once buying_power has actually caught up with the
+    # confirmed sale, not just whether the order itself reached 'filled'.
+    bp_before_sell = float(api.get_account().buying_power)
+
     qty = float(sgov[0].qty)
     sim_ledger = {'intended': {'SGOV_sell_qty': qty, 'targets': TARGETS}, 'actual': {}}
     with open(SIM_STATE_FILE, 'w') as f:
@@ -306,15 +311,32 @@ def execute_reentry(qualitative_note):
                     f"没有标记为已执行,下一个tick会重新检查条件。")
         return False
     sgov_sold_qty = float(filled.filled_qty)
+    sgov_proceeds_est = sgov_sold_qty * float(filled.filled_avg_price)
     log(f"  ✓ SOLD SGOV {sgov_sold_qty}sh @~${filled.filled_avg_price} order={o.id[:8]} status={filled.status}")
     sim_ledger['actual']['SGOV_sell'] = {'qty': sgov_sold_qty, 'price': float(filled.filled_avg_price)}
     with open(SIM_STATE_FILE, 'w') as f:
         json.dump(sim_ledger, f, indent=2)
 
+    # 2026-08-13: confirming the ORDER is 'filled' doesn't mean the ACCOUNT's
+    # buying_power has caught up yet -- this exact settlement lag already
+    # broke 5 mirror buys once elsewhere in this codebase (daily_open_
+    # daytrade.py's comment: "a fixed 6s sleep raced fill settlement"). Poll
+    # against the TRUE pre-sale baseline (captured before the order was even
+    # submitted) until buying_power actually reflects the proceeds, or give
+    # up after a bounded wait and proceed with whatever is really available
+    # (never invent notional beyond what buying_power actually shows).
+    import time as _time
     acc = api.get_account()
+    for _ in range(15):
+        acc = api.get_account()
+        bp = float(acc.buying_power)
+        if bp >= bp_before_sell + sgov_proceeds_est * 0.9:
+            break
+        _time.sleep(3)
     total = float(acc.equity)
     bp = float(acc.buying_power)
-    log(f"  post-sell equity=${total:.2f} bp=${bp:.2f}")
+    log(f"  post-sell equity=${total:.2f} bp=${bp:.2f} (SGOV proceeds ~${sgov_proceeds_est:.2f}, "
+        f"pre-sale baseline was ${bp_before_sell:.2f})")
 
     import market_data as md
     orders = []
