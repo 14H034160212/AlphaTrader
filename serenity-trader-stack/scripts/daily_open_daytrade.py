@@ -818,6 +818,21 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         checked.append((sym, w, reason))
     picks = checked
 
+    # 2026-08-13: user flagged same-day proof that this gap was real -- Cerebras
+    # and Coherent BOTH reported beat-and-raise earnings on 08-12 and still got
+    # sold off hard (Cerebras -14-16% after-hours on a wider-than-expected
+    # loss despite record revenue + raised guidance; Coherent -5% despite a
+    # beat-and-raise too) -- yet _upcoming_earnings_note() already existed and
+    # was only ever wired into ai_judge_positions() for ALREADY-HELD positions
+    # (added 2026-08-08 after RKLB's earnings caught a 30%-weighted position
+    # off guard), never into the fresh-pick screen itself. A brand new pick
+    # bought right before its own earnings print carries exactly the risk
+    # that already visibly landed on two names today. Reused here rather than
+    # writing a new mechanism -- general and evergreen (any symbol, any
+    # sector), not a semiconductor-specific rule that would go stale once
+    # this earnings season passes.
+    picks = [(sym, w, reason + _upcoming_earnings_note(sym, lookahead_days=5)) for sym, w, reason in picks]
+
     total_w = sum(p[1] for p in picks)
     if total_w > MAX_TOTAL_DEPLOY_PCT and total_w > 0:
         scale = MAX_TOTAL_DEPLOY_PCT / total_w
