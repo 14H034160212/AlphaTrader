@@ -23,9 +23,11 @@ from Alpaca, not hardcoded):
      checks stay silent, matching news_watch.py's "alert on fresh material
      items only" pattern.
 
-THIS SCRIPT NEVER PLACES ORDERS. Read-only market data + position queries
-only. No alpaca_trade_api submit_order call exists anywhere in this file.
-Decision-support only, per the standing mandate (~/serenity-trader-stack/PLAN_D.md).
+Position monitoring (existing satellite holdings, above) never places
+orders -- read-only, escalation/advisory only. screen_new_candidates()
+(added later, see execute_trial_buy()) DOES place a real trial-bucket GTC
+limit order once both frameworks agree BULLISH and a paid deep-dive
+explicitly says BUY -- this comment used to claim otherwise and was stale.
 """
 import sys, os, json, subprocess, datetime, re
 sys.path.insert(0, '/data/qbao775/AlphaTrader/backend')
@@ -366,6 +368,56 @@ def escalate_new_candidate(symbol, context_str, master_take, serenity_take):
     return "", 0
 
 
+def _check_pending_orders(state):
+    """2026-08-13, user: '不要到时候出现...买入没有买入的情况' -- unlike the
+    other 4 long-term scripts' MARKET orders (fill within seconds or don't),
+    execute_trial_buy() places a GTC LIMIT order with extended_hours=True,
+    which can legitimately sit open for hours/days waiting to fill. The
+    previous code recorded 'first_bought' at SUBMIT time, treating mere
+    order acceptance as a done deal -- if the limit never actually filled
+    (price never came back down to it, or it got canceled), state would
+    permanently believe a position exists that was never actually bought.
+    Runs every cycle (this script is cron'd every 4h): checks any symbol
+    with a still-pending order_id, confirms real status via the account's
+    live positions and the order's own status, and only then marks it as a
+    genuinely confirmed fill."""
+    from database import SessionLocal, get_setting
+    import alpaca_trade_api as tradeapi
+    db = SessionLocal()
+    k = get_setting(db, 'alpaca_api_key', 1)
+    s = get_setting(db, 'alpaca_secret_key', 1)
+    u = get_setting(db, 'alpaca_base_url', 1, 'https://api.alpaca.markets')
+    db.close()
+    api = tradeapi.REST(k, s, u)
+
+    for sym, sym_state in state.items():
+        if not isinstance(sym_state, dict):
+            continue
+        order_id = sym_state.get('pending_order_id')
+        if not order_id:
+            continue
+        try:
+            o = api.get_order(order_id)
+        except Exception as e:
+            log(f"  [{sym}] couldn't check pending order {order_id[:8]}: {e}")
+            continue
+        if o.status == 'filled':
+            log(f"  [{sym}] ✓ pending GTC limit order {order_id[:8]} CONFIRMED FILLED "
+                f"qty={o.filled_qty} @~${o.filled_avg_price}")
+            sym_state['first_bought'] = datetime.datetime.utcnow().isoformat()
+            sym_state['confirmed_fill_qty'] = o.filled_qty
+            sym_state['confirmed_fill_price'] = o.filled_avg_price
+            sym_state.pop('pending_order_id', None)
+        elif o.status in ('canceled', 'expired', 'rejected', 'suspended'):
+            log(f"  [{sym}] ⚠ pending GTC limit order {order_id[:8]} reached {o.status} without "
+                f"filling -- clearing pending state so the next BULLISH+escalation cycle can retry")
+            sym_state.pop('pending_order_id', None)
+            sym_state.pop('first_bought', None)
+        else:
+            log(f"  [{sym}] pending GTC limit order {order_id[:8]} still open (status={o.status}), "
+                f"waiting for it to fill")
+
+
 def execute_trial_buy(symbol, price):
     """Places a GTC limit buy sized to the trial bucket (~3% of equity),
     capped by genuinely-available cash (no-margin account). Returns
@@ -415,6 +467,16 @@ def screen_new_candidates(state, held_symbols):
     for sym in CANDIDATE_WATCHLIST:
         if sym in held_symbols:
             continue
+        # 2026-08-13: a GTC limit order can legitimately stay open for hours/
+        # days without filling, so an in-flight order's symbol is NOT yet in
+        # held_symbols (that only reflects actual filled positions). Without
+        # this guard, every 4h cycle would re-run the full screen and could
+        # stack a SECOND buy order on top of the still-open first one.
+        # _check_pending_orders() (called at the top of main()) is what
+        # eventually clears pending_order_id once it fills or dies.
+        if state.get(sym, {}).get('pending_order_id'):
+            log(f"  {sym}: already has an open GTC order pending fill — skipping re-screen this cycle")
+            continue
         log(f"── candidate screen: {sym} ──")
         ctx = get_candidate_context(sym)
         if not ctx or not ctx.get('price'):
@@ -445,26 +507,22 @@ def screen_new_candidates(state, held_symbols):
                 if abs(ctx.get('change_pct') or 0) > CHASE_GUARD_INTRADAY_PCT:
                     entry += f"- **执行**: 跳过——今日盘中已经 {ctx['change_pct']:+.1f}%,追高违反纪律,等回调\n"
                     log(f"  ⚠️ {sym} 今日 {ctx['change_pct']:+.1f}%,不追高,跳过执行")
-                elif not os.path.exists(f'/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_{sym}'):
-                    # 2026-07-13: user said "我什么时候让你买你再买" (only buy
-                    # when I explicitly tell you to) -- standing policy, applies
-                    # to every buy path including this trial-buy candidate
-                    # screen, not just SKHY/MU/META. Flag + email, don't execute.
-                    entry += f"- **执行**: 达到买入条件,但等待你明确确认——不会自动下单\n"
-                    log(f"  🔔 {sym} 达到买入条件,等待用户确认,不自动下单")
-                    if not state.setdefault(sym, {}).get('awaiting_confirmation_notified'):
-                        state[sym]['awaiting_confirmation_notified'] = True
-                        send_email(f"🔔 {sym} 达到买入条件 — 等待你确认",
-                                   f"{sym} 试探仓筛选达到买入条件,现价 ~${ctx['price']:.2f}。\n"
-                                   f"付费复核意见: {claude_answer[:300]}\n\n"
-                                   f"按你的要求,不会自动下单——回复我确认买入,我会执行。")
                 else:
+                    # 2026-08-13: the 2026-07-13 confirm-before-buy policy is
+                    # REVERSED (user restored full autonomy). This path
+                    # already has a genuine confidence gate -- both the
+                    # 4-master AND Serenity local screens must agree BULLISH,
+                    # THEN a paid claude -p deep-dive must explicitly say BUY
+                    # (not PASS) -- so no separate bolt-on confidence check
+                    # needed, same reasoning as reentry_monitor.py. Execute
+                    # directly; the order is GTC+limit so record it as
+                    # PENDING (not a confirmed buy) until _check_pending_orders()
+                    # verifies an actual fill on a later cycle.
                     result = execute_trial_buy(sym, ctx['price'])
                     if result:
                         qty, limit_price, order_id = result
-                        entry += f"- **执行**: 试探仓买入 {qty}股 @ ${limit_price} (order {order_id[:8]})\n"
-                        state.setdefault(sym, {})['first_bought'] = datetime.datetime.utcnow().isoformat()
-                        os.remove(f'/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_{sym}')
+                        entry += f"- **执行**: 试探仓下单 {qty}股 @ ${limit_price} (order {order_id[:8]}, GTC限价单,待确认成交)\n"
+                        state.setdefault(sym, {})['pending_order_id'] = order_id
                     else:
                         entry += f"- **执行**: 可用资金不足,未下单,仅记录信号\n"
             else:
@@ -585,6 +643,8 @@ def append_update(symbol, entry):
 def main():
     safety_check()
     state = load_state()
+    _check_pending_orders(state)
+    save_state(state)
     positions = get_satellite_positions()
     escalations = []
 
@@ -706,4 +766,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        log("UNCAUGHT EXCEPTION:")
+        log(traceback.format_exc())
