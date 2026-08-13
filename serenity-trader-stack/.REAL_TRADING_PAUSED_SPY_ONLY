@@ -1,0 +1,12 @@
+Created 2026-08-13. User: "我建议实盘就都买标普500，模拟盘可以继续验证你的算法"
+then, when asked to confirm scope: "也暂停，实盘彻底只留SPY".
+
+While this file exists, mu_reentry.py / skhy_position.py / meta_longhold.py /
+reentry_monitor.py / crossvalidate_satellite.py all keep running their
+watching/confidence-check/screening logic and logging what they WOULD do,
+but skip the actual real-money order submission. daily_open_daytrade.py's
+paper ledger (DRY_RUN, MIRROR_LIVE removed from its cron) continues
+independently validating the picking algorithm without touching the real
+account at all.
+
+Delete this file to resume real trading on these 5 scripts.

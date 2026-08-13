@@ -43,6 +43,11 @@ if os.path.exists(_ENV_FILE):
 
 REPORTS_DIR = '/home/qbao775/serenity-trader-stack/reports'
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.crossvalidate_state.json'
+# 2026-08-13, later same day: real account de-risked to SPY-only (see the
+# identical comment in mu_reentry.py) -- the 4-master/Serenity screening
+# and paid escalation still run and log a verdict; only the actual trial
+# buy is skipped while this file exists.
+REAL_TRADING_PAUSED_FILE = '/home/qbao775/serenity-trader-stack/.REAL_TRADING_PAUSED_SPY_ONLY'
 OLLAMA_HOST = 'http://localhost:11435'
 OLLAMA_MODEL = 'gemma4:31b'
 PRICE_MOVE_TRIGGER_PCT = 15.0   # escalate if unrealized P&L moves beyond this
@@ -507,6 +512,9 @@ def screen_new_candidates(state, held_symbols):
                 if abs(ctx.get('change_pct') or 0) > CHASE_GUARD_INTRADAY_PCT:
                     entry += f"- **执行**: 跳过——今日盘中已经 {ctx['change_pct']:+.1f}%,追高违反纪律,等回调\n"
                     log(f"  ⚠️ {sym} 今日 {ctx['change_pct']:+.1f}%,不追高,跳过执行")
+                elif os.path.exists(REAL_TRADING_PAUSED_FILE):
+                    entry += f"- **执行**: 达到买入条件，但实盘交易已暂停(实盘目前只留SPY)，仅记录信号，不下单\n"
+                    log(f"  ⏸ {sym} 达到买入条件，但实盘交易暂停中，不下单")
                 else:
                     # 2026-08-13: the 2026-07-13 confirm-before-buy policy is
                     # REVERSED (user restored full autonomy). This path

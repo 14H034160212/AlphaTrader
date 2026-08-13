@@ -49,6 +49,11 @@ if os.path.exists(_ENV_FILE):
 
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.meta_longhold_entered'
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.meta_longhold_state.json'
+# 2026-08-13, later same day: real account de-risked to SPY-only (see the
+# identical comment in mu_reentry.py) -- watching/entry logic still runs
+# and logs what it would do; only the real order is skipped while this
+# file exists.
+REAL_TRADING_PAUSED_FILE = '/home/qbao775/serenity-trader-stack/.REAL_TRADING_PAUSED_SPY_ONLY'
 # 2026-08-13: the 2026-07-13 confirm-before-buy policy is REVERSED (user
 # restored full autonomy across SKHY/MU/META/satellite/core-reentry). Same
 # already-tested pattern as mu_reentry.py/skhy_position.py: confidence check
@@ -263,6 +268,10 @@ def enter_position(api, state):
         json.dump({'intended_qty': qty, 'intended_price': px,
                     'intended_at': datetime.datetime.utcnow().isoformat()}, f)
 
+    if os.path.exists(REAL_TRADING_PAUSED_FILE):
+        log(f"  ⏸ real trading paused (real account is SPY-only right now) — would have bought "
+            f"META qty={qty} @~${px:.2f} here, logging only, not placing a real order")
+        return
     o = api.submit_order(symbol='META', qty=qty, side='buy', type='market', time_in_force='day')
     filled = _verify_fill(api, o.id)
     if not filled:

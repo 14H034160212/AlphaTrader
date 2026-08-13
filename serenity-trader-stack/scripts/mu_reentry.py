@@ -39,6 +39,14 @@ if os.path.exists(_ENV_FILE):
 
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.mu_reentry_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.mu_reentry_entered'
+# 2026-08-13, later same day: user asked to de-risk the REAL account down
+# to SPY-only (daily_open_daytrade.py underperformed SPY 3 days running),
+# then confirmed this should ALSO cover the long-term autonomous scripts
+# just re-enabled hours earlier -- "也暂停，实盘彻底只留SPY" (pause these
+# too, real account should be purely SPY). All the watching/confidence-
+# check logic below still runs and logs what it WOULD do; only the actual
+# order submission is skipped while this file exists. Delete it to resume.
+REAL_TRADING_PAUSED_FILE = '/home/qbao775/serenity-trader-stack/.REAL_TRADING_PAUSED_SPY_ONLY'
 # 2026-08-13: the 2026-07-13 policy ("我什么时候让你买你再买" -- only buy
 # when explicitly told) is REVERSED -- user restored full autonomous buying
 # across SKHY/MU/META/satellite-screen/core-reentry, the same scope 07-13
@@ -296,6 +304,10 @@ def enter_position(api, state):
         json.dump({'intended_qty': qty, 'intended_price': px,
                     'intended_at': datetime.datetime.utcnow().isoformat()}, f)
 
+    if os.path.exists(REAL_TRADING_PAUSED_FILE):
+        log(f"  ⏸ real trading paused (real account is SPY-only right now) — would have bought "
+            f"MU qty={qty} @~${px:.2f} here, logging only, not placing a real order")
+        return
     o = api.submit_order(symbol='MU', qty=qty, side='buy', type='market', time_in_force='day')
     filled = _verify_fill(api, o.id)
     if not filled:

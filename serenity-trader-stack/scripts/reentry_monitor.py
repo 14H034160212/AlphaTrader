@@ -48,6 +48,14 @@ STATE_FILE = '/home/qbao775/serenity-trader-stack/.reentry_state.json'
 LOG_PATH = '/home/qbao775/serenity-trader-stack/reentry_monitor.log'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.reentry_executed'
 PAUSE_FILE = '/home/qbao775/serenity-trader-stack/.SATELLITE_BUYING_PAUSED'
+# 2026-08-13, later same day: real account de-risked to SPY-only (see the
+# identical comment in mu_reentry.py) -- this script's re-entry TARGETS
+# are SPY 70% + QQQ 15% + BRK.B 12%, not pure SPY, so it's paused too
+# (distinct from the older PAUSE_FILE above, which is satellite-specific
+# and gets auto-removed by a successful re-entry -- that side-effect would
+# be wrong to trigger right now). All 4 gates + qualitative check still
+# run and log the verdict; only the actual execute_reentry() is skipped.
+REAL_TRADING_PAUSED_FILE = '/home/qbao775/serenity-trader-stack/.REAL_TRADING_PAUSED_SPY_ONLY'
 # 2026-07-13: user said "我什么时候让你买你再买" (only buy when I explicitly
 # tell you to) -- standing policy, applies here too: all 4 re-entry gates
 # clearing no longer auto-executes the core redeploy. Claude creates this
@@ -415,7 +423,12 @@ def main():
         log("[3+4] not met — NOT re-entering this cycle")
         return
 
-    log("🟢 ALL CONDITIONS MET — executing re-entry")
+    log("🟢 ALL CONDITIONS MET")
+    if os.path.exists(REAL_TRADING_PAUSED_FILE):
+        log("  ⏸ real trading paused (real account is SPY-only right now) — would have executed "
+            "re-entry (SGOV -> SPY/QQQ/BRK.B) here, logging only, not placing real orders")
+        return
+    log("  — executing re-entry")
     # 2026-08-13: the 2026-07-13 confirm-before-buy policy is REVERSED (user
     # restored full autonomy across satellite/core-reentry/SKHY/MU/META).
     # Unlike those single-name scripts, this one doesn't need a NEW separate
