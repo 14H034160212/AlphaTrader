@@ -150,3 +150,17 @@ REASON: Phase 2 data for Sonelokimab remains strong and the company is progressi
 OVERALL: BULLISH
 
 
+### 2026-08-13 04:10 UTC 自动交叉验证
+- P&L: +1.0%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — no moat yet, purely speculative R&D.
+MUNGER: Mistake if Sonelokimab fails Phase 3 or lacks a clear competitive advantage.
+DUAN(段永平): No — too binary for a 10-year "business" hold.
+LI_LU(李录): High risk of permanent loss; lacks existing compounding engine.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Clinical momentum for Sonelokimab remains strong following positive Phase 2 results in PsA and HS and progress toward Phase 3 trials.
+OVERALL: BULLISH
+
+

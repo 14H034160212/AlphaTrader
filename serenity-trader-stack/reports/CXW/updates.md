@@ -253,3 +253,32 @@ OVERALL: NEUTRAL
 **一句话的根治动作**（已烧掉 $2+ 付费复核，约 $2.4/天）：把 `serenity-trader-stack/` 加进写入允许列表。我要做两件事——补 thesis.md（内容已备好，含"四大师 BEARISH 是已定价前提"的降噪规则），以及给 `crossvalidate_satellite.py:626-644` 的「分歧/看空」加上和 infra 同款的 per-symbol 同因 24h 冷却。**只补文件解决不了**：CXW 的四大师是结构性永久 BEARISH，冷却期不加，每 4 小时照样重复烧钱。
 
 
+### 2026-08-13 04:01 UTC 自动交叉验证
+- P&L: -1.5%
+- 4大师速览: BEARISH
+BUFFETT: WATCH; government-dependent revenue lacks durable pricing power
+MUNGER: Mistake if federal policy permanently bans private prison contracts
+DUAN(段永平): No; business model is fundamentally unstable over a decade
+LI_LU(李录): High risk of permanent loss due to stroke-of-a-pen regulatory risk
+OVERALL: BEARISH
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Sustained reliance of government agencies on private infrastructure for immigration and residential reentry detention.
+OVERALL: BULLISH
+- **升级触发**: 两框架分歧 (4大师:BEARISH vs Serenity:BULLISH); 出现看空信号
+- **付费深度判断** ($0.1738): **综合判断：论文成立，但只在"周期"层面成立，不在"十年"层面成立 —— 两个框架其实没有真分歧，只是时间尺度不同。**
+
+1. **Serenity 是对的（2-3 年维度）**：CXW 的卡点是**存量床位**——ICE 扩张需要的是"明天就能开门"的合规羁押设施，而新建要 3-5 年 + 地方审批，CoreCivic 手上恰好有一批闲置/半闲置设施可以直接激活。这是真瓶颈，不是叙事，而且 2025 移民执法拨款把需求端从"政治意愿"变成了"已拨款的合同"。
+
+2. **四大师也是对的（十年维度）**：单一客户 + 政策一纸可废（2021 拜登行政令就干过一次），这确实不是巴菲特/李录意义上的"永久性资本损失可控"的生意。所谓 chokepoint 的护城河不是技术，是**政治周期**——护城河的所有权在华盛顿手里，不在公司手里。
+
+3. **"论文不成立"是误报**：升级里写的 "no saved thesis found" 只是没存论文文件，不是论文破裂——这是 crossvalidate 的老毛病，别当卖出信号。
+
+**建议：HOLD（卫星仓保持，不加仓）**，附三个硬约束：
+- **不升核心仓**，仓位上限压在卫星级别（≤3-4%），因为它的风险形态是"跳空归零型政治风险"，不是波动风险，加仓换不来对称回报。
+- **触发 EXIT 的条件写死**：联邦拨款方向逆转 / 主要 ICE 合同未续约 / 2028 大选前政策转向定价开始出现——任一出现就走，不等财报确认。
+- **今天补一份 thesis 文件**（卡点=存量床位、催化=已拨款的扩容合同、证伪=上述三条），否则下次交叉验证还会重复报这个假阳性。
+
+要我现在用 thesis-tracker 把这份论文落盘吗？
+
+
