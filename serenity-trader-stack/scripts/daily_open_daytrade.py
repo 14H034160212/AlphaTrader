@@ -229,6 +229,42 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
+def check_state_invariants(state):
+    """2026-08-13, user: '为什么每次检查都有bug' -- fair question. Every bug
+    found this session (stale RKLB weight, chart's last point lagging live
+    equity, entered:True never clearing after a sale, day_high/day_low
+    surviving a rollover) was the SAME root shape: state lives in several
+    separate dicts (weights/reasons/symbols/sim_positions) that a new
+    feature only updates part of, and nothing ever checked whether they'd
+    drifted apart -- so it sat silent until a symptom (a wrong number, a
+    stuck ticker) got noticed by chance, sometimes days later. Rather than
+    keep relying on someone asking to re-check, run cheap, pure-logic
+    consistency checks every tick and log LOUDLY the moment state disagrees
+    with itself -- catches the NEXT version of this bug shape immediately
+    instead of after a manual audit. Advisory only (logs, never mutates) --
+    the actual fixes belong at the point that caused the drift, not here."""
+    if not DRY_RUN:
+        return
+    sim_positions = state.get('sim_positions', {})
+    weights = state.get('weights', {})
+    symbols = state.get('symbols', {})
+
+    for sym, sym_state in symbols.items():
+        if sym_state.get('entered') and sym not in sim_positions:
+            log(f"  [STATE-CHECK] ⚠ {sym} marked entered:True but not in sim_positions "
+                f"(sold-but-never-cleared flag? would silently block re-entry)")
+
+    for sym in sim_positions:
+        if sym not in weights:
+            log(f"  [STATE-CHECK] ⚠ {sym} is an actual position but has no weight tracked "
+                f"(weight/position drift -- room-for-new-picks math would be wrong)")
+
+    for sym, w in weights.items():
+        if sym != 'SPY' and sym not in sim_positions and symbols.get(sym, {}).get('entered'):
+            log(f"  [STATE-CHECK] ⚠ {sym} has a weight + entered:True but no actual position "
+                f"(stale weight surviving a sell it shouldn't have survived)")
+
+
 def _alpaca_creds():
     from database import SessionLocal, get_setting
     db = SessionLocal()
@@ -1830,6 +1866,8 @@ def main():
                       'action_log': [], 'done': False}
             log(f"=== new trading day {today} -- state reset ===")
         save_state(state)
+
+    check_state_invariants(state)
 
     if state.get('done'):
         return  # already wound down for today
