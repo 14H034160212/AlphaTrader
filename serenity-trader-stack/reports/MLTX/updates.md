@@ -178,3 +178,17 @@ REASON: Positive Phase 2 data in Psoriatic Arthritis and Hidradenitis Suppurativ
 OVERALL: BULLISH
 
 
+### 2026-08-13 12:06 UTC 自动交叉验证
+- P&L: +0.6%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH, clinical-stage lacks predictable earnings and an established moat.
+MUNGER: Mistake if Sonelokimab fails Phase 3 endpoints or lacks superiority over competitors.
+DUAN(段永平): No, binary clinical outcomes are not a "predictable business."
+LI_LU(李录): High risk of permanent loss due to binary drug approval risk.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Sonelokimab continues to demonstrate strong clinical efficacy in Hidradenitis Suppurativa and Psoriatic Arthritis without significant safety setbacks.
+OVERALL: BULLISH
+
+

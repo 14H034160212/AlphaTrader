@@ -298,3 +298,35 @@ OVERALL: NEUTRAL
 - **付费深度判断** ($0.0000): 
 
 
+### 2026-08-13 12:00 UTC 自动交叉验证
+- P&L: -1.5%
+- 4大师速览: BEARISH
+BUFFETT: SELL — narrow moat compromised by extreme regulatory and political volatility.
+MUNGER: Mistake if US federal policy shifts decisively toward a ban on private prisons.
+DUAN: No, the lack of business stability precludes a 10-year ownership horizon.
+LI_LU: BEARISH — high risk of permanent loss due to policy-driven existential threats.
+OVERALL: BEARISH
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: structural deficit in government-owned detention capacity ensures continued reliance on private providers.
+OVERALL: BULLISH
+- **升级触发**: 两框架分歧 (4大师:BEARISH vs Serenity:BULLISH); 出现看空信号
+- **付费深度判断** ($0.8177): 写文件仍然被权限拦住（和之前 RDY / 08-11 那次同一处），所以先给判断。
+
+**综合判断（第 6 次同题升级）**
+
+1. **论文成立，且这次升级里没有任何新信息。** 触发条件是"4大师 BEARISH vs Serenity BULLISH"——但这个分歧从建仓第一天就存在，两边都对，只是在回答不同问题：四大师否决的是"持有十年"（单一客户联邦政府、2016 DOJ 备忘录当日近腰斩、2021 拜登行政令都是**已发生的历史**），Serenity 说的是"未来数季度收入可见度"（ICE 扩容资金已立法落地、存量合规床位实质双寡头）。关键是这**是政治卡点不是技术卡点**，一道行政令就能溶解——配得上交易窗口，配不上长期溢价。
+
+2. **真正变化的不是论文，是仓位。** 08-12 两次轮换（EMBJ→CXW 13:51、TEM→CXW 14:12）把仓位从 1.27% 推到 **~5.2%**，突破了我前一天刚设的 1.5% 硬顶，而且两次都是**向上加仓**（$33.17 → $34.60 → $34.13，均价抬到 $34.11）。P&L 也从 +2.3% 翻到 **-1.5%**。
+
+3. **两个方向的错法**：错在下行 = 一条 DHS/ICE 政策反转头条隔夜跳空 -30%，11 月中期选举是 3 个月内的真实二元事件，而 5.2% 仓位让这个尾部值 1.6% 净值（1.5% 仓位时只值 0.45%）；错在上行 = 现在割在 -1.5%，放弃 $42-45（+23~32%）。
+
+**建议：TRIM 到 ~1.5-2%，不是 EXIT。**
+
+理由不是看空转向，是**风险形态和仓位不匹配**——跳空型政治风险不该拿 5% 仓位，减到卫星级别后原论文的上行仍然完整保留。这也符合"错法对称"：TRIM 是唯一不预设哪个方向对的动作。三条纪律不变：① 硬顶 1.5%，轮换引擎不得例外；② $38-42 分批卖强势；③ 中期选举前或任何实质性联邦拘留政策头条 → 无条件离场。
+
+**需要你放行两件事**：
+- `reports/CXW/thesis.md` 的写入权限——内容已写好（卡点/催化/证伪五条/仓位纪律/已知事故）。**不落盘，下一轮交叉验证还会第 7 次因"无 thesis"重复花钱。**
+- 轮换引擎里缺一个**单票权重上限检查**——这次是它绕过了我设的 1.5% 顶，不修的话下次换个票还会发生。
+
+

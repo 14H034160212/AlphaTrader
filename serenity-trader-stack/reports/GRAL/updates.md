@@ -282,3 +282,33 @@ OVERALL: NEUTRAL
 2. `crossvalidate_satellite.py` — 加 24h 同因冷却，并让 `(no saved thesis found)` **阻断**升级而非触发升级。
 
 
+### 2026-08-13 12:04 UTC 自动交叉验证
+- P&L: -6.7%
+- 4大师速览: BEARISH
+BUFFETT: WATCH; high IP potential but lacks durable pricing power or consistent cash flow.
+MUNGER: Mistake if clinical utility is not proven or insurance reimbursement fails.
+DUAN(段永平): NO; business quality is currently speculative rather than a proven "great business."
+LI_LU(李录): BEARISH; extreme risk of permanent loss due to high cash burn and binary regulatory outcomes.
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: YES
+REASON: regulatory approval and reimbursement hurdles remain the primary bottleneck for widespread Galleri adoption.
+OVERALL: NEUTRAL
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.4338): 写 `thesis.md` 第 7 次被权限挡住。直接给判断（这是同因第 12 次触发，结论不变）：
+
+**1. 论文成立，而且论文确实存在** —— 「no saved thesis」是读取缺陷。建仓理由就在 `.daily_open_daytrade_DRYRUN_state.json` 里：赌 **9/23 已定档的 Galleri PMA 专家委员会**，19.2059 股 @ $76，2.28% NAV，六周事件仓。9/23 档期无变动，-6.5% 全部来自 8/5 Q2（营收 ~$44.7M / 净亏 ~$110.2M，当日 -14%）的价格漂移，不是论文破裂。
+
+**2. 4 大师说的全对，但答的是另一道题** —— 无现金流、无定价权、二元监管、永久损失风险，这四条建仓第一天就成立，是已付的入场成本，所以每 4 小时必然复现；这是常量，不是信号。
+
+**3. Serenity 本票应判「不适用」** —— 它今天输出 `CHOKEPOINT_INTACT: WEAKENING`，理由是"CMS/商保未放量报销"，卡点方向反了：这里是 FDA 和支付方掐 GRAIL 的脖子，不是 GRAIL 掐别人。这个 `WEAKENING` 只是重述已知前提，不是新增恶化。
+
+**4. 建议：TRIM 到 ≤1% NAV（约 8 股）** —— 与前两次一致、至今未执行。两面都说清：AdCom 若正面这是台阶式重估，现在 EXIT 就是错的；但用生活费押一个由 FDA 单点日历决定、数据包本身正被集体诉讼（[UNSOURCED]，未核对 docket）、还要熬六周漂移的赌注，2.28% 太大。失效条件写死：**档期推迟 / 简报文件质疑主要终点 / 任何增发公告 → 清零，不等 9/23。**
+
+---
+
+两个根因修复仍卡在权限上（GRAL 一只票已烧掉 12 次触发、5 次付费深度调用）。给我权限我立刻做：
+1. `reports/GRAL/thesis.md` 落盘（内容已写好，就是上面那份带失效条件的）；
+2. `crossvalidate_satellite.py`：加 24h 同因冷却，并让 `(no saved thesis found)` **阻断**升级而非触发升级。
+
+
