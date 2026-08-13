@@ -330,3 +330,30 @@ OVERALL: BULLISH
 - 轮换引擎里缺一个**单票权重上限检查**——这次是它绕过了我设的 1.5% 顶，不修的话下次换个票还会发生。
 
 
+### 2026-08-13 16:01 UTC 自动交叉验证
+- P&L: -1.4%
+- 4大师速览: BEARISH
+BUFFETT: SELL — no pricing power, revenue dependent on political whims.
+MUNGER: Mistake if federal legislation bans private prison contracts.
+DUAN(段永平): No — regulatory volatility makes it an unattractive 10-year business.
+LI_LU(李录): High risk of permanent loss due to systemic policy shifts.
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: YES
+REASON: Continued federal and state dependency on private detention and reentry infrastructure persists despite political rhetoric.
+OVERALL: NEUTRAL
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.4891): 写 `thesis.md` 第四次被权限拦下（和 RDY 那个 bug 卡在同一处），先给判断。
+
+**这是同一个分歧的第四次触发，没有任何新信息。** 8/11 16:00、8/11 20:01、8/12 00:00 已各做过一次付费深度复核，结论都是 HOLD；这轮 4 大师仍是 BEARISH、Serenity 卡点仍是 YES（只是情绪层从 BULLISH 回落到 NEUTRAL）。"no saved thesis found" 不是论文破损，是那个一直补不上的文件。
+
+**论文仍成立，两个框架也都有道理，但它们在回答不同的问题。** 4 大师的 BEARISH 完全站得住——单一客户是联邦政府、护城河由政治意志构成、2016 DOJ 备忘录当日近腰斩和 2021 拜登行政令是**已发生的历史而非假想风险**——但这是对"持有十年"的否决，而这仓位从建仓第一天就不是按十年持有买的，这条属于**已定价前提**。Serenity 的卡点 YES 也是事实：ICE 扩容资金已立法落地、床位供给实质双寡头、数季度收入可见度真实存在；它给 NEUTRAL 而不是 BULLISH 恰恰是最诚实的一份——**这是政治卡点不是技术卡点**，一道行政令就能溶解，配得上一个交易窗口，配不上长期估值溢价。
+
+**建议：HOLD**，维持 8/11 定下的三条纪律不变——① 卫星仓硬顶 1.5%，不加仓；② $38–42 分批卖强势，不等 $42–45 目标位打满；③ 任何实质性联邦拘留政策/资金反转头条无条件离场，11 月中期选举前强制复核。今日 -1% 的回撤是噪音不是信号，按当前仓位下行尾部只值约 0.4% 净值。
+
+两件需要你放行/知情的事：
+
+1. **`serenity-trader-stack/reports/CXW/thesis.md` 内容我已写好**（含论文三条、四条"已定价前提"降噪规则、持仓纪律、退出触发、以及四次复核记录表），仍被写权限拦下。不补这个文件，下一轮还会因"无 thesis"重复升级重复烧钱——**已累计烧掉约 $1.2**。要我重试写入吗？
+2. **日内 DRY-RUN 仓的 CXW 权重已到 10.5%（197.6 股 @$33.86）**，远超卫星仓那条 1.5% 硬顶。两个 sleeve 规则不互通我理解，但同一只政治尾部风险股在两处合计敞口值得你知道——日内那笔是 DRY-RUN 不涉真钱，真实敞口仍在 1.3% 左右。
+
+

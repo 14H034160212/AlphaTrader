@@ -192,3 +192,17 @@ REASON: Sonelokimab continues to demonstrate strong clinical efficacy in Hidrade
 OVERALL: BULLISH
 
 
+### 2026-08-13 16:04 UTC 自动交叉验证
+- P&L: -3.1%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH; no durable moat until FDA approval and commercialization.
+MUNGER: Mistake if Sonelokimab fails Phase 3 or lacks clinical superiority over existing IL-17s.
+DUAN(段永平): No, cannot project cash flows with certainty for a decade.
+LI_LU(李录): High risk of permanent loss inherent in clinical-stage biotech.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Clinical data for Sonelokimab in Psoriatic Arthritis and Hidradenitis Suppurativa remains competitive as the company advances toward Phase 3 trials.
+OVERALL: BULLISH
+
+
