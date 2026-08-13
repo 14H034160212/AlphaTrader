@@ -1795,6 +1795,36 @@ def main():
                       '_morning_audit_done', '_reconcile_attempts', '_eod_reported',
                       '_rotate_count_today'):
                 state.pop(k, None)
+            # 2026-08-13: found while re-checking the new range-aware entry
+            # gate for bugs, and confirmed ALREADY LIVE in production --
+            # state['symbols'] is kept WHOLE across this rollover (needed to
+            # preserve entered:True for carried-over positions), but nothing
+            # ever clears an 'entered' flag once a position is later SOLD
+            # (sell_selected() deletes sim_positions/weights but never
+            # touches state['symbols']). Checked the live state file: FTK,
+            # RKLB, EMBJ, TEM, INSM and 8 others were all still marked
+            # entered:True despite being sold days ago and held nowhere --
+            # if the picker selects any of these again (RKLB/EMBJ/TEM/FTK
+            # have each already recurred across multiple separate days),
+            # enter()'s very first check ('if entered: continue') would
+            # silently skip buying it forever, with zero error or log
+            # signal. The correct scope for "entered" is "currently actually
+            # held", not "was ever bought" -- so on rollover, drop the
+            # symbols entry for anything NOT presently in sim_positions (or
+            # live positions when not DRY_RUN); only real carried-over
+            # holdings should survive the day boundary, with everything else
+            # (whether never-entered OR entered-then-sold) getting a fully
+            # clean slate.
+            if DRY_RUN:
+                actually_held = set(state.get('sim_positions', {}).keys())
+            else:
+                try:
+                    actually_held = {p.symbol for p in api.list_positions()}
+                except Exception:
+                    actually_held = set(state.get('symbols', {}).keys())  # fail open, don't wipe on an API hiccup
+            for sym in list(state.get('symbols', {}).keys()):
+                if sym not in actually_held:
+                    del state['symbols'][sym]
         else:
             state = {'date': today, 'symbols': {}, 'weights': {}, 'reasons': {},
                       'action_log': [], 'done': False}
