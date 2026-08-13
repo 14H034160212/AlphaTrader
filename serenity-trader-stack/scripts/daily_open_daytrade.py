@@ -755,10 +755,20 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
         "主动找一下这家公司当前最大的反向风险是什么(现金流/烧钱速度/客户"
         "集中度/监管排期是否又有新变化),哪怕最后还是决定买,也要在理由里"
         "写清楚这个反向风险,不能只写利好不写风险。\n\n"
+        "**必须按优先级从高到低排序输出**(2026-08-13,用户要求"
+        "'每天买入的股票也要计算一个优先级,只买优先级最高的'——澄清后确认"
+        "是'明确排序,仍买多只,但权重按优先级阶梯分配',不是只买一只):"
+        "第一行必须是你今天最有把握的那一只,权重必须明显高于第二名"
+        "(不能因为'都差不多好'就把权重打平——如果两只权重几乎相等,说明"
+        "你还没有真正分出谁更值得重仓,回去重新比较催化剂确定性和弹性,"
+        "选出真正的第一名);越往后排名越低、权重越小,这条排序本身就是"
+        "复盘时用来检查'最强的仓位是不是被错误地排在了后面'的依据"
+        "(2026-08-11/12两天复盘都发现过CXW这种全组合唯一跑赢大盘的合同流"
+        "型标的,权重反而排在financial更软的催化剂后面)。\n\n"
         f"{extra_context}"
         f"搜索结果:\n{context}\n\n"
         "请严格按以下格式输出,不要有markdown:\n"
-        "先按每行一只股票列出你选中的:\n"
+        "按优先级从高到低、每行一只股票列出你选中的:\n"
         "TICKER: 权重% [持续性:一次性/数日/数周+] 一句话理由\n"
         "例如:\nPYPL: 8% [持续性:数日] 财报超预期上调指引\n\n"
         f"{weight_rule}如果没有找到任何真正有说服力的标的,只输出: NONE\n\n"
@@ -794,6 +804,18 @@ def pick_todays_stocks(api, exclude=None, extra_note=""):
                 continue
             picks.append((sym, min(pct / 100, MAX_PICK_WEIGHT), reason))
     picks = picks[:MAX_PICKS]
+
+    # Advisory only (per the established "trust the AI's judgment, log
+    # loudly rather than silently override" pattern) -- the prompt now
+    # requires listing in strict priority order with a meaningful weight
+    # gap between ranks. Don't reorder or rescale here; just surface it in
+    # the log/action record if the model didn't actually follow its own
+    # stated ordering, so it's visible at retro time instead of silently
+    # repeating the CXW-style rank/weight mismatch found on 08-11/08-12.
+    for i in range(len(picks) - 1):
+        if picks[i][1] < picks[i + 1][1]:
+            log(f"  [PRIORITY-CHECK] ⚠ {picks[i][0]}(排名{i+1}, {picks[i][1]*100:.1f}%) 权重低于"
+                f"{picks[i+1][0]}(排名{i+2}, {picks[i+1][1]*100:.1f}%) -- 没有按声明的优先级顺序分配权重")
 
     # Mechanical "not already extended" backstop -- feedback_buy_dips_sell_strength.md
     # ("卖高不是追涨"): even with the prompt's own instruction, double-check each
