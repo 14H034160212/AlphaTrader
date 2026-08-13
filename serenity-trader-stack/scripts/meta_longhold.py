@@ -49,13 +49,14 @@ if os.path.exists(_ENV_FILE):
 
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.meta_longhold_entered'
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.meta_longhold_state.json'
-# 2026-07-13: user said "我什么时候让你买你再买" (only buy when I explicitly
-# tell you to) -- a standing policy, broader/more permanent than the
-# same-day ".LONGHOLD_ENTRY_PAUSED" pause it replaces. See the identical
-# comment in skhy_position.py. The order only fires once this per-symbol
-# confirmation file exists; Claude creates it only in direct response to the
-# user explicitly saying to buy META. Deleted immediately after executing.
+# 2026-08-13: the 2026-07-13 confirm-before-buy policy is REVERSED (user
+# restored full autonomy across SKHY/MU/META/satellite/core-reentry). Same
+# already-tested pattern as mu_reentry.py/skhy_position.py: confidence check
+# + fill verification replace the human-confirmation-file gate.
 CONFIRM_FILE = '/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_META'
+CLAUDE_BIN = '/home/qbao775/.local/bin/claude'
+CONFIDENCE_RECHECK_COOLDOWN_MIN = 60
+SIM_STATE_FILE = '/home/qbao775/serenity-trader-stack/.meta_longhold_sim.json'
 TARGET_PCT = 0.08   # low end of "high conviction" bucket -- higher than MU's
                     # 5% given this thesis has been vetted twice with real
                     # data, not a reversal-of-rejection
@@ -129,6 +130,56 @@ def send_email(subject, body):
         log(f"email err: {e}")
 
 
+def _confidence_check(sym, current_price, reason):
+    """Same pattern as mu_reentry.py (tested 2026-08-13)."""
+    import subprocess
+    prompt = (
+        f"你是一个长期持仓的复核员，只做真实、可核查的判断，不要凭感觉。"
+        f"{sym} 的机械入场条件已经满足({reason})，现价约${current_price:.2f}。"
+        f"搜索一下这只股票最近几天有没有任何新的重大坏消息、基本面恶化迹象，"
+        f"或者原来买入逻辑里已知的风险点(比如监管诉讼、AI资本开支转化质疑)"
+        f"有没有新的证据显示正在应验。"
+        f"只有当你有真正的高确信度——催化剂/论文依然完整、没有新的重大反向证据"
+        f"——才回答确信。如果有任何让你犹豫的新信息，回答等待，并说明原因"
+        f"(这次不买不代表以后不买)。"
+        f"最后一行必须是以下两种之一: DECISION: CONFIDENT 或 DECISION: WAIT。"
+    )
+    try:
+        result = subprocess.run([CLAUDE_BIN, '-p', prompt, '--output-format', 'json'],
+                                 capture_output=True, text=True, timeout=420,
+                                 cwd='/data/qbao775/AlphaTrader')
+        if result.returncode != 0:
+            return False, f"confidence check call failed (rc={result.returncode}): {result.stderr[:200]}"
+        data = json.loads(result.stdout)
+        answer = data.get('result', '')
+        confident = 'DECISION: CONFIDENT' in answer.upper()
+        return confident, answer
+    except Exception as e:
+        return False, f"confidence check exception: {e}"
+
+
+def _verify_fill(api, order_id, max_wait_sec=30, poll_sec=3):
+    """Same pattern as mu_reentry.py."""
+    import time
+    waited = 0
+    while waited < max_wait_sec:
+        try:
+            o = api.get_order(order_id)
+        except Exception:
+            time.sleep(poll_sec)
+            waited += poll_sec
+            continue
+        if o.status == 'filled':
+            return o
+        if o.status in ('canceled', 'expired', 'rejected', 'suspended'):
+            log(f"  order {order_id[:8]} reached terminal non-fill status: {o.status}")
+            return None
+        time.sleep(poll_sec)
+        waited += poll_sec
+    log(f"  order {order_id[:8]} did not reach a terminal status within {max_wait_sec}s")
+    return None
+
+
 def enter_position(api, state):
     import market_data as md
     q = md.get_stock_quote('META')
@@ -181,17 +232,22 @@ def enter_position(api, state):
 
     reason = "recovered and stabilized off the observed low" if recovered_and_stable else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed with a real dip seen, buying"
 
-    if not os.path.exists(CONFIRM_FILE):
-        log(f"  entry condition met ({reason}) — awaiting explicit user confirmation before buying")
-        if not watch.get('awaiting_confirmation_notified'):
-            watch['awaiting_confirmation_notified'] = True
-            send_email("🔔 META 达到买入条件 — 等待你确认",
-                       f"META 达到进场条件({reason}),现价 ~${px:.2f}。\n"
-                       f"按你的要求,不会自动下单——回复我确认买入,我会执行。")
-        state['watch'] = watch
-        save_state(state)
+    last_check = watch.get('last_confidence_check')
+    if last_check:
+        mins_since = (now - datetime.datetime.fromisoformat(last_check)).total_seconds() / 60
+        if mins_since < CONFIDENCE_RECHECK_COOLDOWN_MIN:
+            log(f"  entry condition met ({reason}) but confidence re-check on cooldown "
+                f"({mins_since:.0f}/{CONFIDENCE_RECHECK_COOLDOWN_MIN}min) — not buying yet")
+            return
+    watch['last_confidence_check'] = now.isoformat()
+    state['watch'] = watch
+    save_state(state)
+
+    confident, reasoning = _confidence_check('META', px, reason)
+    if not confident:
+        log(f"  entry condition met ({reason}) but confidence check said WAIT: {reasoning[:400]}")
         return
-    log(f"  entry condition met ({reason}) — confirmation file present, buying now")
+    log(f"  entry condition met ({reason}) AND confidence check CONFIRMED: {reasoning[:400]}")
 
     acc = api.get_account()
     equity = float(acc.equity)
@@ -203,15 +259,30 @@ def enter_position(api, state):
         log(f"  insufficient buying power for META @ ${px} — aborting")
         return
 
+    with open(SIM_STATE_FILE, 'w') as f:
+        json.dump({'intended_qty': qty, 'intended_price': px,
+                    'intended_at': datetime.datetime.utcnow().isoformat()}, f)
+
     o = api.submit_order(symbol='META', qty=qty, side='buy', type='market', time_in_force='day')
-    log(f"  ✓ BOUGHT META qty={qty} @~${px} order={o.id[:8]}")
-    if os.path.exists(CONFIRM_FILE):
-        os.remove(CONFIRM_FILE)
+    filled = _verify_fill(api, o.id)
+    if not filled:
+        log(f"  ⚠ META buy order={o.id[:8]} did NOT confirm as filled -- NOT marking entered.")
+        send_email("⚠️ META 下单未确认成交",
+                    f"提交了买入订单(qty={qty} @~${px})但没能确认成交状态,"
+                    f"没有标记为已建仓,下一个tick会重新判断是否需要重试。")
+        return
+    filled_qty_f, filled_px_f = float(filled.filled_qty), float(filled.filled_avg_price)
+    log(f"  ✓ BOUGHT META qty={filled_qty_f} @~${filled_px_f} order={o.id[:8]} status={filled.status}")
+    with open(SIM_STATE_FILE, 'w') as f:
+        json.dump({'intended_qty': qty, 'intended_price': px,
+                    'filled_qty': filled_qty_f, 'filled_price': filled_px_f}, f)
 
     with open(DONE_MARKER, 'w') as f:
-        json.dump({'entered_at': datetime.datetime.utcnow().isoformat(), 'entry_price_est': px, 'qty': qty}, f)
-    send_email("📈 META 长期建仓",
-               f"买入 META {qty}股,预估入场价 ~${px}(等待理由: {reason})\n"
+        json.dump({'entered_at': datetime.datetime.utcnow().isoformat(),
+                    'entry_price_est': filled_px_f, 'qty': filled_qty_f, 'order_id': o.id}, f)
+    send_email("📈 META 长期建仓(已确认成交)",
+               f"买入 META {filled_qty_f}股,实际成交均价 ~${filled_px_f}"
+               f"(等待理由: {reason}; 确信度检查: {reasoning[:200]})\n"
                f"仓位: {TARGET_PCT*100:.0f}%(长期持有,不设止损、不设止盈目标)\n"
                f"后续由 crossvalidate_satellite.py 的常规4小时论文复核自动跟踪,"
                f"该机制只会提示/升级,不会自动卖出。")
@@ -235,4 +306,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        log("UNCAUGHT EXCEPTION:")
+        log(traceback.format_exc())

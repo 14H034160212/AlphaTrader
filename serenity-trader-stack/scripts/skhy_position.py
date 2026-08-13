@@ -41,18 +41,17 @@ if os.path.exists(_ENV_FILE):
 
 STATE_FILE = '/home/qbao775/serenity-trader-stack/.skhy_position_state.json'
 DONE_MARKER = '/home/qbao775/serenity-trader-stack/.skhy_position_done'
-# 2026-07-13: user said "我什么时候让你买你再买" (only buy when I explicitly
-# tell you to) -- a standing policy change, broader and more permanent than
-# the same-day ".LONGHOLD_ENTRY_PAUSED" pause it replaces (that was scoped to
-# "today's open" during the Korea/Hormuz risk-off; this applies to ALL future
-# buys, indefinitely, across every script that places a buy order). Entry
-# conditions being met no longer triggers an automatic order -- it only
-# triggers a "ready to buy, awaiting your go-ahead" email. The order only
-# fires once this per-symbol confirmation file exists; Claude creates it
-# (via `touch`) only in direct response to the user explicitly saying to buy
-# THIS name in a live conversation -- never inferred, never pre-created. The
-# script deletes the file immediately after executing so it's single-use.
+# 2026-08-13: the 2026-07-13 confirm-before-buy policy is REVERSED (user
+# restored full autonomy across SKHY/MU/META/satellite/core-reentry, same
+# scope 07-13 had narrowed). Caveat added in the same breath: "但是你要确保
+# 很有信心才买" (must be confident before buying) and "不要到时候出现...买入
+# 没有买入的情况" (don't let a buy-that-didn't-buy situation happen) --
+# see the identical, already-tested pattern in mu_reentry.py. CONFIRM_FILE
+# kept only as an unused manual-override path.
 CONFIRM_FILE = '/home/qbao775/serenity-trader-stack/.ENTRY_CONFIRMED_SKHY'
+CLAUDE_BIN = '/home/qbao775/.local/bin/claude'
+CONFIDENCE_RECHECK_COOLDOWN_MIN = 60
+SIM_STATE_FILE = '/home/qbao775/serenity-trader-stack/.skhy_position_sim.json'
 
 TARGET_PCT = 0.20        # same 20% sizing as the day-trade, user hasn't said otherwise
 TARGET_PRICE = 200.0     # sell ONLY when price >= this. No other exit condition.
@@ -142,6 +141,58 @@ def get_live_price(api, symbol):
     return None
 
 
+def _confidence_check(sym, current_price, reason):
+    """Same pattern as mu_reentry.py (tested there 2026-08-13): a fresh,
+    research-backed judgment call replacing the removed human-confirmation
+    gate. The mechanical entry condition is a chase-guard, not the full
+    judgment -- defaults to WAIT on any ambiguity or call failure."""
+    import subprocess
+    prompt = (
+        f"你是一个长期持仓的复核员，只做真实、可核查的判断，不要凭感觉。"
+        f"{sym} 的机械入场条件已经满足({reason})，现价约${current_price:.2f}。"
+        f"搜索一下这只股票最近几天有没有任何新的重大坏消息、基本面恶化迹象。"
+        f"只有当你有真正的高确信度——催化剂/论文依然完整、没有新的重大反向证据"
+        f"——才回答确信。如果有任何让你犹豫的新信息，回答等待，并说明原因"
+        f"(这次不买不代表以后不买)。"
+        f"最后一行必须是以下两种之一: DECISION: CONFIDENT 或 DECISION: WAIT。"
+    )
+    try:
+        result = subprocess.run([CLAUDE_BIN, '-p', prompt, '--output-format', 'json'],
+                                 capture_output=True, text=True, timeout=420,
+                                 cwd='/data/qbao775/AlphaTrader')
+        if result.returncode != 0:
+            return False, f"confidence check call failed (rc={result.returncode}): {result.stderr[:200]}"
+        data = json.loads(result.stdout)
+        answer = data.get('result', '')
+        confident = 'DECISION: CONFIDENT' in answer.upper()
+        return confident, answer
+    except Exception as e:
+        return False, f"confidence check exception: {e}"
+
+
+def _verify_fill(api, order_id, max_wait_sec=30, poll_sec=3):
+    """Same pattern as mu_reentry.py: submit_order() only confirms
+    acceptance, not a fill. Poll to a terminal status before trusting it."""
+    import time
+    waited = 0
+    while waited < max_wait_sec:
+        try:
+            o = api.get_order(order_id)
+        except Exception:
+            time.sleep(poll_sec)
+            waited += poll_sec
+            continue
+        if o.status == 'filled':
+            return o
+        if o.status in ('canceled', 'expired', 'rejected', 'suspended'):
+            log(f"  order {order_id[:8]} reached terminal non-fill status: {o.status}")
+            return None
+        time.sleep(poll_sec)
+        waited += poll_sec
+    log(f"  order {order_id[:8]} did not reach a terminal status within {max_wait_sec}s")
+    return None
+
+
 def enter_position(api, state):
     px = get_live_price(api, 'SKHY')
     if not px:
@@ -192,17 +243,22 @@ def enter_position(api, state):
     reason = ("recovered off the observed low" if recovered
               else f"max wait ({ENTRY_MAX_WAIT_MIN}min) elapsed with a real dip seen, buying")
 
-    if not os.path.exists(CONFIRM_FILE):
-        log(f"  entry condition met ({reason}) — awaiting explicit user confirmation before buying")
-        if not watch.get('awaiting_confirmation_notified'):
-            watch['awaiting_confirmation_notified'] = True
-            send_email("🔔 SKHY 达到买入条件 — 等待你确认",
-                       f"SKHY 达到进场条件({reason}),现价 ~${px:.2f}。\n"
-                       f"按你的要求,不会自动下单——回复我确认买入,我会执行。")
-        state['watch'] = watch
-        save_state(state)
+    last_check = watch.get('last_confidence_check')
+    if last_check:
+        mins_since = (now - datetime.datetime.fromisoformat(last_check)).total_seconds() / 60
+        if mins_since < CONFIDENCE_RECHECK_COOLDOWN_MIN:
+            log(f"  entry condition met ({reason}) but confidence re-check on cooldown "
+                f"({mins_since:.0f}/{CONFIDENCE_RECHECK_COOLDOWN_MIN}min) — not buying yet")
+            return
+    watch['last_confidence_check'] = now.isoformat()
+    state['watch'] = watch
+    save_state(state)
+
+    confident, reasoning = _confidence_check('SKHY', px, reason)
+    if not confident:
+        log(f"  entry condition met ({reason}) but confidence check said WAIT: {reasoning[:400]}")
         return
-    log(f"  entry condition met ({reason}) — confirmation file present, buying now")
+    log(f"  entry condition met ({reason}) AND confidence check CONFIRMED: {reasoning[:400]}")
 
     acc = api.get_account()
     equity = float(acc.equity)
@@ -214,16 +270,31 @@ def enter_position(api, state):
         log(f"  insufficient buying power for even 1 share of SKHY @ ${px} — aborting")
         return
 
+    with open(SIM_STATE_FILE, 'w') as f:
+        json.dump({'intended_qty': qty, 'intended_price': px,
+                    'intended_at': datetime.datetime.utcnow().isoformat()}, f)
+
     o = api.submit_order(symbol='SKHY', qty=qty, side='buy', type='market', time_in_force='day')
-    log(f"  ✓ BOUGHT SKHY qty={qty} @~${px} order={o.id[:8]}")
-    if os.path.exists(CONFIRM_FILE):
-        os.remove(CONFIRM_FILE)  # single-use — next entry (if any) needs a fresh confirmation
+    filled = _verify_fill(api, o.id)
+    if not filled:
+        log(f"  ⚠ SKHY buy order={o.id[:8]} did NOT confirm as filled -- NOT marking entered.")
+        send_email("⚠️ SKHY 下单未确认成交",
+                    f"提交了买入订单(qty={qty} @~${px})但没能确认成交状态,"
+                    f"没有标记为已建仓,下一个tick会重新判断是否需要重试。")
+        return
+    filled_qty_f, filled_px_f = float(filled.filled_qty), float(filled.filled_avg_price)
+    log(f"  ✓ BOUGHT SKHY qty={filled_qty_f} @~${filled_px_f} order={o.id[:8]} status={filled.status}")
+    with open(SIM_STATE_FILE, 'w') as f:
+        json.dump({'intended_qty': qty, 'intended_price': px,
+                    'filled_qty': filled_qty_f, 'filled_price': filled_px_f}, f)
 
     state = {'entered': True, 'entry_time': datetime.datetime.utcnow().isoformat(),
-             'entry_price_est': px, 'qty': qty}
+             'entry_price_est': filled_px_f, 'qty': filled_qty_f,
+             'order_id': o.id}
     save_state(state)
-    send_email("📈 SKHY 长期持仓 — 已建仓",
-               f"买入 SKHY {qty}股,预估入场价 ~${px}(等待理由: {reason})\n"
+    send_email("📈 SKHY 长期持仓 — 已建仓(已确认成交)",
+               f"买入 SKHY {filled_qty_f}股,实际成交均价 ~${filled_px_f}"
+               f"(等待理由: {reason}; 确信度检查: {reasoning[:200]})\n"
                f"目标价: ${TARGET_PRICE} 才卖出,中途不设止损,跌多少都不动。")
 
 
@@ -243,12 +314,27 @@ def manage_position(api):
 
     if current_px >= TARGET_PRICE:
         o = api.submit_order(symbol='SKHY', qty=p.qty, side='sell', type='market', time_in_force='day')
-        log(f"  ✓ TARGET HIT — SOLD SKHY qty={p.qty} @~${current_px:.2f} order={o.id[:8]}")
+        # 2026-08-13, user: "不要到时候出现卖出但是没有卖出...的情况" -- verify
+        # the sell actually filled before declaring done; a target-hit sell
+        # that only got ACCEPTED (not filled) and got marked DONE_MARKER
+        # anyway would leave a real position open with nothing watching it
+        # anymore (main() short-circuits once DONE_MARKER exists).
+        filled = _verify_fill(api, o.id)
+        if not filled:
+            log(f"  ⚠ SKHY sell order={o.id[:8]} did NOT confirm as filled -- NOT marking done, "
+                f"will re-attempt next tick since the position is presumably still open.")
+            send_email("⚠️ SKHY 目标价卖出未确认成交",
+                        f"现价${current_px:.2f}已达目标${TARGET_PRICE},提交了卖出订单但没能确认成交,"
+                        f"没有标记为已平仓,下一个tick会重新检查。")
+            return
+        filled_px_f = float(filled.filled_avg_price)
+        log(f"  ✓ TARGET HIT — SOLD SKHY qty={filled.filled_qty} @~${filled_px_f} order={o.id[:8]} status={filled.status}")
         with open(DONE_MARKER, 'w') as f:
             json.dump({'closed_at': datetime.datetime.utcnow().isoformat(),
-                        'exit_price': current_px, 'final_plpc': plpc}, f, indent=2)
-        send_email(f"🎯 SKHY 达到目标价 ${TARGET_PRICE} — 已卖出",
-                   f"卖出价 ~${current_px:.2f}\n最终盈亏: {plpc:+.2f}%")
+                        'exit_price': filled_px_f, 'final_plpc': plpc,
+                        'filled_qty': filled.filled_qty, 'order_id': o.id}, f, indent=2)
+        send_email(f"🎯 SKHY 达到目标价 ${TARGET_PRICE} — 已卖出(已确认成交)",
+                   f"实际成交价 ~${filled_px_f}\n最终盈亏: {plpc:+.2f}%")
     else:
         log(f"  未到目标价,继续持有(不设止损,这是刻意的设计)")
 
@@ -273,4 +359,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        log("UNCAUGHT EXCEPTION:")
+        log(traceback.format_exc())
