@@ -190,3 +190,31 @@ Sources:
 - [GRAIL, Inc. (GRAL) Latest Stock News & Headlines — Yahoo Finance](https://finance.yahoo.com/quote/GRAL/news/)
 
 
+### 2026-08-13 00:03 UTC 自动交叉验证
+- P&L: -6.5%
+- 4大师速览: BEARISH
+BUFFETT: WATCH — lacks durable moat and predictable cash flow
+MUNGER: Mistake if clinical utility fails to secure widespread insurance reimbursement
+DUAN(段永平): No — binary regulatory/adoption risk precludes a 10-year conviction
+LI_LU(李录): High risk of permanent loss until commercial scalability is proven
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: YES
+REASON: FDA clearance and widespread insurance reimbursement for Galleri remain the primary binary hurdles for commercial scaling.
+OVERALL: NEUTRAL
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.7459): **GRAL — 综合判断（第 9 次同因触发）**
+
+1. **论文还成立，而且论文其实存在** —— 「no saved thesis」是读取缺陷不是真相：建仓理由记在 `.daily_open_daytrade_DRYRUN_state.json` 里，赌的是 **9/23 已定档的 FDA 专家委员会**，六周事件仓，2.28% NAV。9/23 没有档期变动，从 +0.9% 跌到 -7.9% 是 8/5 Q2 难看（营收 ~$44.7M / 净亏 ~$110.2M，当日 -14%）带来的价格漂移，不是论文破裂。
+
+2. **4 大师说的全对，但答的是另一道题。** 无可预测现金流、二元监管、永久损失风险——四条全部正确，且**建仓第一天就成立**，所以这个 BEARISH 每 4 小时必然复现，不构成新信号。
+
+3. **Serenity 这次应判为无信号。** 它给 `CHOKEPOINT_INTACT: YES`，理由却是「等 FDA 批准和保险报销」——卡点问的是谁掐着别人脖子，这里是 FDA 和支付方掐着 GRAIL，方向反了（8/12 00:04 甚至据此读出 BULLISH）。
+
+4. **真正的新利空只有一条**：多家律所已就 **NHS-Galleri 试验主要终点的表述**提起证券集体诉讼——被告的正是 9/23 要审的那份数据包，叠加烧钱速度使**会前增发**从尾部风险变成实质概率。（此条来自付费调用引用的二手聚合源，未核对 10-Q 与法院 docket，标 `[UNSOURCED]`。）
+
+**建议：TRIM 到 ≤1% NAV，与 12 小时前一致、至今未执行。** 两面都说清：AdCom 若正面这是台阶式重估，现在砍就是错的；但用生活费押一个由 FDA 单点日历决定、数据包本身正被起诉、还要熬六周漂移的赌注，2.28% 太大。失效条件写死：**档期推迟 / 简报文件质疑主要终点 / 任何增发公告 → 清零，不等 9/23。**
+
+两件事仍被权限挡住（这是第 4 次提）：① `reports/GRAL/thesis.md` 我已写好完整内容，刚才写入被拒——**给权限我立刻落盘**，它就是这 9 次误读的根因；② `crossvalidate_satellite.py` 需加 **24h 同因冷却**，并让 `(no saved thesis found)` 直接**阻断**升级（当作数据缺陷处理），GRAL 一只票 48 小时烧掉 9 次触发、4 次付费深度调用。
+
+

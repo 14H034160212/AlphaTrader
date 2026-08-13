@@ -225,3 +225,31 @@ OVERALL: NEUTRAL
 - 放行改 `crossvalidate_satellite.py`：给"分歧/看空"加 per-symbol 同因 24h 冷却，reason 集合与上次完全相同且无新触发（价格突破 / 卡点 BROKEN / 到期复核）就跳过付费
 
 
+### 2026-08-13 00:00 UTC 自动交叉验证
+- P&L: -1.5%
+- 4大师速览: BEARISH
+BUFFETT: WATCH — sticky government contracts but lacks true pricing power.
+MUNGER: Mistake if the US government pivots permanently away from private incarceration.
+DUAN(段永平): No, political volatility precludes a predictable 10-year horizon.
+LI_LU(李录): High risk of permanent loss due to legislative fragility.
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: YES
+REASON: continued government dependence on private capacity for detention and reentry amid high migration volumes
+OVERALL: NEUTRAL
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.5221): ## CXW 综合判断（第 9 次同一触发，零新信息）
+
+1. **论文仍成立。** 建仓三条理由（ICE 扩容资金已立法落地→数季度收入可见度、投行目标价 $42–45、建仓时未过热）今天没有一条被推翻。"no saved thesis found" 是记账缺口——`reports/CXW/thesis.md` 我第 5 次尝试写入又被权限拦下——不是论文破损。
+
+2. **两个框架都有道理，只是在回答不同问题。** 四大师的 BEARISH 完全站得住（单一客户是联邦政府、护城河由政治意志构成，2016 DOJ 备忘录当日近腰斩和 2021 拜登行政令是**已发生的历史而非假想风险**），但那是对"持有十年"的否决——而这是数周催化剂交易，四大师 BEARISH 在 $33.17 建仓价里**已经定价**。Serenity 的 CHOKEPOINT_INTACT=YES 也对：床位实质双寡头，但**这是政治卡点不是技术卡点**，一道行政令就能溶解，所以"卡点成立"和"NEUTRAL"不矛盾。
+
+3. **本轮唯一真实变化不是这两份意见，而是价格：** 从 +2.3% 横了 5 轮后回吐到 -1.5%（08-12 20:00 记录）。Serenity 反而从 BULLISH 降回 NEUTRAL，触发条件从"两框架分歧+看空"退化为只剩"看空"——**信号是变弱了，不是变强了**。
+
+4. **建议：HOLD**，纪律不变——① 仓位硬顶 1.5%（现 1.27% ≈ $811）不加仓、不摊平；② $38–42 分批卖强势不等目标价打满；③ 跌破 $30 强制复核，任何联邦拘留政策/资金**反转**头条无条件离场；④ 11 月中期选举前强制复核。下行尾部按当前仓位只值约 0.4% 净值，不对称仍可接受。
+
+---
+
+**一句话的根治动作**（已烧掉 $2+ 付费复核，约 $2.4/天）：把 `serenity-trader-stack/` 加进写入允许列表。我要做两件事——补 thesis.md（内容已备好，含"四大师 BEARISH 是已定价前提"的降噪规则），以及给 `crossvalidate_satellite.py:626-644` 的「分歧/看空」加上和 infra 同款的 per-symbol 同因 24h 冷却。**只补文件解决不了**：CXW 的四大师是结构性永久 BEARISH，冷却期不加，每 4 小时照样重复烧钱。
+
+
