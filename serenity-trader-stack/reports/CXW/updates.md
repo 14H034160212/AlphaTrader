@@ -428,3 +428,29 @@ OVERALL: BULLISH
 要我现在跑 thesis-tracker 把这份论文正式归档吗？归档后下次交叉验证就不会再因为"无论文"误报。
 
 
+### 2026-08-14 08:01 UTC 自动交叉验证
+- P&L: -6.7%
+- 4大师速览: BEARISH
+BUFFETT: SELL - no durable moat due to extreme political/regulatory dependency
+MUNGER: Mistake if US federal policy permanently bans private prison contracts
+DUAN(段永平): No - business model is ethically fragile and politically unstable
+LI_LU(李录): BEARISH - high risk of permanent loss via "stroke-of-a-pen" legislation
+OVERALL: BEARISH
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: government dependence on private detention capacity for ICE and residential reentry remains a critical structural necessity
+OVERALL: BULLISH
+- **升级触发**: 两框架分歧 (4大师:BEARISH vs Serenity:BULLISH); 出现看空信号
+- **付费深度判断** ($0.1847): **综合判断：两边都对，只是时间窗口不同 —— 建议 TRIM（减仓一半左右），不清仓。**
+
+1. **Serenity 说得对，而且比 4 大师更贴近未来 2-3 年的现实**：ICE 拘留能力确实是政府自己填不上的卡点，而且关键是这笔钱已经**通过拨款立法锁定**（2025 年调解法案里的大额拘留预算），不是一纸行政令能撤的 —— 所以合同能见度是真实、有资金支撑的多年期，不是空中楼阁。
+
+2. **4 大师说得也对，但他们在回答一个不同的问题**：Buffett/李录 问的是"十年后这门生意还在不在"，答案确实是"取决于一次选举"。这是**期限错配**，不是分歧 —— CXW 可以同时是"未来 3 年现金流确定"和"不是可长期复利的一流生意"。按你自己定的长期持有、低换手标准，它本来就不该是核心仓，放卫星仓是对的。
+
+3. **两个方向都可能错**：往下错 —— 11 月中期选举后政策转向、或拨款在下一轮预算被削，估值瞬间杀一半；往上错 —— 执法强度继续加码、床位利用率和单价一起涨，现在减仓就错过后半程。而且股价此前已经大幅反映了这个逻辑，**现在是"故事已被定价"的位置，不是抄底位置**，这跟你"抄底不杀跌、卖高不追涨"的原则直接冲突 —— 在强势且已兑现的位置减，正是"卖高"。
+
+4. **关于"论文不成立"这个升级信号：那是假阳性。** 系统报 BROKEN 是因为根本没有 CXW 的论文存档文件，不是因为论文恶化 —— 跟之前 TEL 那次一模一样。
+
+**动作建议**：减到原仓位的一半，留一半吃完这轮已拨款周期；同时我把 CXW 的论文补写归档（明确写上"退出条件 = 拨款被削 / 中期选举后政策转向"），下次交叉验证就不会再拿这个误报来烦你。要我现在就补论文吗？
+
+

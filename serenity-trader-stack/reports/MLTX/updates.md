@@ -248,3 +248,17 @@ REASON: Sonelokimab's positive Phase 2 data in PsA and PsO maintains the path to
 OVERALL: BULLISH
 
 
+### 2026-08-14 08:04 UTC 自动交叉验证
+- P&L: -3.4%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH; no current earnings, moat is purely hypothetical pending trial success.
+MUNGER: Mistake if Sonelokimab fails to demonstrate clear superiority over existing IL-17 inhibitors.
+DUAN(段永平): No; binary clinical outcome is incompatible with 10-year business predictability.
+LI_LU(李录): HIGH RISK; significant risk of permanent loss if regulatory approval is denied.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Sonelokimab continues to demonstrate promising clinical efficacy and safety in Phase 2/3 trials for Hidradenitis Suppurativa and Psoriatic Arthritis.
+OVERALL: BULLISH
+
+
