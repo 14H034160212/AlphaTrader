@@ -234,3 +234,17 @@ REASON: Sonelokimab remains on track for critical Phase 3 data readouts in psori
 OVERALL: BULLISH
 
 
+### 2026-08-14 04:04 UTC 自动交叉验证
+- P&L: -3.4%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH - no moat yet, purely binary clinical outcome.
+MUNGER: Mistake if Sonelokimab fails to demonstrate clinical superiority/efficacy.
+DUAN: No, lacks the predictability required for a 10-year hold.
+LI_LU: High risk of permanent loss until commercial viability is proven.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Sonelokimab's positive Phase 2 data in PsA and PsO maintains the path toward Phase 3 trials.
+OVERALL: BULLISH
+
+

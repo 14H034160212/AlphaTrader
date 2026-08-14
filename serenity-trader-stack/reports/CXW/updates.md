@@ -400,3 +400,31 @@ OVERALL: NEUTRAL
 - **-5.5% 的归因我还没做**（是否有 DHS/ICE 政策头条）。因为仓位今天开盘就出清，归因不影响动作，但如果你想知道是不是真踩中了证伪条件，我可以补一次 news-pulse。
 
 
+### 2026-08-14 04:01 UTC 自动交叉验证
+- P&L: -6.7%
+- 4大师速览: BEARISH
+BUFFETT: SELL — no durable moat against political whim
+MUNGER: Mistake if bipartisan consensus shifts to ban private detention
+DUAN(段永平): No — business essence is tied to regulatory fragility
+LI_LU(李录): BEARISH — high risk of permanent loss via policy shift
+OVERALL: BEARISH
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Continued government reliance on private capacity for ICE detention and residential reentry due to high capital costs of public facility construction.
+OVERALL: BULLISH
+- **升级触发**: 两框架分歧 (4大师:BEARISH vs Serenity:BULLISH); 出现看空信号
+- **付费深度判断** ($0.2633): **综合判断：TRIM（减仓至约 5%，不清仓）**
+
+1. **"论文不成立"是假警报，但论文确实没归档。** 触发升级的"无 thesis"和上次 TEL 一样是文件缺失而非论文破裂——从 daytrade state 能还原出实际论文：联邦拘留合同流带来数季度收入可见度，目标价 $42–45 对现价 $33.60。这条论文目前没有被证伪，该补一份正式 thesis 存档。
+
+2. **两个框架其实没有真分歧，是在回答两个不同的问题。** 4大师问的是"值不值得长期持有"——答案是 NO，理由（护城河是政治意志、政策翻转即永久性损失）完全成立；Serenity 问的是"未来几个季度合同流还在不在"——答案是 YES，也成立。BEARISH vs BULLISH 是期限错配，不是矛盾。
+
+3. **Serenity 框架在 CXW 上属于越界使用，它的 BULLISH 应该打折。** Serenity 的卡点框架针对的是 AI/半导体/光模块/电力这类**物理+技术**瓶颈——扩产有客观 lead time，所以卡点有粘性。CXW 的"卡点"是**政治依赖**（公共设施建设成本高 → 政府外包），这种依赖一次选举或一次立法就能反转，没有物理惯性做缓冲。CHOKEPOINT_INTACT: YES 在技术上没说错，但它衡量的东西根本不具备 Serenity 卡点该有的持久性。
+
+4. **两边都错的情况各是什么：** 如果我砍掉——中期选举前执法预算继续扩张、合同续签、股价打到 $42-45，我错过 +25~34%；如果我不砍——政策风向转（两党共识转向限制私营拘留），这类名字是断崖式重定价，不是慢慢跌。10.5% 的仓位对一个"整个护城河 = 某届政府的执法政策"的名字来说太重了。
+
+**执行建议：减到 ~5%，保留仓位吃合同流催化剂，把政策反转的尾部风险砍掉一半。** 这是卖强不是杀跌（现价离目标价还有空间，不是被套割肉），也不用赌单一结果。同时把 CXW 标记为**交易仓（policy trade），不是复利仓**——它永远不该进长期持有池，止盈到 $42 附近就该全出。
+
+要我现在跑 thesis-tracker 把这份论文正式归档吗？归档后下次交叉验证就不会再因为"无论文"误报。
+
+
