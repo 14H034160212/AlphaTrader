@@ -220,3 +220,17 @@ REASON: Sonelokimab continues to show strong Phase 2 efficacy in Psoriatic Arthr
 OVERALL: BULLISH
 
 
+### 2026-08-14 00:04 UTC 自动交叉验证
+- P&L: -3.4%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — no present moat, only potential IP.
+MUNGER: Mistake if Sonelokimab fails to demonstrate clinical superiority over existing IL-17 inhibitors.
+DUAN: No — binary clinical outcomes are not durable business quality.
+LI_LU: High risk of permanent loss until Phase 3 success and commercialization.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Sonelokimab remains on track for critical Phase 3 data readouts in psoriasis and psoriatic arthritis.
+OVERALL: BULLISH
+
+

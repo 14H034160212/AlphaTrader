@@ -371,3 +371,32 @@ OVERALL: BEARISH
 - **付费深度判断** ($0.0000): 
 
 
+### 2026-08-14 00:01 UTC 自动交叉验证
+- P&L: -6.7%
+- 4大师速览: BEARISH
+BUFFETT: SELL; political volatility destroys any durable competitive advantage.
+MUNGER: Mistake if US federal policy permanently bans private prison contracts.
+DUAN(段永平): No; business model lacks the inherent quality for a decade-long hold.
+LI_LU(李录): BEARISH; extreme risk of permanent loss due to regulatory shifts.
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: YES
+REASON: continued government reliance on private capacity for detention and reentry due to systemic overcrowding
+OVERALL: NEUTRAL
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.5359): **结论：EXIT —— 而且这个 EXIT 已经在路上了，不需要新决定。**
+
+1. **这次升级和前 6 次不一样，第一次有真的新信息**：8/13 盘中 P&L 从 -1.4% 掉到 -6.9%（现 -6.7%），单场 ~5.5pp 的跳空型下跌，正是我 8/11 写进纪律里的第三条触发形态（政治尾部风险一次性兑现），而不是之前那种"同一个分歧反复响铃"。
+
+2. **论文本身仍成立，但已经不重要了**：ICE 扩容资金落地、床位供给实质双寡头、数季度收入可见度——这几条今天没被推翻，Serenity 的 CHOKEPOINT_INTACT: YES 是事实。但它是**政治卡点不是技术卡点**，配得上一个交易窗口，配不上在净值里带着过夜。
+
+3. **4 大师的 BEARISH 一直有道理，只是回答的是"值不值得持有十年"**（单一客户联邦政府、2016 DOJ 备忘录当日腰斩、2021 拜登行政令都是已发生的历史）——这条从建仓第一天起就是**已定价前提**，本身不构成今天的卖出理由；今天的卖出理由是那 5.5pp。
+
+4. **实际状态：真实账户的 CXW 已在 8/13 晚挂出卖单**（order `23a67812…`，随 SPY-only 转向排队到今天开盘成交），`complete_spy_rebalance_20260813.py` 的 DONE_MARKER 还没生成，说明尚未成交但已在队列里。**所以正确动作 = 不干预，让它在开盘平掉**，不要因为 -6.7% 临时改成"再看一天"。
+
+两件运维层面的事你需要知道：
+
+- **这轮升级第 7 次因"no saved thesis found"重复付费**（累计约 $2.5，其中 8/13 20:02 那次还因 Ollama 挂掉 + `claude -p` 180s 超时白烧）。CXW 出清后这个循环自然结束，但**同样的 thesis 写入阻塞会在下一个卫星仓标的重演**——根因是 `reports/*/thesis.md` 的写权限，和 RDY 那个 bug 卡在同一处。
+- **-5.5% 的归因我还没做**（是否有 DHS/ICE 政策头条）。因为仓位今天开盘就出清，归因不影响动作，但如果你想知道是不是真踩中了证伪条件，我可以补一次 news-pulse。
+
+
