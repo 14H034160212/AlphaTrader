@@ -262,3 +262,17 @@ REASON: Sonelokimab continues to demonstrate promising clinical efficacy and saf
 OVERALL: BULLISH
 
 
+### 2026-08-14 12:03 UTC 自动交叉验证
+- P&L: -3.4%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — no current moat, only speculative IP.
+MUNGER: Mistake if Sonelokimab fails pivotal trials or loses to incumbents.
+DUAN(段永平): No, lacks the predictability of a 10-year cash-flow business.
+LI_LU(李录): High risk of permanent loss until FDA approval.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: positive Phase 2 data and progression toward Phase 3 trials for HS and PsA validate the Nanobody's superior tissue penetration and efficacy.
+OVERALL: BULLISH
+
+

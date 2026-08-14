@@ -454,3 +454,19 @@ OVERALL: BULLISH
 **动作建议**：减到原仓位的一半，留一半吃完这轮已拨款周期；同时我把 CXW 的论文补写归档（明确写上"退出条件 = 拨款被削 / 中期选举后政策转向"），下次交叉验证就不会再拿这个误报来烦你。要我现在就补论文吗？
 
 
+### 2026-08-14 12:01 UTC 自动交叉验证
+- P&L: -6.7%
+- 4大师速览: BEARISH
+BUFFETT: SELL; thin moat due to high regulatory and political dependence.
+MUNGER: Mistake if government policy permanently shifts against private detention.
+DUAN(段永平): No; unattractive business model for a decade-long hold.
+LI_LU(李录): BEARISH; high risk of permanent loss via legislative volatility.
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: YES
+REASON: Persistent demand for detention capacity due to immigration pressures offsets political volatility regarding private prison contracts.
+OVERALL: NEUTRAL
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.0000): 
+
+
