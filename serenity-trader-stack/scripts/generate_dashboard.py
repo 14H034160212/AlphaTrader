@@ -48,6 +48,12 @@ PROJECT_NAME = 'serenity-alphatrader-live'
 INCEPTION_EQUITY = 61016.51
 INCEPTION_SPY_CLOSE = 754.81
 INCEPTION_DATE = '2026-07-16'
+# 2026-08-20: second regime boundary -- real account switched from active
+# stock-picking to SPY-only + a daily defensive SPY<->SGOV overlay (see
+# CLAUDE.md's 2026-08-13/08-18 entries). The "since inception" figures
+# above span BOTH regimes now; charts mark this second boundary too so
+# "since the CURRENT regime" is a direct read, not something to re-derive.
+SPY_ONLY_DATE = '2026-08-14'
 
 
 def log(msg):
@@ -342,7 +348,7 @@ CHART_COLOR_ACCOUNT = "#3987e5"
 CHART_COLOR_SPY = "#d95926"
 
 
-def render_trend_chart(history, marker_date=None, marker_label=None, rebase_date=None):
+def render_trend_chart(history, marker_date=None, marker_label=None, rebase_date=None, markers=None):
     """Cumulative % return line chart (account vs SPY) compounding each day's
     final_pl_pct/spy_pct chronologically -- the same figure as the 'since
     inception' stat card, but shown as a curve over time instead of one
@@ -420,32 +426,54 @@ def render_trend_chart(history, marker_date=None, marker_label=None, rebase_date
         for v in [v_min + v_span * f for f in (0.1, 0.5, 0.9)]
     )
 
+    # 2026-08-20, user asked "需要调整吗" after an honest strategy review --
+    # the real account switched regime a SECOND time (2026-08-14: from
+    # active stock-picking to SPY-only + defensive overlay), on top of the
+    # 07-16 switch this chart already marks. The "since inception" number
+    # now silently blends two more different regimes than before; extending
+    # this to a list of markers (each with its own "since" annotation for
+    # the one that represents the CURRENT regime) avoids re-explaining this
+    # blend verbally every time someone asks "why does this number..." --
+    # same fix shape as the original 08-12 marker, just generalized.
+    all_markers = list(markers) if markers else []
+    if marker_date:
+        all_markers.append({'date': marker_date, 'label': marker_label or marker_date})
+
     marker_svg = ""
-    if marker_date and marker_date in dates:
-        mi = dates.index(marker_date)
+    for idx, m in enumerate(all_markers):
+        mdate = m.get('date') if isinstance(m, dict) else m[0]
+        mlabel = (m.get('label') if isinstance(m, dict) else m[1]) or mdate
+        if not mdate or mdate not in dates:
+            continue
+        mi = dates.index(mdate)
         mx = x_at(mi)
-        marker_svg = (
+        # Alternate label vertical offset so two nearby markers' text
+        # doesn't collide.
+        lab_y = PAD_T - 4 if idx % 2 == 0 else PAD_T - 18
+        marker_svg += (
             f"<line x1='{mx:.1f}' y1='{PAD_T}' x2='{mx:.1f}' y2='{PAD_T+plot_h}' class='regime-line'/>"
-            f"<text x='{mx:.1f}' y='{PAD_T-4}' class='regime-lab' text-anchor='middle'>{esc(marker_label or marker_date)}</text>"
+            f"<text x='{mx:.1f}' y='{lab_y}' class='regime-lab' text-anchor='middle'>{esc(mlabel)}</text>"
         )
         # 2026-08-12, user: "为什么红线在蓝线上面，不是比标普500更好吗" --
         # the full curve shares one origin (the chart's very first day), so
-        # the pre-marker drawdown from the discontinued old strategy keeps
-        # the account line visually below SPY's for the WHOLE chart even
-        # though the SLOPE since the marker is steeper -- a reader has to
-        # mentally re-derive "since marker" from two absolute curves to see
-        # that. Compute and label it directly instead of making that a
-        # recurring verbal explanation.
-        since_acc = ((1 + acc_cum[-1] / 100) / (1 + acc_cum[mi] / 100) - 1) * 100
-        since_spy = ((1 + spy_cum[-1] / 100) / (1 + spy_cum[mi] / 100) - 1) * 100
-        anno_x = min(mx + 10, W - PAD_R - 168)
-        marker_svg += (
-            f"<g class='since-marker-anno'>"
-            f"<text x='{anno_x:.1f}' y='{PAD_T+14}' class='anno-lab'>此后(至今):</text>"
-            f"<text x='{anno_x:.1f}' y='{PAD_T+30}' class='anno-val' fill='{CHART_COLOR_ACCOUNT}'>本系统 {since_acc:+.2f}%</text>"
-            f"<text x='{anno_x:.1f}' y='{PAD_T+46}' class='anno-val' fill='{CHART_COLOR_SPY}'>SPY {since_spy:+.2f}%</text>"
-            f"</g>"
-        )
+        # a pre-marker drawdown keeps the account line visually below/above
+        # SPY's for the WHOLE chart even though the SLOPE since the marker
+        # tells a different story -- a reader has to mentally re-derive
+        # "since marker" from two absolute curves to see that. Compute and
+        # label it directly. Only the LAST marker gets this box (assumed to
+        # be the boundary of the CURRENT regime) -- one per older marker
+        # would clutter the chart without adding what a reader needs right now.
+        if idx == len(all_markers) - 1:
+            since_acc = ((1 + acc_cum[-1] / 100) / (1 + acc_cum[mi] / 100) - 1) * 100
+            since_spy = ((1 + spy_cum[-1] / 100) / (1 + spy_cum[mi] / 100) - 1) * 100
+            anno_x = min(mx + 10, W - PAD_R - 168)
+            marker_svg += (
+                f"<g class='since-marker-anno'>"
+                f"<text x='{anno_x:.1f}' y='{PAD_T+14}' class='anno-lab'>此后(至今):</text>"
+                f"<text x='{anno_x:.1f}' y='{PAD_T+30}' class='anno-val' fill='{CHART_COLOR_ACCOUNT}'>本系统 {since_acc:+.2f}%</text>"
+                f"<text x='{anno_x:.1f}' y='{PAD_T+46}' class='anno-val' fill='{CHART_COLOR_SPY}'>SPY {since_spy:+.2f}%</text>"
+                f"</g>"
+            )
 
     # 2026-08-12, user: "可以支持鼠标选择可以查看具体某个时段的情况" + "总
     # 金额的浮动变化" -- add a crosshair+tooltip hover layer (per the dataviz
@@ -485,7 +513,7 @@ def render_trend_chart(history, marker_date=None, marker_label=None, rebase_date
     <div class="legend">
       <span><i style="background:{CHART_COLOR_ACCOUNT}"></i>本系统累计收益</span>
       <span><i style="background:{CHART_COLOR_SPY}"></i>SPY同期累计</span>
-      {f"<span><i style='background:var(--muted)'></i>{esc(marker_label or marker_date)}(分割线)前为旧策略,已停用</span>" if marker_svg else ""}
+      {f"<span><i style='background:var(--muted)'></i>虚线 = 策略切换节点(每段之间不能按同一条策略评价)</span>" if marker_svg else ""}
     </div>
     <script>
     (function() {{
@@ -717,8 +745,11 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
     <div class="muted" style="font-size:12px;margin-bottom:6px;">
       只统计现在这套每日自动交易系统的表现,不含之前已停用的旧策略/实验阶段
       (那段历史拖累了整体数字,和评价"这套策略行不行"无关,见下方可展开的完整历史)。
+      黄色虚线({SPY_ONLY_DATE}) = 实盘从主动选股切换为纯SPY+防御性调仓,
+      虚线后的"此后(至今)"数字才是当前这套纯SPY策略自己的表现,虚线前是已停用的
+      主动选股期,两段不能按同一条策略评价。
     </div>
-    {render_trend_chart(full_track or history, rebase_date=INCEPTION_DATE) or "<p class='muted'>数据积累中,还不足以画出走势图</p>"}
+    {render_trend_chart(full_track or history, rebase_date=INCEPTION_DATE, markers=[{'date': SPY_ONLY_DATE, 'label': '转为纯SPY'}]) or "<p class='muted'>数据积累中,还不足以画出走势图</p>"}
     <table>
       <tr><th>日期</th><th>当日盈亏</th><th>同期SPY</th><th>当日选股</th></tr>
       {history_rows or "<tr><td colspan='4' class='muted'>暂无历史记录</td></tr>"}
@@ -729,8 +760,11 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
       </summary>
       <div style="margin-top:14px;">
         <div class="muted" style="font-size:12px;margin-bottom:6px;">
-          黄色虚线 = 当前每日自动交易系统上线日({INCEPTION_DATE});此前为已停用的旧策略/实验阶段,
-          两段不能按同一条策略评价——上方主图和"自inception以来"卡片只统计虚线之后。
+          两条黄色虚线标出两次策略切换：{INCEPTION_DATE} = 当前每日自动交易系统上线
+          (此前为已停用的旧策略/实验阶段)；{SPY_ONLY_DATE} = 实盘从主动选股切换为
+          纯SPY+防御性调仓。三段不能按同一条策略评价——上方主图和"自inception以来"
+          卡片只统计第一条虚线之后，"此后(至今)"标注对应最后一条虚线之后(即当前
+          纯SPY策略自己的表现)。
         </div>
         <div class="muted" style="font-size:12px;margin-bottom:6px;">
           注意:这条百分比曲线是逐日复合收益率(时间加权,和SPY同口径公平比较用),
@@ -741,7 +775,7 @@ def render_html(sub_pct, spy_pct, all_time_pct, pos_rows, state, history, watchb
           {('%+.2f%%' % all_time_pct) if all_time_pct is not None else 'n/a'} —— 这才是
           "我的钱实际变多了多少"的真实答案。
         </div>
-        {render_trend_chart(full_track or history, marker_date=INCEPTION_DATE, marker_label="当前策略上线") or ""}
+        {render_trend_chart(full_track or history, markers=[{'date': INCEPTION_DATE, 'label': '当前策略上线'}, {'date': SPY_ONLY_DATE, 'label': '转为纯SPY'}]) or ""}
       </div>
     </details>
   </section>
