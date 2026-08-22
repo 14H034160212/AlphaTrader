@@ -136,3 +136,26 @@
   - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
   - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
   - Enterprise AI adoption: Who's actually winning?
+
+## 2026-08-22
+- 本周提及热度排序 (受益标的): Anthropic (via GOOGL/AMZN investment)(2), OpenAI (via MSFT infra/investment)(2), Google/GOOGL(1)
+- 消费端App排名:
+  - GenAI Chatbots: August 2026 Apptopia Data Brief, Global Downloads Growth Goes Negative - Apptopia
+  - AI Took Three of the Top Ten App Download Spots in April
+  - GenAI Chatbots: July 2026 Apptopia Data Brief, 86% of People Use Just One Chatbot - Apptopia
+  - Gen AI Chatbots: March 2026 Apptopia Data Brief, Claude Gets Traction - Apptopia
+- 开发者/API调用份额:
+  - LLM Rankings
+  - OpenRouter Usage & Churn — ort.fabryka.ai
+  - AI Market Share 2026 - Provider Share of OpenRouter Usage | whatstrending.ai
+  - OpenRouter LLM Market — Research Memo
+- 网站流量对比:
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - AI Search Stats in 2026 | Similarweb
+  - Analysis of Top AI Search Engines: Who Is Catching Up to ChatGPT?
+  - Winners and Losers in the Gen AI Market | Similarweb
+- 企业级采用率:
+  - Xensam Insights: Enterprise AI Adoption Report, H1 2026 - Xensam
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
+  - State of AI Usage Report 2026 - LayerXLayerX
