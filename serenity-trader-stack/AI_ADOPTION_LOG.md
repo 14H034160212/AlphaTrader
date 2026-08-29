@@ -159,3 +159,16 @@
   - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
   - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
   - State of AI Usage Report 2026 - LayerXLayerX
+
+## 2026-08-29
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(3), Anthropic (via GOOGL/AMZN investment)(2), Meta/META(1), Google/GOOGL(1)
+- 消费端App排名:
+  - GenAI Chatbots: August 2026 Apptopia Data Brief, Global Downloads Growth Goes Negative - Apptopia
+  - AI Took Three of the Top Ten App Download Spots in April
+  - ChatGPT Loses Ground As Claude Surges In App Downloads
+  - ChatGPT vs Meta AI: App Store Comparison
+- 企业级采用率:
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - State of AI Usage Report 2026 - LayerXLayerX
+  - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
+  - Cyberhaven 2026 AI Adoption and Risk Report: Six-Month Update
