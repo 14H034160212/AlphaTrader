@@ -123,3 +123,27 @@ OVERALL: BULLISH
 修法很简单：`crossvalidate_satellite.py:147` 的 `CORE = {'SPY', 'QQQ', 'BRK.B'}` 加上 `IAU` 和 `SGOV`——它们和 SPY 一样是结构性配置腿，本来就不该进单名论文追踪循环。我准备好了这个改动（含注释说明原因），但写文件权限被拒了，需要你批准后我再执行。
 
 
+### 2026-09-04 16:00 UTC 自动交叉验证
+- P&L: -0.9%
+- 4大师速览: BEARISH
+BUFFETT: SELL — non-productive asset with no cash flow.
+MUNGER: Mistake if gold's psychological premium as a hedge vanishes.
+DUAN(段永平): No — it is a commodity, not a business.
+LI_LU(李录): NEUTRAL — preserves value but lacks compounding potential.
+OVERALL: BEARISH
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Geopolitical instability and central bank accumulation continue to support the intrinsic value of gold.
+OVERALL: BULLISH
+- **升级触发**: 两框架分歧 (4大师:BEARISH vs Serenity:BULLISH); 出现看空信号
+- **付费深度判断** ($0.1837): **结论：HOLD，不动，这是一次框架错配的假阳性升级。**
+
+1. **两个框架都在用错的尺子量 IAU。** 4大师是"生意质量"框架——巴菲特/段永平对任何无现金流的大宗商品必然输出 SELL，这是框架定义决定的恒定输出，不是针对当前金价的新信息；Serenity 是供应链卡点框架，黄金根本没有"卡点"可拆，它给的 BULLISH 理由（地缘+央行购金）是通用宏观评论，不是它擅长的证据。**两框架分歧本身没有信息量。**
+
+2. **"论文不成立"的前提是错的——IAU 从来就没有股票式论文。** 它在 2026-09-03 的目标结构里是 85% SPY / 5% IAU 的**对冲腿**，持有理由是"与 SPY 低相关的保险"，不是"预期黄金跑赢"。用"卡点是否完好"来审它，答案永远是 N/A。而且它被标成"卫星仓"也是分类错误，它是核心配置的一部分。
+
+3. **真正会让我减仓的条件只有两个**，现在都没触发：一是 5% 权重因金价上涨漂移超过 ±2pp（届时按季度再平衡规则削回，属于纪律性卖高、不是看空）；二是整体结构调整。
+
+**建议：维持 5% 不动。** 同时该修的是代码不是仓位——`crossvalidate_satellite.py` 应该对非股票标的（ETF / 商品 / 债券）跳过 4大师+Serenity 双框架审查，否则 IAU、SGOV 这类持仓每次都会刷出同样的假警报（和之前 Ollama 超时、TEL 无论文档案两次假阳性是同一类问题）。需要我改这个过滤逻辑吗？
+
+
