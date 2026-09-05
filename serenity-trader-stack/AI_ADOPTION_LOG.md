@@ -172,3 +172,26 @@
   - State of AI Usage Report 2026 - LayerXLayerX
   - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
   - Cyberhaven 2026 AI Adoption and Risk Report: Six-Month Update
+
+## 2026-09-05
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(6), Google/GOOGL(5), Anthropic (via GOOGL/AMZN investment)(5), Meta/META(2)
+- 消费端App排名:
+  - AI Took Three of the Top Ten App Download Spots in April
+  - GenAI Chatbots: September 2026 Apptopia Data Brief, Meta AI Becomes Second Largest GenAI Chatbot Mobile App in US - Apptopia
+  - ChatGPT vs Meta AI: App Store Comparison
+  - ChatGPT still leads chatbot app downloads, but Gemini and Claude are closing the gap
+- 开发者/API调用份额:
+  - LLM Rankings
+  - AI Market Share 2026 - Provider Share of OpenRouter Usage | whatstrending.ai
+  - OpenRouter Leaderboard & LLM Rankings, Explained
+  - AI Model Leaderboard 2026 - Ranked by Usage | whatstrending.ai
+- 网站流量对比:
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - AI Search Stats in 2026 | Similarweb
+  - ChatGPT, Gemini, and Claude: How Generative AI Web Traffic Is Redistributing Across Three Distinct Moats - FourWeekMBA
+  - ChatGPT vs Gemini vs Claude Usage Market Share: 2026 Statistics and Demographics
+- 企业级采用率:
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - Enterprise AI adoption: Who's actually winning? ‒ Xensam
+  - AI Choice 2026: Why Licenses Don't Equal Adoption - Recon Analytics
+  - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
