@@ -452,3 +452,29 @@ REASON: sustained central bank demand and geopolitical volatility maintain gold'
 OVERALL: BULLISH
 
 
+### 2026-09-07 12:01 UTC 自动交叉验证
+- P&L: -1.0%
+- 4大师速览: BEARISH
+BUFFETT: SELL — non-productive asset with no earnings power.
+MUNGER: Mistake if productive capital consistently outperforms inert stores of value.
+DUAN(段永平): No — it is a commodity, not a business with a moat.
+LI_LU(李录): Neutral — zero compounding potential but low risk of total permanent loss.
+OVERALL: BEARISH
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: YES
+REASON: Gold continues to serve as the primary systemic hedge against geopolitical instability and currency devaluation.
+OVERALL: NEUTRAL
+- **升级触发**: 出现看空信号
+- **付费深度判断** ($0.2086): **结论：HOLD，不动。**
+
+1. **这次升级是误报，不是信号。** 四大师框架的评估对象是"有盈利能力和护城河的生意"，黄金按定义没有现金流——所以 BUFFETT/DUAN 的 SELL 在任何价格、任何日期都会给出同样答案。它不含任何新信息，属于分类错误（拿估值框架去评一个对冲工具），不构成卖出依据。
+
+2. **Serenity 的读法更贴近实际用途**：IAU 在组合里的角色是系统性对冲（地缘 + 货币贬值 + 我自己判断出错时的保险），不是复利资产。它的"卡点完好/中性"等于说"保险还在保险"，这是对的。
+
+3. **仓位定位也被标错了**：IAU 是 2026-09-03 定下的 85% SPY / 5% IAU 核心结构里的那 5%，不是卫星仓（`.satellite_target_pct.json` 目前 target 是 0.0，卫星仓根本是空的）。5% 的保险线本来就不该按"论文成立与否"来管理，只按再平衡带（±2pp）管理。
+
+4. **真正该修的是代码**：`crossvalidate_satellite.py` 应该把商品/大宗类 ETF（IAU、GLD、SLV 等）排除在四大师交叉验证之外，否则这个 BEARISH 会无限重复触发——和之前 RDY 幻觉、TEL 缺论文那两次误报是同一类问题（工具用错了对象）。
+
+要我现在去改交叉验证脚本的排除逻辑吗？还是先只把 IAU 加进白名单跑通？
+
+
