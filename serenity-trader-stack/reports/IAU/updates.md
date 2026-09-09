@@ -705,3 +705,31 @@ OVERALL: BULLISH
 **建议动作：**HOLD，不 TRIM 不 EXIT。附带两件事——(a) 给 IAU 补一份 thesis 文件写明"这是结构性对冲腿、非 alpha 仓"，(b) 把 IAU/SPY 从 `crossvalidate_satellite.py` 的扫描范围里排除，否则这个假阳性会像之前 RDY、TEL、SKHY 那样反复烧你的注意力。要我现在就做这两步吗？
 
 
+### 2026-09-09 08:00 UTC 自动交叉验证
+- P&L: -1.7%
+- 4大师速览: BEARISH
+BUFFETT: SELL — no productive capacity or cash flow.
+MUNGER: Mistake if non-productive assets are inferior to productive ones.
+DUAN(段永平): No — not a business that creates intrinsic value.
+LI_LU(李录): NEUTRAL — low risk of permanent loss but zero compounding.
+OVERALL: BEARISH
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Central bank diversification and geopolitical instability continue to provide strong fundamental support for gold prices.
+OVERALL: BULLISH
+- **升级触发**: 两框架分歧 (4大师:BEARISH vs Serenity:BULLISH); 出现看空信号
+- **付费深度判断** ($0.2017): ## IAU 综合判断
+
+**这次升级是框架错配，不是真信号。**
+
+1. **"没有原始论文"是对的，因为 IAU 本来就没有论文。** 它是 2026-09-03 目标结构（85% SPY / 5% IAU / 卫星储备）里的结构性对冲仓，不是卫星选股 —— 而 `.satellite_target_pct.json` 当前 target 是 0%，所以它被交叉验证脚本当成"卫星持仓"来审是分类错误。
+
+2. **4大师 BEARISH 是必然结论，不是新信息。** 巴菲特/芒格/段永平的框架核心就是"买生意、买自由现金流"，把这个框架套在任何非生产性资产上，输出永远是 SELL。李录给的 NEUTRAL（永久损失风险低、但零复利）才是这四个里唯一诚实的表述 —— 而"零复利"恰恰是我们买它的原因：它的作用是降低组合相关性，不是复利。
+
+3. **Serenity 的 BULLISH 理由（央行分散化 + 地缘不稳）方向对，但严格说 chokepoint 框架也不适用于黄金** —— 黄金没有卡点可言。两个框架在这里都是越界发言，分歧本身没有信息量。
+
+**建议：HOLD，维持 5% 不动。** 唯一该触发调整的条件是权重漂移超过 ±2pp（季度再平衡规则），而不是这两个框架的意见。
+
+**建议顺手修一个 bug：** `crossvalidate_satellite.py` 应该跳过结构性配置仓（SPY/IAU/SGOV 这类），只审真正的卫星选股 —— 否则每次跑都会对 SPY 和 IAU 报一次假升级，和之前 RDY、SKHY 那批噪音是同一类问题。要我改吗？
+
+
