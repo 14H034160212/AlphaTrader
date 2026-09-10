@@ -24,3 +24,17 @@ OVERALL: BULLISH
 补一句:我想拉实时报价确认当前浮盈幅度,但 Alpaca 取价的脚本写入和命令都被沙箱权限拦了,所以上面的 TRIM 是基于仓位与入场形状给的,与当前价位无关;如果你放开权限我可以把具体 trim 价位算出来。另外真正该修的是两个 bug:`crossvalidate_satellite.py` 应该把日内选股的 `reasons` 也当作论文来源,并且对非 AI/半导体标的直接跳过 Serenity 透镜,否则这类假升级还会反复出现。
 
 
+### 2026-09-10 20:00 UTC 自动交叉验证
+- P&L: -0.4%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — lacks predictable earnings and an established moat.
+MUNGER: Mistake if the lead candidate IMVT-1402 fails clinical endpoints.
+DUAN: No — binary clinical outcomes preclude a 10-year conviction hold.
+LI_LU: BEARISH — excessive risk of permanent loss typical of clinical-stage.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: IMVT-1402 remains a viable best-in-class candidate in the FcRn inhibitor space and the Vant spin-off model continues to function.
+OVERALL: BULLISH
+
+
