@@ -102,3 +102,17 @@ REASON: Clinical development of IMVT-1402 and the execution of the Vant model re
 OVERALL: BULLISH
 
 
+### 2026-09-11 12:01 UTC 自动交叉验证
+- P&L: -1.5%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH; lacks predictable earnings and an established moat.
+MUNGER: Lead candidates fail clinical trials or regulatory approval.
+DUAN(段永平): No; too binary and lacks predictable cash flows.
+LI_LU(李录): WATCH; binary outcomes create high risk of permanent loss.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: lead asset IMVT-1402 remains in clinical development and the Vant corporate structure persists
+OVERALL: BULLISH
+
+
