@@ -64,3 +64,27 @@ OVERALL: NEUTRAL
 另外这是**同一个假升级连续第二天**了，真正该修的还是那两个 bug：`crossvalidate_satellite.py` 应把日内选股的 `reasons` 也当论文来源，并对非 AI/半导体标的直接跳过 Serenity 透镜——要不要我现在动手改？
 
 
+### 2026-09-11 04:00 UTC 自动交叉验证
+- P&L: -1.0%
+- 4大师速览: BEARISH
+BUFFETT: SELL — no predictable earnings or durable moat.
+MUNGER: Mistake if clinical failures render the pipeline worthless.
+DUAN(段永平): No — lacks the predictability of a "great business."
+LI_LU(李录): BEARISH — high risk of permanent loss in binary biotech.
+OVERALL: BEARISH
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: IMVT-1402 remains in active clinical development with positive Phase 2 data and upcoming Phase 3 milestones.
+OVERALL: BULLISH
+- **升级触发**: 两框架分歧 (4大师:BEARISH vs Serenity:BULLISH); 出现看空信号
+- **付费深度判断** ($0.5812): 三天连续同一个假升级了。简明判断:
+
+1. **论文成立,"分歧"是假的。** ROIV 不是卫星仓,是 `daily_open_daytrade.py` 9/10 开盘建的催化剂选股(entry $40.3417 / 276.02 股 / 权重 17.9%),论文写在 `.daily_open_daytrade_state.json` 的 `reasons` 里:9/7 FDA 批准 Priovant 的 Lisraya 口服片治疗皮肌炎——已发生、不可逆,没被推翻。`crossvalidate_satellite.py` 只读 `reports/<TICKER>/`,读不到就报 "no saved thesis"。
+
+2. **两个框架都在域外空转,没有一句是证据。** 四大师对临床期/"Vant" 资本模式生物科技必然输出 BEARISH(要可预测盈利、要 10 年可见度,ROIV 结构上一条都过不了),和 IAU 那次黄金必然 BEARISH 同类。Serenity 是 AI/半导体卡点透镜,ROIV 不在它宇宙里——最能说明问题的是这三天它给的是 YES → BULLISH → BROKEN → 现在又 YES,基本面零变化,纯噪声。
+
+3. **建议:TRIM,和前两天一致,而且现在更该动手。** 理由不是框架看空,是仓位形状:17.9% 单一事件驱动生物科技、建仓时已 +12.2%(高位追进,违反"抄底不杀跌、卖高不追涨"),9/10 起实盘 1:1 无上限镜像,这是真钱在扛。皮肌炎 TAM 有限、一次性重估两个交易日走完,而 ROIV 大部分价值系于 Immunovant/IMVT-1402——这次审批跟那个价值驱动无关,所以没有升级成长期持仓的路径。砍到 5–8% 留尾仓,**不要 EXIT**。
+
+两点说明:实时报价我又拉不到(`quote.sh` 和写临时脚本都被权限拦了),所以 TRIM 建议与当前价位无关;另外 state 文件显示仓位仍是 276.0207 股 / 17.9%,**前两天的 TRIM 建议一次都没执行过**。要我现在改 `crossvalidate_satellite.py`(把日内选股 `reasons` 当论文源 + 非 AI/半导体标的跳过 Serenity 透镜)并执行 TRIM 吗?给权限我一次做完。
+
+
