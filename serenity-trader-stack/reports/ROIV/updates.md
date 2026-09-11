@@ -38,3 +38,29 @@ REASON: IMVT-1402 remains a viable best-in-class candidate in the FcRn inhibitor
 OVERALL: BULLISH
 
 
+### 2026-09-11 00:01 UTC 自动交叉验证
+- P&L: -1.0%
+- 4大师速览: NEUTRAL
+BUFFETT: WATCH — no predictable earnings or established moat.
+MUNGER: Primary clinical candidates fail or regulatory approval is denied.
+DUAN(段永平): No — too speculative to qualify as a high-quality business for 10 years.
+LI_LU(李录): High risk of permanent loss until commercialization is proven.
+OVERALL: NEUTRAL
+- Serenity速览: NEUTRAL
+CHOKEPOINT_INTACT: BROKEN
+REASON: no original thesis found for verification
+OVERALL: NEUTRAL
+- **升级触发**: Serenity 判定卡点逻辑已破
+- **付费深度判断** ($0.4127): 已查过本地记录，结论和昨天那次付费深度复核一致：
+
+**1. 论文成立，"no saved thesis" 是管道假信号。** ROIV 不是卫星仓论文位，是 `daily_open_daytrade.py` 9/10 开盘建的催化剂选股（entry $40.3417 / 276.02 股 / 权重 17.9%），论文写在 `.daily_open_daytrade_state.json` 的 `reasons` 里：9/7 FDA 批准 Priovant 的 Lisraya 口服片治疗皮肌炎，首个获批口服疗法。`crossvalidate_satellite.py` 只读 `reports/<TICKER>/` 目录，读不到就判 BROKEN——这跟 TEL 那次是同一个已知假阳性。审批是已发生、不可逆的事实，没有被推翻。
+
+**2. 两个框架的判断都没道理，都在自己域外空转。** 四大师对临床期 / "Vant" 资本模式的生物科技必然输出 BEARISH/NEUTRAL（要可预测盈利、要 10 年可见度，ROIV 结构上一条都过不了），和 IAU 那次黄金必然 BEARISH 一样是框架结构性输出，不是卖出证据。Serenity 是 AI/半导体供应链卡点透镜，ROIV 根本不在它宇宙里——最能说明问题的是：昨天同一个透镜还给 `CHOKEPOINT_INTACT: YES`，今天变 BROKEN，理由是"找不到论文文件"，没有任何基本面变化。**"卡点逻辑已破"这句话零信息量。**
+
+**3. 建议：TRIM（维持昨天判断，且现在更紧迫）。** 理由不是框架看空，而是仓位形状：17.9% 单一事件驱动生物科技、建仓时已 +12.2%（高位追进，违反"抄底不杀跌、卖高不追涨"），而 9/10 起实盘已 1:1 无上限镜像这个模拟盘——这个权重现在是真金白银在承担。砍到 5–8% 兑现审批溢价、留尾仓，不要 EXIT（没有任何真实看空证据）。皮肌炎是罕见病、TAM 有限，一次性重估两个交易日基本走完，且 ROIV 大部分价值系于 Immunovant/IMVT-1402，这次审批与那个价值驱动无关，所以它没有升级成长期持仓的路径。
+
+说明一下：我没能拉到实时报价确认当前浮盈（沙箱里没有装 alpaca 的 python 环境，探测命令被权限拦了），上面的 TRIM 是基于仓位形状给的，与当前价位无关；要具体 trim 价位的话放开权限我再算。
+
+另外这是**同一个假升级连续第二天**了，真正该修的还是那两个 bug：`crossvalidate_satellite.py` 应把日内选股的 `reasons` 也当论文来源，并对非 AI/半导体标的直接跳过 Serenity 透镜——要不要我现在动手改？
+
+
