@@ -2618,3 +2618,29 @@ REASON: short-term US Treasury yields continue to provide stable income and capi
 OVERALL: BULLISH
 
 
+### 2026-09-18 20:00 UTC 自动交叉验证
+- P&L: +0.1%
+- 4大师速览: NEUTRAL
+BUFFETT: HOLD — essentially cash yielding the risk-free rate
+MUNGER: Mistake if US sovereign defaults or hyperinflation occurs
+DUAN(段永平): No, it is a storage vehicle, not a compounding business
+LI_LU: Minimal risk of permanent loss, but no long-term compounding
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: Federal Funds Rate remains at elevated levels providing steady yield with minimal duration risk
+OVERALL: BULLISH
+- **升级触发**: 距上次深度复核已 7 天
+- **付费深度判断** ($0.4408): **建议：HOLD（此次升级是分类错误，不是信号）**
+
+1. **论文无从"破"**：SGOV 是 0-3 个月美债 ETF，久期约 0.1 年，本质就是带息现金。它没有"论文"可言——所以 "no saved thesis found" 是预期内的，不是缺失。唯一的真实变量是降息使收益率下行，那影响的是收益率而非本金，不构成持仓理由的破坏。
+
+2. **4大师的 NEUTRAL 是同义反复**：段永平说"它是储值工具不是复利生意"、芒格说"除非美国主权违约"——这些对任何现金等价物都必然成立，是框架的结构性输出，零增量信息。
+
+3. **Serenity 的 BULLISH 更没意义**：Serenity 框架是 AI/半导体供应链卡点分析，套到短债 ETF 上只能产出"利率高位所以有收益"这种空洞合理化。**两个框架对 SGOV 都结构性不适用，所以它们的一致或分歧都不该被当作证据。**
+
+4. **这是 IAU 那次的复发**：crossvalidate_satellite.py 把结构性持仓（黄金对冲、现金等价）当卫星仓扫描。现金仓被反复质疑尤其危险——它直接施压于 20% 现金底线。
+
+已更新记忆（合并进 IAU 那条，未新建重复条目）。真正的修复是给 `crossvalidate_satellite.py` 加结构性持仓豁免名单（SPY / IAU / SGOV / BIL / SHV），要我现在动手改吗？
+
+
