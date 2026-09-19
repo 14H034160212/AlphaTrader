@@ -218,3 +218,26 @@
   - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
   - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
   - Cyberhaven 2026 AI Adoption and Risk Report: Six-Month Update
+
+## 2026-09-19
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(6), Google/GOOGL(4), Anthropic (via GOOGL/AMZN investment)(4), Meta/META(2), Microsoft/MSFT(1)
+- 消费端App排名:
+  - Top AI Apps — Live Daily Leaderboard (App Store + Google Play + Web)
+  - ChatGPT vs Meta AI: App Store and Google Play Comparison
+  - GenAI Chatbots: September 2026 Apptopia Data Brief, Meta AI Becomes Second Largest GenAI Chatbot Mobile App in US - Apptopia
+  - ChatGPT and Gemini battle for the top spot in app installs
+- 开发者/API调用份额:
+  - LLM Rankings | OpenRouter
+  - AI Market Share 2026 - Provider Share of OpenRouter Usage | whatstrending.ai
+  - AI Model Leaderboard 2026 - Ranked by Usage | whatstrending.ai
+  - Most-Used AI Models: OpenRouter Usage Rankings
+- 网站流量对比:
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - AI Search Stats in 2026 | Similarweb
+  - ChatGPT vs Gemini vs Claude Usage Market Share: 2026 Statistics and Demographics
+  - Claude vs. ChatGPT: 2026 Data Comparison | Similarweb
+- 企业级采用率:
+  - Enterprise AI adoption: Who's actually winning? ‒ Xensam
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
+  - The State of Microsoft Copilot in the Enterprise 2026: Adoption, ROI, and the Trust Gap | AdTools.org
