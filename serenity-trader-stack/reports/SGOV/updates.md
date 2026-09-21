@@ -2868,3 +2868,17 @@ REASON: short-term US Treasury yields remain positive and the US government cont
 OVERALL: NEUTRAL
 
 
+### 2026-09-21 16:00 UTC 自动交叉验证
+- P&L: +0.1%
+- 4大师速览: NEUTRAL
+BUFFETT: HOLD — cash equivalent with no competitive moat.
+MUNGER: Mistake if US sovereign credit fails.
+DUAN: No — not a business with enduring value.
+LI_LU: Safe — nominal risk of permanent loss.
+OVERALL: NEUTRAL
+- Serenity速览: BULLISH
+CHOKEPOINT_INTACT: YES
+REASON: US Treasury bills under 3 months continue to serve as the global gold standard for risk-free liquid assets.
+OVERALL: BULLISH
+
+
