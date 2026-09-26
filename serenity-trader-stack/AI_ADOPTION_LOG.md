@@ -241,3 +241,26 @@
   - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
   - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
   - The State of Microsoft Copilot in the Enterprise 2026: Adoption, ROI, and the Trust Gap | AdTools.org
+
+## 2026-09-26
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(8), Anthropic (via GOOGL/AMZN investment)(4), Google/GOOGL(3), Microsoft/MSFT(1)
+- 消费端App排名:
+  - Compare Apps - App Store ratings, rankings, releases, and tech stacks | Tech Dev Notes
+  - Bernstein Analysis: ChatGPT's Share Drops to 64%, the Consumer AI Battle Is Shifting Toward Agents - BlockBeats
+  - How Meta’s Muse AI agent downloads compare to ChatGPT, Grok and Claude – Economy World
+  - Meta Muse AI App Tops US Charts Over ChatGPT
+- 开发者/API调用份额:
+  - LLM Rankings
+  - LLM Rankings | OpenRouter
+  - Data - Authoritative AI Usage Data for Research
+  - OpenRouter rankings
+- 网站流量对比:
+  - ChatGPT vs Claude vs Gemini vs Perplexity
+  - AI Search Stats in 2026 | Similarweb
+  - Claude vs. ChatGPT: 2026 Data Comparison | Similarweb
+  - chatgpt.com AI Traffic Stats & Top Pages | Similarweb
+- 企业级采用率:
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - Enterprise AI adoption: Who's actually winning? ‒ Xensam
+  - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
+  - Cyberhaven 2026 AI Adoption and Risk Report: Six-Month Update
