@@ -244,3 +244,25 @@ REASON: Continued critical dependency on AI accelerators and advanced foundry ca
 OVERALL: BULLISH
 
 
+### 2026-09-27 12:08 UTC 自动交叉验证
+- P&L: +3.2%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **付费深度判断** ($0.5389): ## SOXX 综合判断
+
+**这次升级是 infra 误报，不是投资信号。** 04:18 UTC 那一跳的触发原因是"本地 Ollama 两路都返回空"——纯粹是模型调用失败，两个框架**根本没有给出任何判断**，所以"本地两个框架的判断有没有道理"这个问题在这次无从谈起。关键证据：紧随其后的 **08:03 UTC 那一跳已经正常跑通**，4 大师 BULLISH、Serenity CHOKEPOINT_INTACT: YES，说明 Ollama 在线，只是某次调用超时/冷启动卡死（和 memory 里记录过的 gemma4:31b 冷启动 vs 120s 超时是同一个老毛病；`pgrep` 也确认多个 ollama serve 进程都活着）。
+
+**论文仍然成立**，但更准确的说法是：SOXX 是 iShares 半导体 ETF，本来就不该有"个股论文"——9/24 那次已经做过一次付费深度复核（`reports/SOXX/updates.md:14-24`），结论是分类错误：它是指数/beta 敞口，不是卫星仓个股，4 大师对 ETF 只能吐行业层面的正确废话，Serenity 的 EUV/先进制程卡点判断方向对但对 ETF 是稀释适用。P&L 目前 +3.2%，近两周所有跑通的循环全是 BULLISH，没有任何基本面恶化迹象。
+
+**建议：HOLD**，不 TRIM 不 EXIT。
+
+两件配套事项还是没做，所以误报在反复消耗（9/24 分类误报 → 9/25 16:01 "no original thesis found" 误报 → 今天 infra 误报，三种不同触发条件同一个根因）：
+1. 把 SOXX 从卫星仓交叉验证名单移到指数/beta 名单；
+2. `crossvalidate_satellite.py` 的 Ollama 超时应该调长 + 失败时重试，而不是把 infra 故障升级成人工确认。
+
+要不要我现在就动手改这两处？
+
+
