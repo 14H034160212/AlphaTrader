@@ -304,3 +304,25 @@ REASON: AI-driven demand for high-performance compute and foundry concentration 
 OVERALL: BULLISH
 
 
+### 2026-09-28 04:09 UTC 自动交叉验证
+- P&L: +1.3%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **付费深度判断** ($0.6199): ## SOXX 判断：HOLD（不动作）
+
+1. **这不是投资信号，是 infra 误报 —— 今天已经是第三次。** 触发原因是"本地 Ollama 两路都返回空"，两个框架**根本没输出任何判断**，所以"本地判断有没有道理"这题无从谈起。`pgrep` 确认多个 ollama serve 进程全部在线；更硬的证据是 **9/28 00:01 那一跳跑通了**（4大师 BULLISH、Serenity CHOKEPOINT_INTACT: YES），中间只是某次调用冷启动/超时卡死 —— 跟 memory 里 gemma4:31b 冷启动 vs 120s 超时那个老毛病同源（9/27 04:18、12:08、16:06 三次同样症状，中间几跳都正常）。
+
+2. **论文仍然成立。** SOXX 是 iShares 半导体 ETF，"无保存论文"本来就是分类错误 —— 9/24 已经付费深度复核过一次（`reports/SOXX/updates.md:14-24`），结论是它属于指数/beta 敞口而非卫星仓个股；4大师对 ETF 只能吐行业层面的正确废话，Serenity 的 EUV/先进制程卡点判断方向对但对 ETF 是稀释适用。P&L +3.2%，近四天所有跑通的循环无一例外 BULLISH，零基本面恶化迹象。
+
+3. **建议 HOLD，不 TRIM 不 EXIT。** 真正该盯的不是砍仓，是重叠度 —— 如果组合里已单独持有 NVDA/AVGO/MU/TSM，SOXX 在悄悄放大同一份半导体敞口。
+
+**配套修复（9/27 提过，一直没做，误报仍在反复消耗付费额度）：**
+1. 把 SOXX 从卫星仓交叉验证名单移到指数/beta 名单；
+2. `crossvalidate_satellite.py` 的 Ollama 超时调长 + 失败重试，而不是把 infra 故障升级成人工确认。
+
+这两处我可以现在直接改掉 —— 都是纯配置/容错层，不碰任何下单逻辑。要动手吗？
+
+
