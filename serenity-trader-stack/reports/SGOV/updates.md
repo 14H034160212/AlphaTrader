@@ -3464,3 +3464,23 @@ REASON: US Treasury bills remain the premier global benchmark for risk-free liqu
 OVERALL: NEUTRAL
 
 
+### 2026-09-28 16:00 UTC 自动交叉验证
+- P&L: +0.2%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **付费深度判断** ($0.2796): **结论：HOLD，不动。这是一次假升级，不是仓位信号。**
+
+1. **论文成立与否，不适用**——SGOV 是 0–3 个月美债 ETF，是现金等价物/流动性桶，本来就没有"论文"可破。"no saved thesis found" 是分类错误，不是论文缺失，和之前 IAU 被当卫星仓跑四大师是同一个 bug。
+
+2. **本地两个框架这次没有判断**——两路返回空是 Ollama 冷启动/超时的老毛病（和 `crossvalidate_satellite.py` 120s timeout vs gemma4:31b 的已知假阳性一致）。而且今天 00:00 / 04:08 / 08:00 / 12:00 四次跑都成功了（4大师 NEUTRAL、Serenity NEUTRAL~BULLISH、CHOKEPOINT_INTACT: YES），模型显然在线，只是这一跑没响应。
+
+3. **即使框架有输出也没有信息量**——四大师对一个不产生自由现金流、无护城河的国债工具必然给 NEUTRAL/"不是生意"，这是框架的结构性输出，不是卖出理由。SGOV 的持有理由只有一条：它是 20% 现金地板的载体，短端收益率仍在高位，价格波动近零。这条没变。
+
+4. **该修的是代码**——`crossvalidate_satellite.py` 需要给现金/对冲类标的（SGOV、BIL、IAU、GLD）加白名单跳过。这个建议在 reports/SGOV/updates.md 里已经提过一次，至今没落地，所以假升级还在反复烧你的注意力。**要我现在直接改掉吗？**
+
+**建议：HOLD**，不 TRIM 不 EXIT——动它等于破 20% 现金地板。
+
+
