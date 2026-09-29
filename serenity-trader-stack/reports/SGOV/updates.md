@@ -3514,3 +3514,13 @@ OVERALL: NEUTRAL
 建议顺手修两件事（都不紧急）：把 `crossvalidate_satellite.py` 的 thesis 查找路径修成能读到 `reports/<TICKER>/updates.md`，并给 SGOV/IAU 这类现金与对冲工具加白名单跳过卫星仓交叉验证——否则这个假警报每次都会再来一遍。要我现在改吗？
 
 
+### 2026-09-29 04:00 UTC 自动交叉验证
+- P&L: +0.2%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
+
+
