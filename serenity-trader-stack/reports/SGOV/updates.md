@@ -3612,3 +3612,25 @@ OVERALL: NEUTRAL
 - **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
 
 
+### 2026-09-30 08:00 UTC 自动交叉验证
+- P&L: +0.2%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **付费深度判断** ($0.4145): **建议：HOLD（这次升级是零信息量的假信号，不需要任何动作）。**
+
+1. **论文无从"破"** —— SGOV 是 0-3 个月美债 ETF，久期 ~0.1 年，是现金等价物而非选股仓。"no saved thesis" 是预期内的：它的依据在组合结构（20% 现金底线）里，不在 `reports/` 的个股论文里。当前 P&L +0.2%，唯一真实变量是降息导致票息下行，不构成价格风险。
+
+2. **两个本地框架这次根本没出判断** —— 不是"分歧"，是两路都空。我查了 `crossvalidate.log`：9/30 04:00 和 08:00 两轮全部是 `port=11435 Connection refused`，**11435 那个 ollama 实例还是死的**（这是 9/29 以来的第四次复发；机器上 7 个 ollama serve 进程没一个是它，11434 上装的是 qwen3.6，不是脚本要的 gemma4:31b）。所以"模型是否在线"的答案是：**不在线，需要重启**。
+
+3. 即使模型在线，4 大师和 Serenity 框架对 SGOV 也**结构性不适用**（四大师必然说"停车位不复利"，Serenity 是 AI/半导体卡点框架），历史上每次输出都是空洞合理化——这类升级永远不该产生卖出压力，尤其它直接冲击现金底线。
+
+**两项待批准的修复（都因权限阻塞，重复提醒）：**
+- 重启 daemon：`OLLAMA_HOST=127.0.0.1:11435 OLLAMA_MODELS=/data/qbao775/.ollama-new /usr/local/bin/ollama serve &`
+- 给 `crossvalidate_satellite.py` 加结构性持仓豁免名单（把已有的 `CORE` 提成模块级 `STRUCTURAL_HOLDINGS = {'SPY','QQQ','BRK.B','SGOV','BIL','SHV','IAU'}`，同时用在 ~line 753 的 `held_symbols` 并集，否则豁免后 SGOV 会被当成"未持有"重新推荐买入）
+
+不落地这两项，每 4 小时一轮的 SGOV + SOXX 噪音会一直叠加。要我动手改吗？
+
+
