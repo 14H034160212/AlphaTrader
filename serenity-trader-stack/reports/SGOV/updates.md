@@ -3758,3 +3758,21 @@ OVERALL: NEUTRAL
 - **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
 
 
+### 2026-10-02 04:00 UTC 自动交叉验证
+- P&L: -0.1%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **付费深度判断** ($0.4408): **判断：HOLD，这是一次结构性误报，不是信号。**
+
+1. **SGOV 不是卫星仓标的，它就是现金。** iShares 0-3 个月美债 ETF，久期近零、价格几乎不波动，它在组合里的角色是 20% 现金底线的存放容器——"论文"本来就不该存在，所以 "no saved thesis found" 不是论文破损，是分类错误（和 [[project_iau_crossvalidate_category_error]] 的 IAU 同一个病根）。
+
+2. **本地两个框架的空输出没有信息量。** 4 大师框架（巴菲特/芒格/段永平/李录）和 Serenity 供应链卡点框架都是为**经营性企业**设计的——护城河、ROIC、产业瓶颈。把一个 T-bill 基金喂进去，要么返回空，要么只能硬凑出"没有护城河、BEARISH"这类框架性必然输出。两路返回空，反而比返回一个假结论更诚实。
+
+3. **"Ollama 是否在线"也不是真问题。** 按既往记录（[[project_ollama_crossvalidate_false_positive]]），`crossvalidate_satellite.py` 的超时对 gemma4:31b 冷启动太短，反复误报"离线"；即使这次真离线，也不构成对 SGOV 的任何卖出依据。
+
+**建议：HOLD，不动。** 唯一该动的是代码——`scripts/crossvalidate_satellite.py` 里没有任何现金/对冲类标的的豁免名单（我 grep 过，`IAU`/`SGOV`/`EXCLUDE` 全无匹配），所以 SGOV、SGOV 类货币工具、IAU 这类结构性对冲仓会持续触发这种空论文+空分析的升级。要不要我加一个 `NON_THESIS_SYMBOLS` 豁免集合（现金等价物 + 对冲仓直接跳过交叉验证并标注原因），顺手把冷启动超时也放宽？
+
+
