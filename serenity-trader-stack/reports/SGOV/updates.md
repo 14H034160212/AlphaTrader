@@ -3776,3 +3776,13 @@ OVERALL: NEUTRAL
 **建议：HOLD，不动。** 唯一该动的是代码——`scripts/crossvalidate_satellite.py` 里没有任何现金/对冲类标的的豁免名单（我 grep 过，`IAU`/`SGOV`/`EXCLUDE` 全无匹配），所以 SGOV、SGOV 类货币工具、IAU 这类结构性对冲仓会持续触发这种空论文+空分析的升级。要不要我加一个 `NON_THESIS_SYMBOLS` 豁免集合（现金等价物 + 对冲仓直接跳过交叉验证并标注原因），顺手把冷启动超时也放宽？
 
 
+### 2026-10-02 08:00 UTC 自动交叉验证
+- P&L: -0.1%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
+
+
