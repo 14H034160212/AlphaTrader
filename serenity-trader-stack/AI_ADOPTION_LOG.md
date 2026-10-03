@@ -264,3 +264,26 @@
   - Enterprise AI adoption: Who's actually winning? ‒ Xensam
   - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
   - Cyberhaven 2026 AI Adoption and Risk Report: Six-Month Update
+
+## 2026-10-03
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(6), Anthropic (via GOOGL/AMZN investment)(5), Meta/META(1), Google/GOOGL(1), Microsoft/MSFT(1)
+- 消费端App排名:
+  - Meta's Muse AI agent downloads are surging. Here's how it compares to ChatGPT, Grok and Claude - Jingletree
+  - Meta’s Muse AI hits 5 million downloads in 22 days, outpacing ChatGPT, Grok and Claude - Tech Startups
+  - GenAI Chatbots: September 2026 Apptopia Data Brief, Meta AI Becomes Second Largest GenAI Chatbot Mobile App in US - Apptopia
+  - Top Apps in Guatemala - App Store & Google Play Rankings | Tech Dev Notes
+- 开发者/API调用份额:
+  - LLM Rankings
+  - Data - Authoritative AI Usage Data for Research
+  - OpenRouter Model Author Token Share by Month
+  - LLM Rankings | OpenRouter
+- 网站流量对比:
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - AI Search Stats in 2026 | Similarweb
+  - Claude vs. ChatGPT: 2026 Data Comparison | Similarweb
+  - chatgpt.com AI Traffic Stats & Top Pages | Similarweb
+- 企业级采用率:
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - Enterprise AI adoption: Who's actually winning? ‒ Xensam
+  - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
+  - Microsoft Copilot Usage Report - Microsoft 365 admin
