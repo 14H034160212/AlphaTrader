@@ -3949,3 +3949,13 @@ OVERALL: NEUTRAL
 **待办（昨天就建议过、至今未落地）**：`scripts/crossvalidate_satellite.py` 里仍然没有任何 SGOV/IAU 白名单（刚 grep 确认过，文件最后修改 10-03 08:00）。这个误报已经连续两天触发，建议下次有写权限时直接加一个 `CASH_AND_HEDGE_TICKERS = {"SGOV", "IAU"}` 跳过列表，否则它会每天继续消耗注意力。
 
 
+### 2026-10-04 08:00 UTC 自动交叉验证
+- P&L: -0.1%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
+
+
