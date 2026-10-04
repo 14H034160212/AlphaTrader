@@ -3979,3 +3979,13 @@ OVERALL: NEUTRAL
 **待修**：`scripts/crossvalidate_satellite.py:147` 的 `CORE = {'SPY','QQQ','BRK.B'}` 需要再加一个 `NON_THESIS = {'SGOV','BIL','SHV','IAU','GLD','SGOL'}`，在 `get_satellite_positions()` 里跳过、同时在 753 行的 `held_symbols` 里保留（防止候选筛选器反过来把它们当新标的推荐）。补丁我已经写好了，给个写权限就能提交。
 
 
+### 2026-10-04 16:00 UTC 自动交叉验证
+- P&L: -0.1%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **跳过付费复核**: 冷却期内(5h),避免重复为同一 infra 问题付费
+
+
