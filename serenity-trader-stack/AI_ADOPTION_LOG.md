@@ -287,3 +287,26 @@
   - Enterprise AI adoption: Who's actually winning? ‒ Xensam
   - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
   - Microsoft Copilot Usage Report - Microsoft 365 admin
+
+## 2026-10-10
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(5), Anthropic (via GOOGL/AMZN investment)(3), Google/GOOGL(2), Meta/META(1)
+- 消费端App排名:
+  - Who is winning the mobile AI race (US)? Downloads, rankings, search visibility, and Apple Ads tell different stories
+  - Productivity App Store Rankings Across Countries | AppPriceData
+  - Muse vs ChatGPT: App Store vs search | Trends MCP
+  - Quarterly App Download Rankings: AI Apps - AI Behavior Index
+- 开发者/API调用份额:
+  - LLM Rankings | OpenRouter
+  - OpenRouter rankings
+  - OpenRouter Model Author Token Share by Month
+  - Data - Authoritative AI Usage Data for Research
+- 网站流量对比:
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - AI Search Stats in 2026 | Similarweb
+  - Claude vs. ChatGPT: 2026 Data Comparison | Similarweb
+  - chatgpt.com AI Traffic Stats & Top Pages | Similarweb
+- 企业级采用率:
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - Enterprise AI adoption: Who's actually winning? ‒ Xensam
+  - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
+  - State of AI Usage Report 2026
