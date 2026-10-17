@@ -310,3 +310,26 @@
   - Enterprise AI adoption: Who's actually winning? ‒ Xensam
   - User Illusion: Licenses Don't Equal Adoption - Digital Product Reports
   - State of AI Usage Report 2026
+
+## 2026-10-17
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(3), Google/GOOGL(2), Anthropic (via GOOGL/AMZN investment)(2), Microsoft/MSFT(1)
+- 消费端App排名:
+  - AI assistants hold four of the US App Store's top 10 spots
+  - Who is winning the mobile AI race (US)? Downloads, rankings, search visibility, and Apple Ads tell different stories
+  - The top AI apps, ranked daily.
+  - Meta Platforms' Muse AI App Surpasses 10.4M Downloads, Outperforms ChatGPT in App Store Rankings (META)
+- 开发者/API调用份额:
+  - LLM Rankings | OpenRouter
+  - Model Economics | Urdais
+  - LLM Leaderboard · OpenRouter Model Ranking · The AI Daily
+  - LLM market share in tokens: a year of OpenRouter | CrbonFree
+- 网站流量对比:
+  - Top AI Tools & Websites Ranking 2026 | Monthly Traffic Leaderboard
+  - Most Visited AI Websites in 2026 - 2,187+ Ranked by Traffic - StackScan
+  - Winners and Losers in the Gen AI Market | Similarweb
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+- 企业级采用率:
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - State of AI Usage Report 2026
+  - Xensam Insights: Enterprise AI Adoption Report, H1 2026 - Xensam
+  - Enterprise AI adoption: Who's actually winning? ‒ Xensam
