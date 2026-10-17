@@ -91,7 +91,7 @@ USER_EMAIL = _user_email()
 # global chip exposure (EWY is the only one of these actually tradeable via
 # Alpaca right now; Moomoo has no KR market enabled, IBKR isn't connected —
 # see .broker_capabilities.json). Extend this list as new candidates surface.
-CANDIDATE_WATCHLIST = ['EWY', 'NVDA', 'COHR', 'LITE', 'SNDK']
+CANDIDATE_WATCHLIST = ['EWY', 'NVDA', 'COHR', 'LITE', 'SNDK', 'INTC']
 TRIAL_BUCKET_PCT = 0.03           # 试探仓 per CLAUDE.md rule 5
 CHASE_GUARD_INTRADAY_PCT = 5.0    # don't buy if already up this much today
 
@@ -135,7 +135,13 @@ def save_state(state):
 def get_satellite_positions():
     """Pull LIVE positions from Alpaca. Excludes core Plan D holdings
     (SPY/QQQ/BRK.B) — those are long-term passive, not subject to this
-    satellite thesis-tracking loop."""
+    satellite thesis-tracking loop. 2026-10-07: added SGOV and SOXX for the
+    same reason — SGOV is the cash-floor/reserve tool (not a satellite
+    thesis; a local-model empty-output "escalation" on it was pure noise,
+    see memory project_sgov_crossvalidate_category_error), and SOXX is now
+    part of the 85% passive core index sleeve (execute_index_reentry_
+    20260922.py's SPY/QQQ/SOXX structure), not an individual catalyst pick
+    either."""
     from database import SessionLocal, get_setting
     import alpaca_trade_api as tradeapi
     db = SessionLocal()
@@ -144,7 +150,7 @@ def get_satellite_positions():
     u = get_setting(db, 'alpaca_base_url', 1, 'https://api.alpaca.markets')
     db.close()
     api = tradeapi.REST(k, s, u)
-    CORE = {'SPY', 'QQQ', 'BRK.B'}
+    CORE = {'SPY', 'QQQ', 'BRK.B', 'SGOV', 'SOXX'}
     positions = []
     for p in api.list_positions():
         if p.symbol in CORE:
@@ -750,7 +756,7 @@ def main():
 
         append_update(sym, entry)
 
-    held_symbols = {p['symbol'] for p in positions} | {'SPY', 'QQQ', 'BRK.B'}
+    held_symbols = {p['symbol'] for p in positions} | {'SPY', 'QQQ', 'BRK.B', 'SGOV', 'SOXX'}
     screen_new_candidates(state, held_symbols)
 
     save_state(state)
