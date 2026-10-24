@@ -333,3 +333,26 @@
   - State of AI Usage Report 2026
   - Xensam Insights: Enterprise AI Adoption Report, H1 2026 - Xensam
   - Enterprise AI adoption: Who's actually winning? ‒ Xensam
+
+## 2026-10-24
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(3), Google/GOOGL(3), Anthropic (via GOOGL/AMZN investment)(3), Microsoft/MSFT(1)
+- 消费端App排名:
+  - The top AI apps, ranked daily.
+  - Top AI apps in the United States · App Store & Google Play charts · Ascension
+  - N/A
+  - Where ChatGPT, Claude and Gemini are #1 on the App Store
+- 开发者/API调用份额:
+  - LLM Rankings | OpenRouter
+  - The Token State of Play - Inferred | OpenRouter
+  - LLM market share in tokens: a year of OpenRouter | CrbonFree
+  - LLM Rankings | OpenRouter
+- 网站流量对比:
+  - Ranked: The Most Used AI Chatbots in 2026
+  - Most Visited AI Websites in 2026 - 2,187+ Ranked by Traffic - StackScan
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - AI Search Statistics for 2026: ChatGPT vs Gemini vs Claude
+- 企业级采用率:
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - Enterprise AI Adoption Report, Q3 2026: Shadow AI – Xensam
+  - Enterprise AI adoption: Who's actually winning? ‒ Xensam
+  - State of AI Usage Report 2026
