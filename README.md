@@ -14,10 +14,10 @@
 ## 📈 Live Performance
 
 <!-- PERFORMANCE:START -->
-**Since 2026-07-16 (current live system):** Account **-3.23%** vs SPY **+1.35%** (underperforming SPY by 4.58pp)
-**All-time, net of all deposits/withdrawals:** **-4.77%**
+**Since 2026-07-16 (current live system):** Account **-3.19%** vs SPY **+1.40%** (underperforming SPY by 4.59pp)
+**All-time, net of all deposits/withdrawals:** **-4.74%**
 
-_Last updated: 2026-10-26 19:00 UTC — percentage returns only, position size/equity not disclosed._
+_Last updated: 2026-10-26 19:30 UTC — percentage returns only, position size/equity not disclosed._
 <!-- PERFORMANCE:END -->
 
 
