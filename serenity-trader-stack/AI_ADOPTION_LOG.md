@@ -379,3 +379,26 @@
   - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
   - AI in the Enterprise: How People Use M365 Copilot Chat - Microsoft Research
   - Enterprise AI Adoption Report, Q3 2026: Shadow AI – Xensam
+
+## 2026-11-07
+- 本周提及热度排序 (受益标的): OpenAI (via MSFT infra/investment)(5), Google/GOOGL(4), Anthropic (via GOOGL/AMZN investment)(4)
+- 消费端App排名:
+  - Charts this week, 2 – 8 Nov 2026 · AppWinners
+  - Top AI apps in the United States today · Ascension
+  - Ascension weekly leaderboard of consumer AI apps, week of Nov 2, 2026
+  - ChatGPT vs. Claude vs. Gemini vs. Grok vs. Perplexity: US iPhone downloads and monetization | AppTrendKit
+- 开发者/API调用份额:
+  - LLM Rankings | OpenRouter
+  - Most used AI models (OpenRouter) | BenchLeader
+  - AI Model Usage Tracker — LLM Token Share by Lab & Model - Frenzy Capital
+  - The Token State of Play - Inferred | OpenRouter
+- 网站流量对比:
+  - AI Chatbot Market Share: ChatGPT vs Gemini vs Claude
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - AI Search Statistics for 2026: ChatGPT vs Gemini vs Claude
+  - AI Chat Traffic by Site | The Latent
+- 企业级采用率:
+  - Enterprise AI Adoption Report, Q3 2026: Shadow AI – Xensam
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - Google Workspace vs. Microsoft 365
+  - Enterprise AI adoption: Who's actually winning? ‒ Xensam
