@@ -402,3 +402,26 @@
   - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
   - Google Workspace vs. Microsoft 365
   - Enterprise AI adoption: Who's actually winning? ‒ Xensam
+
+## 2026-11-14
+- 本周提及热度排序 (受益标的): Anthropic (via GOOGL/AMZN investment)(4), OpenAI (via MSFT infra/investment)(3), Google/GOOGL(3)
+- 消费端App排名:
+  - Ascension weekly leaderboard of consumer AI apps, week of Nov 9, 2026
+  - N/A
+  - Top AI apps in the United States today · Ascension
+  - 10 Million Downloads in 40 Days... Why Did Meta Give Characters to 'Muse'?
+- 开发者/API调用份额:
+  - LLM Rankings | OpenRouter
+  - AI Model Usage Tracker — LLM Token Share by Lab & Model - Frenzy Capital
+  - LLM Leaderboard · OpenRouter Model Ranking · The AI Daily
+  - AI model usage: the most used models, labs and apps (Nov 2026)
+- 网站流量对比:
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - Claude Takes Website Traffic Share From ChatGPT, Gemini In October
+  - AI Chatbot Market Share: ChatGPT vs Gemini vs Claude
+  - AI Chat Traffic by Site | The Latent
+- 企业级采用率:
+  - Google Workspace vs. Microsoft 365
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux
+  - State of AI Usage Report 2026
+  - Enterprise AI Adoption Report, Q3 2026: Shadow AI – Xensam
