@@ -4090,3 +4090,45 @@
 - **付费深度判断** ($0.0000): 
 
 
+### 2026-11-25 04:00 UTC 自动交叉验证
+- P&L: -7.5%
+- 4大师速览: UNKNOWN
+
+- Serenity速览: UNKNOWN
+
+- **升级触发**: 本地 Ollama 分析失败(两路都返回空)— 无法交叉验证,人工确认模型是否在线
+- **付费深度判断** ($1.8743): ## 一、人工确认：Ollama 确实不在线（这不是冷启动误报）
+
+决定性证据在 `crossvalidate.log`：报错是 **`[Errno 111] Connection refused`**，不是 timeout。记忆里那个「120s 超时 vs 冷启动」的假阳性模式（`project_ollama_crossvalidate_false_positive`）在这里**不适用** —— 端口上根本没有监听者。
+
+- `crossvalidate_satellite.py:51` 指向 `http://localhost:11435`，`OLLAMA_MODEL = 'gemma4:31b'`
+- 机器上实际活着的 ollama：容器 `ollama_new` → **11455**（非 11435）、`llm-accounting-ollama-1` → 55379
+- 更麻烦的是模型标签：`/data/qbao775/ollama_new_models/.../library/gemma4/` 下只有 **`26b` 和 `latest`，没有 `31b`** → 即使把端口改到 11455，这个 tag 仍会 404
+- **最后一次真实的本地双路判断是 2026-09-28**（`4-master: BULLISH | serenity: BULLISH`）。此后约两个月全是 UNKNOWN，log 里 `Connection refused` 累计 **1173 次**，最近 20 次付费升级 ≈ **$9.1**，全是基础设施噪音买来的
+
+所以本地两路不是「看空」，是**零信息**。任何把 UNKNOWN 读成 BEARISH 的解读都是错的 —— 这正是 `project_sgov_crossvalidate_category_error` 和 `project_crossvalidate_missing_thesis_false_positive` 两次踩过的同一个坑。
+
+## 二、NVDA 综合判断（简明版）
+
+1. **「论文是否还成立」严格说无法回答：根本没有保存过论文**（`reports/NVDA/thesis.md` 不存在）。按 CLAUDE.md 第 8 条，这个仓位是在没写下可反驳论文的情况下建的 —— 这本身是流程缺口，但按既有纪律，缺文件 ≠ 已损坏。
+2. **本轮 −7.5% 是板块 beta，不是 NVDA 自身事件**：触发件是 BNP 11/24 对 MU 的下调（Outperform→Neutral、PT $1,700→$775），同日 MU −10.9%、SKHY −8.9%、Dell 盘前 −11%。NVDA 跟着跌，自己没出任何一手负面件。
+3. **需求腿没破，但治理/法律腿是真新增裂口**：Rubin Ultra 的 12-Hi→8-Hi、带宽 22→19.2 TB/s 按原文动因是让更多内存供应商够格以抬产量，属**紧供给症状**而非需求走弱；真正的新增风险是 **SEC 会计调查（Reuters 11/22）** 和加州 AG 传票 —— 11/23 8-K 黄仁勋即刻复任只修了治理腿的一半，调查并未撤销。
+4. **一个必须说出来的入场问题**：从 P&L 轨迹看，这仓位是在 **11/23 建的 —— 正是黄仁勋复任驱动的全市场单日 beta 日**，次日就吐光。这是典型的「追单日尖顶」，与 `feedback_buy_dips_sell_strength`（抄底不杀跌、卖高不追涨）直接冲突。
+5. **近端还有未开盖的二元**：12/08–09 FOMC（加息隐含约 97%）是全复合体共同的贴现率逆风。
+
+### 建议：**HOLD**（不 TRIM，不 EXIT）
+
+理由：公司事实面本轮零已实现损坏，−7.5% 的归因是第三方对 MU 的下调引发的板块重定价；在这种情况下卖出就是杀跌，恰好是纪律上禁止的动作。但 HOLD 附两个条件 —— **(a)** 这是「不因噪音卖出」的 HOLD，不是「可以加仓」的 HOLD，尤其不该在 12/08–09 FOMC 开盖前加；**(b)** 必须补上 `reports/NVDA/thesis.md`，把 SEC 调查、$390B backlog 是否重申、单颗 GPU HBM 内容量这三条写成可反驳条件，否则下一轮复核仍然无从判断「论文是否成立」。
+
+会**改变**这个结论的具体事件：NVDA 自己出 8-K 披露 SEC 调查实质进展；$390B backlog 被下修或不再重申；或第二家一线把 2027–28 AI capex 预测反向下调。
+
+## 三、需要你定的一件事
+
+修 Ollama 这件事我没有擅自动手 —— 它涉及拉起一个 31B 模型占 GPU，而全局规则限定只能用 GPU 3/4，我不想在没确认显存的情况下抢资源。两个选项：
+
+- **A（推荐，零 GPU 成本）**：把 `crossvalidate_satellite.py:51-52` 和 `reentry_monitor.py:70`、`backend/news_watch.py:49` 改成 `http://localhost:11455` + `gemma4:26b`（已在容器里、现成可用）
+- **B**：在 GPU 3/4 上重新拉起一个 11435 实例并 `pull gemma4:31b`（约 19GB 显存 + 下载）
+
+要我直接做 A 吗？顺带也该修一下「本地失败 → 付费升级」这条链：它已经两个月在为同一个 connection-refused 反复付费，应该加一个「同一错误连续 N 次后停止付费升级、改为只发一次基础设施告警」的闸门。
+
+
