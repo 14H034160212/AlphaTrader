@@ -448,3 +448,26 @@
   - Enterprise AI Adoption Report, Q3 2026: Shadow AI – Xensam
   - STATE OF AI FOR BUSINESS
   - State of AI Usage Report 2026 - LayerXLayerX
+
+## 2026-11-28
+- 本周提及热度排序 (受益标的): Anthropic (via GOOGL/AMZN investment)(5), OpenAI (via MSFT infra/investment)(3), Google/GOOGL(3), Meta/META(1)
+- 消费端App排名:
+  - The AI app race: App Store Ranks Today · AppWinners
+  - Ascension weekly leaderboard of consumer AI apps, week of Nov 23, 2026
+  - ChatGPT vs Meta AI: App Store rank, ratings & revenue | GameQuant
+  - Top AI apps in the United States today · Ascension
+- 开发者/API调用份额:
+  - LLM Rankings | OpenRouter
+  - AI Model Usage Tracker — LLM Token Share by Lab & Model - Frenzy Capital
+  - LLM Leaderboard · OpenRouter Model Ranking · The AI Daily
+  - AI model usage (Nov 2026): most used models, labs and apps
+- 网站流量对比:
+  - AI Chatbot Market Share: ChatGPT vs Gemini vs Claude
+  - ChatGPT vs Claude vs Gemini vs Perplexity | Similarweb
+  - Top AI Chatbots and Tools Websites Ranking | Similarweb
+  - Top AI tools websites by traffic · Vaneform
+- 企业级采用率:
+  - The State of Enterprise AI: Budgets Are Growing & Platform Lineups Remain in Flux | Morning Consult
+  - As Anthropic Hits the Road, Quality Is Still Winning the AI Budget
+  - Google Workspace vs. Microsoft 365
+  - Enterprise AI Adoption Report, Q3 2026: Shadow AI – Xensam
